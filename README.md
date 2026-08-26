@@ -13,7 +13,7 @@
 > **Status: under construction.** This repository holds the scaffold, the
 > architecture decisions and the plan. There is nothing to install yet.
 > Progress is tracked in
-> [issue #1](https://github.com/chriguschneider/hass-meteoswiss-weather/issues/1).
+> [issue #3](https://github.com/chriguschneider/hass-meteoswiss-weather/issues/3).
 
 ## What it will do
 
