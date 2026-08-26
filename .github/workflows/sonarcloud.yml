@@ -41,7 +41,7 @@ jobs:
           # a shallow clone makes every line look new.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: steps.token.outputs.present == 'true'
         with:
           python-version: "3.13"

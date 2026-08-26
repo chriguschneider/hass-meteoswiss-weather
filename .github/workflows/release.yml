@@ -24,7 +24,7 @@ jobs:
           # and it is not present in a shallow clone of the commit alone.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
