@@ -1,0 +1,65 @@
+name: Claude (@mention)
+
+# Event-driven: someone writes "@claude ..." in an issue or PR comment, or an
+# issue is assigned. The model is chosen from the issue's labels (P1 -> Opus,
+# P3/good-first -> Haiku, else Sonnet). Requires the CLAUDE_CODE_OAUTH_TOKEN
+# secret; without it the job skips with a notice. See docs/agent-automation.md.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [assigned]
+
+jobs:
+  claude:
+    # Only the owner / collaborators can trigger this. Comment events carry
+    # secrets even from strangers, so gate the @claude path on author role
+    # (issue-assignment is already write-access-only).
+    if: >-
+      github.event_name == 'issues' ||
+      (contains(github.event.comment.body, '@claude') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write # claude-code-action needs OIDC for its GitHub App token
+    concurrency:
+      group: claude-mention-${{ github.event.issue.number || github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Check the Claude token is configured
+        id: token
+        env:
+          TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::notice::CLAUDE_CODE_OAUTH_TOKEN is not set; skipping (see docs/agent-automation.md)."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.present == 'true'
+
+      - name: Pick model from issue labels
+        id: model
+        if: steps.token.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n="${{ github.event.issue.number || github.event.pull_request.number }}"
+          bash .github/scripts/pick-model.sh "$n" >> "$GITHUB_OUTPUT"
+
+      - uses: anthropics/claude-code-action@v1
+        if: steps.token.outputs.present == 'true'
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The action reads the @claude comment as the task automatically.
+          claude_args: "--model ${{ steps.model.outputs.model }} --max-turns 20 --dangerously-skip-permissions"

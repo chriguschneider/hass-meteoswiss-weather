@@ -1,0 +1,67 @@
+name: SonarCloud
+
+# ADR-0004. CI-based analysis because Automatic Analysis cannot accept an
+# externally produced coverage report. Skips itself while SONAR_TOKEN is not
+# configured, so a fresh clone of this setup is not red from day one.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sonar-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sonarcloud:
+    name: SonarCloud quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the Sonar token is configured
+        id: token
+        env:
+          TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::notice::SONAR_TOKEN is not set; skipping the SonarCloud scan (see sonar-project.properties)."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.present == 'true'
+        with:
+          # SonarCloud needs full history to attribute new code correctly;
+          # a shallow clone makes every line look new.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        if: steps.token.outputs.present == 'true'
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements_test.txt
+
+      - run: pip install -r requirements_test.txt
+        if: steps.token.outputs.present == 'true'
+
+      - name: Pytest with coverage
+        if: steps.token.outputs.present == 'true'
+        run: pytest -q --cov=custom_components --cov-report=xml
+
+      - name: SonarCloud scan
+        if: steps.token.outputs.present == 'true'
+        uses: SonarSource/sonarqube-scan-action@v8.2.1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+        with:
+          # Block the job on a failing gate rather than reporting green
+          # while the badge says otherwise.
+          args: -Dsonar.qualitygate.wait=true

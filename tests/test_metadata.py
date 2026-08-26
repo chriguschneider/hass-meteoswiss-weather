@@ -1,0 +1,101 @@
+"""Pure metadata tests: no Home Assistant required.
+
+Guards the "keep in sync" footgun called out in const.py: the version must
+be identical in manifest.json and const.py. Also asserts the manifest and
+hacs.json carry what hassfest / HACS expect, and that the zip release asset
+is wired end to end. Runs in milliseconds, stdlib only.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+COMPONENT = ROOT / "custom_components" / "meteoswiss_weather"
+
+
+def _manifest() -> dict:
+    return json.loads((COMPONENT / "manifest.json").read_text(encoding="utf-8"))
+
+
+def _const_version() -> str:
+    text = (COMPONENT / "const.py").read_text(encoding="utf-8")
+    match = re.search(r'^VERSION\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    assert match, "VERSION not found in const.py"
+    return match.group(1)
+
+
+def test_versions_are_in_sync() -> None:
+    """Every file that carries the version moves together, or it drifts."""
+    assert _const_version() == _manifest()["version"], "const.py VERSION out of sync"
+
+
+def test_manifest_has_required_keys() -> None:
+    manifest = _manifest()
+    for key in (
+        "domain",
+        "name",
+        "codeowners",
+        "documentation",
+        "issue_tracker",
+        "version",
+        "config_flow",
+        "iot_class",
+    ):
+        assert key in manifest, f"manifest.json missing '{key}'"
+    assert manifest["domain"] == "meteoswiss_weather"
+    assert manifest["config_flow"] is True
+
+
+def test_strings_and_translation_agree() -> None:
+    """strings.json is the source; translations/en.json must be identical."""
+    strings = json.loads((COMPONENT / "strings.json").read_text(encoding="utf-8"))
+    english = json.loads(
+        (COMPONENT / "translations" / "en.json").read_text(encoding="utf-8")
+    )
+    assert strings == english
+
+
+def test_hacs_json_is_valid() -> None:
+    hacs = json.loads((ROOT / "hacs.json").read_text(encoding="utf-8"))
+    assert hacs["name"]
+    # Minimum HA version must look like a real release string. Raise it in
+    # the same PR that starts relying on a newer HA API.
+    assert re.fullmatch(r"\d{4}\.\d+\.\d+", hacs["homeassistant"])
+    # HACS renders the README as the store page.
+    assert hacs.get("render_readme") is True
+    # Swiss data only; HACS filters the store by country.
+    assert hacs.get("country") == "CH"
+
+
+def test_zip_release_asset_is_wired_end_to_end() -> None:
+    """The zip must be requested, named, and actually built (radar ADR-0008).
+
+    HACS only increments a release's download counter when it fetches a
+    release asset, and it only does that when zip_release is set with a
+    .zip filename. Three files have to agree; if any drifts, installs
+    either stop counting or break outright, and nothing else notices.
+    """
+    hacs = json.loads((ROOT / "hacs.json").read_text(encoding="utf-8"))
+    domain = _manifest()["domain"]
+
+    assert hacs.get("zip_release") is True
+    expected = f"{domain}.zip"
+    assert hacs.get("filename") == expected, (
+        f"hacs.json filename must be {expected!r} to match the manifest domain"
+    )
+
+    release_workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+    assert expected in release_workflow, (
+        f"release.yml must build and attach {expected}; hacs.json points HACS "
+        "at an asset that would not exist"
+    )
+    # The zip holds the *contents* of the integration directory. A wrapper
+    # folder lands as custom_components/<domain>/<domain>/ and nothing loads.
+    assert f"cd custom_components/{domain}" in release_workflow, (
+        "release.yml must zip from inside the integration directory"
+    )

@@ -1,0 +1,114 @@
+name: "Claude (autopilot: grind the P-backlog)"
+
+# Fully-automatic backlog clear (needs CI + branch protection + the
+# reviewer/auto-merge). Every 30 min: if no agent PR is currently open, take
+# the next open P-issue directly and open a draft PR. The reviewer then
+# auto-merges it; the next tick takes the next issue. Stops on its own when
+# the backlog is empty or an open PR is waiting (e.g. needs-verification).
+#
+# One at a time (the open-PR gate) -> no same-file conflicts, no quota spike.
+# Skips itself while CLAUDE_CODE_OAUTH_TOKEN is not configured.
+# To pause: disable this workflow in the Actions tab.
+
+on:
+  # A merged agent PR advances instantly (works for human merges; bot
+  # auto-merges are caught by the timer below thanks to GitHub's loop guard).
+  pull_request:
+    types: [closed]
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: claude-autopilot
+  cancel-in-progress: false
+
+jobs:
+  advance:
+    # For merges: only advance after a merged agent PR. Otherwise (schedule /
+    # manual) always run. The open-PR gate below prevents double-starts.
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.merged == true &&
+       startsWith(github.event.pull_request.head.ref, 'claude/'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - name: Check the Claude token is configured
+        id: token
+        env:
+          TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::notice::CLAUDE_CODE_OAUTH_TOKEN is not set; autopilot idle (see docs/agent-automation.md)."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.present == 'true'
+        with:
+          fetch-depth: 0
+
+      # Gate: never start a second issue while an agent PR is still open.
+      - name: Check for an open agent PR
+        id: gate
+        if: steps.token.outputs.present == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          open="$(gh pr list --state open --json headRefName \
+            --jq '[.[] | select(.headRefName | startswith("claude/"))] | length')"
+          echo "open=$open" >> "$GITHUB_OUTPUT"
+          echo "open agent PRs: $open"
+
+      - name: Pick next issue
+        id: next
+        if: steps.token.outputs.present == 'true' && steps.gate.outputs.open == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/pick-next-issue.sh >> "$GITHUB_OUTPUT"
+
+      - name: Pick model
+        id: model
+        if: steps.token.outputs.present == 'true' && steps.gate.outputs.open == '0' && steps.next.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/pick-model.sh "${{ steps.next.outputs.number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Implement and open a draft PR
+        if: steps.token.outputs.present == 'true' && steps.gate.outputs.open == '0' && steps.next.outputs.number != ''
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # A bot auto-merge can trigger this run; allow the bot actor so the
+          # implement step isn't blocked by the default non-human-actor guard.
+          allowed_bots: "claude"
+          claude_args: "--model ${{ steps.model.outputs.model }} --max-turns 100 --dangerously-skip-permissions"
+          prompt: |
+            You are working, unattended, on GitHub issue
+            #${{ steps.next.outputs.number }} of this repository. Read
+            AGENTS.md, docs/adr/ and docs/ogd.md FIRST and follow them.
+
+            Rules (non-negotiable):
+            - Work on a branch `claude/${{ steps.next.outputs.number }}-<short-slug>`.
+              NEVER push to the default branch.
+            - Implement the issue, add/update tests, and make the checks pass:
+              `pip install -r requirements_test.txt`,
+              `ruff check custom_components tests scripts`, `pytest -q`.
+            - Stay on the official open data (ADR-0001) and inside the traffic
+              budget (ADR-0002). If the issue seems to require otherwise, stop
+              and say so in the PR.
+            - You CANNOT modify `.github/workflows/`. If the fix needs that, say
+              so in the PR and stop.
+            - Open a **draft** PR (`gh pr create --draft`) against the default
+              branch, `Closes #${{ steps.next.outputs.number }}`, summarising the
+              change and how you verified it. The reviewer takes it from here.
+            - If the issue is ambiguous or you cannot verify the fix, DO NOT
+              guess: open the draft PR with partial work and a clear
+              "Blocked / needs decision" section, and stop.

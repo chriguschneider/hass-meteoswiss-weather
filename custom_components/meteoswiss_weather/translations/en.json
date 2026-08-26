@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "MeteoSwiss Weather",
+        "description": "Enter the Swiss postal code of the place to forecast. The integration uses the official MeteoSwiss open data: the local forecast for that postal code and the nearest SwissMetNet station.",
+        "data": {
+          "postal_code": "Postal code"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "This postal code is already configured."
+    }
+  }
+}

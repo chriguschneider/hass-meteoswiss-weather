@@ -1,0 +1,50 @@
+name: CodeQL
+
+# ADR-0004. The integration talks to a public HTTP endpoint and parses
+# untrusted CSV; that deserves a static pass that is not a human reading a
+# diff. The weekly run matters because new CodeQL rules ship continuously.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # Saturday 02:15 UTC, matching the sibling radar and weather-station-card
+    # repos.
+    - cron: "15 2 * * 6"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+          config: |
+            paths-ignore:
+              # Recorded upstream payloads, not source.
+              - tests/fixtures
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
