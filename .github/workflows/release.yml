@@ -28,7 +28,12 @@ jobs:
         with:
           python-version: "3.13"
 
-      - run: pip install pytest
+      # The full test requirements, not just pytest: tests/conftest.py imports
+      # the integration package, whose __init__ imports Home Assistant, so
+      # collecting even the two stdlib-only files below needs the HA test
+      # harness. With `pip install pytest` alone this step dies with
+      # ModuleNotFoundError and no release is ever cut.
+      - run: pip install -r requirements_test.txt
 
       # File-to-file version sync and "a changelog section exists for the
       # declared version" are already asserted by the test suite. Reuse it

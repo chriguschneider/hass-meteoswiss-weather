@@ -9,6 +9,40 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+## [v0.1.0] — 2026-08-27
+
+First release: the integration produces a live `weather` entity per Swiss
+postal code, plus the sensors of the chosen SwissMetNet station.
+
+### Added
+
+- **`weather` entity** with current conditions (temperature, humidity,
+  pressure, wind speed and direction, precipitation) sourced from the
+  nearest SwissMetNet station (10-minute values) and a 9-day daily forecast
+  sourced from the MeteoSwiss local-forecast file for the configured point.
+- **Hourly forecast** as an opt-in option (off by default; ADR-0002). When
+  enabled, the weather entity advertises `FORECAST_HOURLY` and serves
+  temperature, precipitation, symbol, wind speed, gust and bearing per hour
+  from the bulk local-forecast files. The download (~1.5 GB/day) is throttled
+  to `HOURLY_FORECAST_MIN_INTERVAL` (3 h) regardless of how often a new run
+  appears, and the current hour's symbol drives the entity `condition` when
+  available. Toggling the option reloads the entry.
+- **Station sensors**: temperature, humidity, dew point, pressure (QFF, and
+  QFE as a diagnostic), wind speed, bearing, gust, 10-minute precipitation,
+  sunshine duration and global radiation, refreshed every 10 minutes.
+- **`ogd/` client package** — pure Python (no HA imports): STAC catalogue
+  discovery, station CSV download and parsing, local-forecast CSV download
+  and parsing, weather-symbol mapping to HA condition strings.
+- **Three-step config flow**: postal-code entry → forecast point selection
+  → nearest-station confirmation. Options flow lets users toggle hourly
+  forecast.
+- Station and forecast `DataUpdateCoordinator`s with conditional HTTP
+  requests and executor-offloaded CSV parsing.
+- **Weekly upstream smoke test** (`tests/tools/smoke_test.py`, ADR-0004): the
+  only check that touches live data. It reads the parameter codes from the
+  integration itself and requires the configured postal-code point in every
+  daily file — the property whose absence caused the defect below.
+
 ### Fixed
 
 - **Daily forecast now has temperatures and precipitation for postal-code
@@ -18,46 +52,15 @@ using the matching section below as release notes.
   `None` and only a symbol. It now fetches the local-calendar-day
   `tre200px`/`tre200pn`/`rka150p0` variants, which cover every point type. The
   daily refresh grows from ~2 MB to ~5 MB, still far below the hourly opt-in
-  (ADR-0002). (#34)
-
-### Added
-
-- **Hourly forecast** as an opt-in option (off by default; ADR-0002). When
-  enabled, the weather entity advertises `FORECAST_HOURLY` and serves
-  temperature, precipitation, symbol, wind speed, gust and bearing per hour
-  from the bulk local-forecast files. The download (~1.5 GB/day) is throttled
-  to `HOURLY_FORECAST_MIN_INTERVAL` (3 h) regardless of how often a new run
-  appears, and the current hour's symbol drives the entity `condition` when
-  available. Toggling the option reloads the entry.
-
-## [v0.1.0] — 2026-08-27
-
-First release: the integration produces a live `weather` entity per Swiss
-postal code.
-
-### Added
-
-- **`weather` entity** with current conditions (temperature, humidity,
-  pressure, wind speed and direction, precipitation) sourced from the
-  nearest SwissMetNet station (10-minute values) and a 9-day daily forecast
-  sourced from the MeteoSwiss local-forecast file for the configured point.
-  Hourly forecast is a per-entry option (off by default; ADR-0002).
-- **`ogd/` client package** — pure Python (no HA imports): STAC catalogue
-  discovery, station CSV download and parsing, local-forecast CSV download
-  and parsing, weather-symbol mapping to HA condition strings.
-- **Three-step config flow**: postal-code entry → forecast point selection
-  → nearest-station confirmation. Options flow lets users toggle hourly
-  forecast.
-- Station and forecast `DataUpdateCoordinator`s with conditional HTTP
-  requests and executor-offloaded CSV parsing.
-
-### Fixed
-
+  (ADR-0002). Caught by the smoke test before this release. (#34)
 - CI: the Claude agent workflows check out with `persist-credentials: false`.
   `actions/checkout@v7` keeps `GITHUB_TOKEN` in an `includeIf` credentials
   file that `claude-code-action` does not clear, so the reviewer's fix commit
   on PR #26 was pushed as `github-actions[bot]` and its CI runs waited for a
   manual approval instead of letting auto-merge proceed.
+- CI: `claude-review.yml` guarded on `draft == true`, which is false by
+  definition on a `ready_for_review` event, so an agent marking its own draft
+  ready skipped the independent review entirely.
 
 ## [v0.0.1] — 2026-08-26
 
