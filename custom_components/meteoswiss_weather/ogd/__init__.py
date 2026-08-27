@@ -12,6 +12,7 @@ from .forecast import (
     fetch_points,
     nearest_point,
     parse_daily,
+    parse_hourly,
     points_for_postal_code,
 )
 from .http import CachedResponse, get_text
@@ -49,5 +50,6 @@ __all__ = [
     "nearest_point",
     "nearest_stations",
     "parse_daily",
+    "parse_hourly",
     "points_for_postal_code",
 ]

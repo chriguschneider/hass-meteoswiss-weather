@@ -94,12 +94,17 @@ class DailyForecast:
 class HourlyForecast:
     """One hour of the local forecast for a point.
 
-    Placeholder for the hourly backend built in #10; declared here so the
-    :class:`ForecastBackend` protocol can name its return type. Fields will
-    grow with the hourly parameter set (ADR-0002).
+    ``time`` is an aware UTC datetime at the top of the hour. Every measured
+    field is optional: a parameter file that omitted the hour, or left the
+    cell empty, yields ``None`` rather than an invented value. The fields
+    mirror the opt-in hourly parameter set (ADR-0002): temperature,
+    precipitation, symbol, wind speed, gust and bearing.
     """
 
     time: datetime
     temperature: float | None = None
     precipitation: float | None = None
     symbol: int | None = None
+    wind_speed_kmh: float | None = None
+    gust_kmh: float | None = None
+    wind_bearing: float | None = None

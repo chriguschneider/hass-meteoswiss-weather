@@ -22,6 +22,7 @@ import pytest
 from custom_components.meteoswiss_weather.ogd.const import (
     COLLECTION_FORECAST,
     DAILY_REQUIRED_PARAMS,
+    HOURLY_REQUIRED_PARAMS,
     META_POINT_URL,
     META_STATIONS_URL,
     stac_items_url,
@@ -86,6 +87,15 @@ def mock_ogd(aioclient_mock):
 
     # Daily parameter CSV files for the fixture run.
     for param in DAILY_REQUIRED_PARAMS:
+        aioclient_mock.get(
+            f"{_ASSET_BASE}/vnut12.lssw.{_RUN_TS}.{param}.csv",
+            content=_fixture_bytes(f"vnut12.lssw.{_RUN_TS}.{param}.csv"),
+        )
+
+    # Hourly parameter CSV files (opt-in). Registered unconditionally so tests
+    # can assert they are *not* fetched when the option is off; the default
+    # config entry has no options, so nothing here is downloaded.
+    for param in HOURLY_REQUIRED_PARAMS:
         aioclient_mock.get(
             f"{_ASSET_BASE}/vnut12.lssw.{_RUN_TS}.{param}.csv",
             content=_fixture_bytes(f"vnut12.lssw.{_RUN_TS}.{param}.csv"),

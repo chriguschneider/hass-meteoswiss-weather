@@ -29,9 +29,9 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from . import MeteoSwissConfigEntry
-from .const import ATTRIBUTION, DOMAIN
+from .const import ATTRIBUTION, CONF_HOURLY_FORECAST, DOMAIN
 from .coordinator import ForecastCoordinator, StationCoordinator
-from .ogd import DailyForecast, ForecastPoint
+from .ogd import DailyForecast, ForecastPoint, HourlyForecast
 from .symbols import condition_for_symbol
 
 # Home Assistant's well-known sun entity; its state is the day/night flag.
@@ -53,7 +53,6 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
     _attr_has_entity_name = True
     _attr_name = None
     _attr_attribution = ATTRIBUTION
-    _attr_supported_features = WeatherEntityFeature.FORECAST_DAILY
 
     # Native units the OGD files report in (docs/ogd.md §A1/§E4); Home Assistant
     # converts to the user's configured units from these.
@@ -70,6 +69,14 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
         super().__init__(runtime.station_coordinator)
         self._forecast_coordinator: ForecastCoordinator = runtime.forecast_coordinator
         point: ForecastPoint = runtime.point
+
+        # Hourly is an opt-in feature (ADR-0002): advertise FORECAST_HOURLY only
+        # when the option is on, so HA never asks for hourly data we do not fetch.
+        # The entry reloads on an options change, so this is read once at build.
+        features = WeatherEntityFeature.FORECAST_DAILY
+        if entry.options.get(CONF_HOURLY_FORECAST, False):
+            features |= WeatherEntityFeature.FORECAST_HOURLY
+        self._attr_supported_features = features
 
         unique_id = f"{point.point_type_id}-{point.point_id}"
         self._attr_unique_id = unique_id
@@ -140,22 +147,40 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
 
     @property
     def condition(self) -> str | None:
-        """HA condition from today's daily symbol, day/night from ``sun.sun``.
+        """HA condition, preferring the current hour's symbol when available.
 
-        The station reports no weather symbol, so the current condition is
-        taken from the daily forecast's entry for today (``jp2000d0``); the
-        day/night variant follows the sun's position (issue #10).
+        The station reports no weather symbol. When the hourly forecast is on,
+        the current hour's symbol (``jww003i0``, which already carries the
+        day/night variant) gives the sharpest condition; otherwise it falls
+        back to today's daily symbol (``jp2000d0``) with the day/night variant
+        chosen from the sun's position (ADR-0002).
         """
+        hourly_symbol = self._current_hour_symbol()
+        if hourly_symbol is not None:
+            return condition_for_symbol(hourly_symbol)
+
         today = self._today_forecast()
         if today is None:
             return None
         return condition_for_symbol(today.symbol, is_daytime=self._is_daytime())
 
+    def _current_hour_symbol(self) -> int | None:
+        """The hourly symbol for the current UTC hour, if hourly data is here."""
+        data = self._forecast_coordinator.data
+        if data is None or not data.hourly:
+            return None
+        this_hour = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
+        for hour in data.hourly:
+            if hour.time == this_hour:
+                return hour.symbol
+        return None
+
     def _today_forecast(self) -> DailyForecast | None:
         """The daily forecast entry for today, or the earliest one available."""
-        daily = self._forecast_coordinator.data
-        if not daily:
+        data = self._forecast_coordinator.data
+        if data is None or not data.daily:
             return None
+        daily = data.daily
         today = dt_util.now().date()
         for day in daily:
             if day.date == today:
@@ -175,13 +200,13 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
 
     async def async_forecast_daily(self) -> list[Forecast] | None:
         """Return the 9-day daily forecast as HA ``Forecast`` dicts."""
-        daily = self._forecast_coordinator.data
-        if not daily:
+        data = self._forecast_coordinator.data
+        if data is None or not data.daily:
             return None
-        return [self._as_forecast(day) for day in daily]
+        return [self._as_daily_forecast(day) for day in data.daily]
 
     @staticmethod
-    def _as_forecast(day: DailyForecast) -> Forecast:
+    def _as_daily_forecast(day: DailyForecast) -> Forecast:
         # A daily summary uses the daytime symbol variant.
         forecast: Forecast = {
             "datetime": day.date.isoformat(),
@@ -193,6 +218,32 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
         if day.precipitation_probability is not None:
             forecast["precipitation_probability"] = round(day.precipitation_probability)
         return forecast
+
+    # -- hourly forecast (opt-in, ADR-0002) ---------------------------------
+
+    async def async_forecast_hourly(self) -> list[Forecast] | None:
+        """Return the hourly forecast as HA ``Forecast`` dicts, or ``None``.
+
+        Only reachable when ``FORECAST_HOURLY`` is advertised, i.e. the option
+        is on; ``None`` until the first throttled hourly download completes.
+        """
+        data = self._forecast_coordinator.data
+        if data is None or not data.hourly:
+            return None
+        return [self._as_hourly_forecast(hour) for hour in data.hourly]
+
+    @staticmethod
+    def _as_hourly_forecast(hour: HourlyForecast) -> Forecast:
+        # The hourly symbol (jww003i0) already encodes the day/night variant.
+        return {
+            "datetime": hour.time.isoformat(),
+            "condition": condition_for_symbol(hour.symbol),
+            "native_temperature": hour.temperature,
+            "native_precipitation": hour.precipitation,
+            "native_wind_speed": hour.wind_speed_kmh,
+            "native_wind_gust_speed": hour.gust_kmh,
+            "wind_bearing": hour.wind_bearing,
+        }
 
     @callback
     def _handle_coordinator_update(self) -> None:

@@ -9,6 +9,16 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Hourly forecast** as an opt-in option (off by default; ADR-0002). When
+  enabled, the weather entity advertises `FORECAST_HOURLY` and serves
+  temperature, precipitation, symbol, wind speed, gust and bearing per hour
+  from the bulk local-forecast files. The download (~1.5 GB/day) is throttled
+  to `HOURLY_FORECAST_MIN_INTERVAL` (3 h) regardless of how often a new run
+  appears, and the current hour's symbol drives the entity `condition` when
+  available. Toggling the option reloads the entry.
+
 ## [v0.1.0] — 2026-08-27
 
 First release: the integration produces a live `weather` entity per Swiss

@@ -53,6 +53,26 @@ DAILY_REQUIRED_PARAMS: tuple[str, ...] = (
     DAILY_SYMBOL,
 )
 
+# Hourly parameter codes fetched for the opt-in hourly forecast (ADR-0002).
+# Each of these files is ~30 MB and holds every point, so the set is the whole
+# traffic budget: it is the documented minimum (temperature, precipitation,
+# symbol, wind speed) plus gust and wind direction, which are included only
+# because the hourly forecast entity exposes gust and bearing per hour.
+HOURLY_TEMPERATURE = "tre200h0"
+HOURLY_PRECIPITATION = "rre150h0"
+HOURLY_SYMBOL = "jww003i0"
+HOURLY_WIND_SPEED = "fu3010h0"
+HOURLY_GUST = "fu3010h1"
+HOURLY_WIND_DIRECTION = "dkl010h0"
+HOURLY_REQUIRED_PARAMS: tuple[str, ...] = (
+    HOURLY_TEMPERATURE,
+    HOURLY_PRECIPITATION,
+    HOURLY_SYMBOL,
+    HOURLY_WIND_SPEED,
+    HOURLY_GUST,
+    HOURLY_WIND_DIRECTION,
+)
+
 
 def station_now_url(abbr: str) -> str:
     """URL of a station's 10-minute ``now`` file (the one to poll)."""

@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
+    CONF_HOURLY_FORECAST,
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
@@ -70,10 +71,11 @@ async def async_setup_entry(
     point = _point_from_entry(entry)
     station_abbr = str(entry.data[CONF_STATION_ABBR])
     backend: ForecastBackend = BulkCsvBackend(session)
+    hourly_enabled = bool(entry.options.get(CONF_HOURLY_FORECAST, False))
 
     station_coordinator = StationCoordinator(hass, entry, session, station_abbr)
     forecast_coordinator = ForecastCoordinator(
-        hass, entry, session, backend, point
+        hass, entry, session, backend, point, hourly_enabled=hourly_enabled
     )
 
     # A first-refresh failure raises ConfigEntryNotReady so HA retries setup.
@@ -88,8 +90,19 @@ async def async_setup_entry(
         backend=backend,
     )
 
+    # An options change (the hourly-forecast toggle) reloads the entry so the
+    # coordinator and the weather entity pick up the new feature set (ADR-0002).
+    entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def _async_reload_entry(
+    hass: HomeAssistant, entry: MeteoSwissConfigEntry
+) -> None:
+    """Reload the entry when its options change."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(
