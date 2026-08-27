@@ -51,6 +51,13 @@ jobs:
         if: steps.token.outputs.present == 'true'
         with:
           fetch-depth: 0
+          # checkout@v7 stores GITHUB_TOKEN in an includeIf credentials file
+          # that claude-code-action's git-auth setup does not clear (it only
+          # handles include.path), so a `git push` from the reviewer went out
+          # as github-actions[bot] and its CI runs sat in "action_required"
+          # (PR #26). Without persisted credentials the action's app-token
+          # remote is the only auth, and pushes are claude[bot] again.
+          persist-credentials: false
 
       - name: Review, fix (bounded), decide
         if: steps.token.outputs.present == 'true'

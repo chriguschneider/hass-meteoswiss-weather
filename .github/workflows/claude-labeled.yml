@@ -45,6 +45,9 @@ jobs:
         if: steps.token.outputs.present == 'true'
         with:
           fetch-depth: 0
+          # See claude-review.yml: checkout@v7's includeIf credentials would
+          # make agent pushes go out as github-actions[bot].
+          persist-credentials: false
 
       - name: Pick model
         id: model
