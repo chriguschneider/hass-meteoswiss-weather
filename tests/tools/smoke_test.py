@@ -14,11 +14,13 @@ too.
 from __future__ import annotations
 
 import csv
+import importlib.util
 import io
 import json
 import sys
 import urllib.request
 from datetime import datetime
+from pathlib import Path
 
 # Reconfigure stdout for non-ASCII output regardless of the terminal locale.
 sys.stdout = io.TextIOWrapper(
@@ -42,10 +44,33 @@ BER_OBS_URL = (
     f"{OGD_BASE}/{COLLECTION_STATIONS}/ber/ogd-smn_ber_t_now.csv"
 )
 
-# Daily params expected in the newest forecast run (ADR-0002).
-DAILY_PARAMS = {"tre200dx", "tre200dn", "rka150d0", "jp2000d0"}
-# Hourly params expected in the newest forecast run (ADR-0002).
-HOURLY_PARAMS = {"tre200h0", "rre150h0", "jww003i0", "fu3010h0"}
+# The parameter codes the integration fetches are the tripwire's source of
+# truth: a hardcoded expectation that drifted from the integration is exactly
+# what issue #34 was. Load them from the integration's own const.py instead of
+# repeating them here. That module imports only ``__future__`` (the ogd package
+# stays pure — ADR-0001), so it is loaded in isolation: importing the package
+# proper would pull in aiohttp, which this stdlib-only script must not need.
+def _load_ogd_const():
+    const_path = (
+        Path(__file__).resolve().parents[2]
+        / "custom_components"
+        / "meteoswiss_weather"
+        / "ogd"
+        / "const.py"
+    )
+    spec = importlib.util.spec_from_file_location("_ogd_const", const_path)
+    if spec is None or spec.loader is None:  # pragma: no cover - defensive
+        raise RuntimeError(f"cannot load ogd const from {const_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_OGD_CONST = _load_ogd_const()
+# Daily params the integration fetches for the default forecast (ADR-0002).
+DAILY_PARAMS = set(_OGD_CONST.DAILY_REQUIRED_PARAMS)
+# Hourly params the integration fetches for the opt-in hourly forecast.
+HOURLY_PARAMS = set(_OGD_CONST.HOURLY_REQUIRED_PARAMS)
 
 # Forecast point checked in the data files (postal code 3098 Köniz, n=00).
 FORECAST_POINT_ID = "309800"
@@ -168,42 +193,56 @@ def check_stac() -> tuple[str, dict[str, str]]:
 
 
 _DAILY_LABEL = (
-    "Daily file header point_id;point_type_id;Date;<param>"
-    f" + row {FORECAST_POINT_ID};{FORECAST_POINT_TYPE_ID}"
+    "Every daily file has the postal-code point "
+    f"{FORECAST_POINT_ID};{FORECAST_POINT_TYPE_ID} (issue #34 tripwire)"
 )
 
 
-def check_daily_file(hrefs: dict[str, str]) -> None:
-    """Check 2: A daily file has expected header and a row for 309800;2."""
+def _check_one_daily_file(param: str, href: str) -> str:
+    """Return "" if the daily file for ``param`` is good, else why it failed.
+
+    Good means the header is ``point_id;point_type_id;Date;<param>`` and the
+    file carries at least one row for the default postal-code point. Issue #34
+    was a daily file (the station-only ``d``/``0`` variants) that had every
+    station row but no postal-code row, so the default point silently got no
+    temperatures — hence checking the postal-code row in *every* daily file.
+    """
+    raw = _get(href)
+    text = raw.decode("iso-8859-1")
+    reader = csv.DictReader(io.StringIO(text), delimiter=";")
+    fields = set(reader.fieldnames or [])
+    missing_cols = {"point_id", "point_type_id", "Date", param} - fields
+    if missing_cols:
+        return f"missing header cols {sorted(missing_cols)}"
+    postal_row = any(
+        r["point_id"] == FORECAST_POINT_ID
+        and r["point_type_id"] == FORECAST_POINT_TYPE_ID
+        for r in reader
+    )
+    if not postal_row:
+        return f"no row for {FORECAST_POINT_ID};{FORECAST_POINT_TYPE_ID}"
+    return ""
+
+
+def check_daily_files(hrefs: dict[str, str]) -> None:
+    """Check 2: every daily param file carries a postal-code row.
+
+    The daily files are 0.2-1.3 MB each; downloading all four is cheap.
+    """
     label = _DAILY_LABEL
-    param = "tre200dx"
-    href = hrefs.get(param)
-    if not href:
-        _report(label, False, f"no href for {param}")
-        return
-    try:
-        raw = _get(href)
-        text = raw.decode("iso-8859-1")
-        reader = csv.DictReader(io.StringIO(text), delimiter=";")
-        fields = set(reader.fieldnames or [])
-        required_cols = {"point_id", "point_type_id", "Date", param}
-        missing_cols = required_cols - fields
-        header_ok = not missing_cols
-        row_found = any(
-            r["point_id"] == FORECAST_POINT_ID
-            and r["point_type_id"] == FORECAST_POINT_TYPE_ID
-            for r in reader
-        )
-        parts: list[str] = []
-        if missing_cols:
-            parts.append(f"missing header cols: {sorted(missing_cols)}")
-        if not row_found:
-            parts.append(
-                f"no row for {FORECAST_POINT_ID};{FORECAST_POINT_TYPE_ID}"
-            )
-        _report(label, header_ok and row_found, "; ".join(parts))
-    except Exception as exc:
-        _report(label, False, str(exc))
+    problems: list[str] = []
+    for param in sorted(DAILY_PARAMS):
+        href = hrefs.get(param)
+        if not href:
+            problems.append(f"{param}: no href in run")
+            continue
+        try:
+            reason = _check_one_daily_file(param, href)
+        except Exception as exc:  # noqa: BLE001 - report, do not abort other params
+            reason = str(exc)
+        if reason:
+            problems.append(f"{param}: {reason}")
+    _report(label, not problems, "; ".join(problems))
 
 
 def check_point_meta() -> None:
@@ -291,7 +330,7 @@ def main() -> None:
 
     _run_ts, hrefs = check_stac()
     if hrefs:
-        check_daily_file(hrefs)
+        check_daily_files(hrefs)
     else:
         _report(_DAILY_LABEL, False, "skipped — STAC check failed")
 
