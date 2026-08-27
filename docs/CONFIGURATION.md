@@ -93,9 +93,8 @@ For a more detailed daily view, use [ApexCharts Card](https://github.com/RomRide
 ```yaml
 type: custom:apexcharts-card
 header:
-  title: 9-Day Forecast
-header:
   show: true
+  title: 9-Day Forecast
 series:
   - entity: weather.postal_code_location
     type: line
@@ -157,7 +156,7 @@ The integration uses the haversine formula to calculate distances from your fore
 
 The forecast point is determined by your postal code. If your postal code has multiple forecast points, you choose one during setup; otherwise the setup flow skips to station selection.
 
-**Note:** Not every station measures every parameter. If your chosen station does not measure a parameter (e.g., some precipitation-only sites lack pressure), that sensor will show as unknown. You can change the station in the integration options to pick one with more complete measurements.
+**Note:** Not every station measures every parameter. If your chosen station does not measure a parameter (e.g., some precipitation-only sites lack pressure), that sensor will show as unknown. To pick a station with more complete measurements, delete the config entry and re-add it, choosing a different station in the setup flow (see below).
 
 ### What does the weather condition mean?
 
@@ -194,9 +193,8 @@ Sure. To trigger a notification when it's about to rain:
 automation:
   - alias: "Rain warning"
     trigger:
-      platform: state
+      platform: numeric_state
       entity_id: sensor.postal_code_location_precipitation
-      attribute: native_value
       above: 0.1
     action:
       service: notify.notify
