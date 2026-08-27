@@ -218,6 +218,41 @@ The symbol codes must be mapped to Home Assistant conditions
 mapping used by `Rudd-O/hamsclientfork` (MIT) is a usable reference for
 the code list; verify against the app's icon set before trusting it.
 
+## Adding the OGC Features backend
+
+MeteoSwiss has announced a per-point OGC Features API (beta, end of 2026).
+When it ships, swapping it in is a contained change — the coordinator and
+the entities never need to know. The seam is `ForecastBackend` in
+`ogd/backend.py` and the factory hook `_backend_factory` in `__init__.py`.
+
+Steps to add a new backend:
+
+1. **New module** `ogd/ogc_features.py` — implement a class with the same two
+   async methods as `BulkCsvBackend`:
+   ```python
+   async def fetch_daily(self, point: ForecastPoint) -> list[DailyForecast]: ...
+   async def fetch_hourly(self, point: ForecastPoint) -> list[HourlyForecast]: ...
+   ```
+   The class must satisfy the `ForecastBackend` protocol (`ogd/backend.py`).
+   Keep it in the `ogd/` package (pure Python, ADR-0001). The coordinator
+   passes a `ForecastPoint` — `(point_id, point_type_id)` identify the
+   forecast row in the upstream API.
+
+2. **Wire it up** in `__init__.py` by changing `_backend_factory`. A feature
+   flag in the config entry options is the natural gate while both backends
+   coexist.
+
+3. **Test it** with the same `FakeBackend` pattern from
+   `tests/test_backend_seam.py`: the coordinator and entities need no changes
+   and their existing tests continue to pass.
+
+The `ForecastCoordinator._async_update_data` will still call `latest_run`
+to check the STAC run stamp (cheap, a single small JSON request) before
+deciding whether to call `fetch_daily`. A per-point API backend can skip
+the run-staleness check by always fetching; alternatively, the coordinator
+can be taught to skip the STAC call when the configured backend does not
+need it — that is an ADR-worthy change.
+
 ## What is NOT in the open data
 
 - **Weather warnings.** No dataset, not on the 2026 roadmap. The README

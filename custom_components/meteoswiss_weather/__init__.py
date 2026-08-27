@@ -8,8 +8,10 @@ platform lands in its own issue.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
+import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -25,6 +27,11 @@ from .const import (
 )
 from .coordinator import ForecastCoordinator, StationCoordinator
 from .ogd import BulkCsvBackend, ForecastBackend, ForecastPoint
+
+# Seam for tests: replace with a FakeBackend to run without network I/O.
+# A future OGC Features backend (announced by MeteoSwiss for end-2026) will
+# land here as well, keeping the swap out of the coordinator and entities.
+_backend_factory: Callable[[aiohttp.ClientSession], ForecastBackend] = BulkCsvBackend
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.WEATHER]
 
@@ -70,7 +77,7 @@ async def async_setup_entry(
     session = async_get_clientsession(hass)
     point = _point_from_entry(entry)
     station_abbr = str(entry.data[CONF_STATION_ABBR])
-    backend: ForecastBackend = BulkCsvBackend(session)
+    backend: ForecastBackend = _backend_factory(session)
     hourly_enabled = bool(entry.options.get(CONF_HOURLY_FORECAST, False))
 
     station_coordinator = StationCoordinator(hass, entry, session, station_abbr)
