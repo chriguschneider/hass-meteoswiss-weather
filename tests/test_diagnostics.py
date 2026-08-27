@@ -25,7 +25,7 @@ from custom_components.meteoswiss_weather.const import (
     CONF_STATION_NAME,
     DOMAIN,
 )
-from custom_components.meteoswiss_weather.ogd import OgdParseError
+from custom_components.meteoswiss_weather.ogd import OgdConnectionError, OgdParseError
 from custom_components.meteoswiss_weather.ogd.const import station_now_url
 
 _STATION_ABBR = "BER"
@@ -334,4 +334,124 @@ async def test_forecast_parse_error_repair_issue_cleared_on_success(
     await coordinator.async_refresh()
     await hass.async_block_till_done()
 
+    assert issue_reg.async_get_issue(DOMAIN, "parse_error_forecast") is None
+
+
+async def test_forecast_connection_error_creates_no_repair_issue(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A forecast OgdConnectionError fails the update without a repair issue.
+
+    Transient connection errors rely on the coordinator's built-in back-off;
+    only structural parse errors post a repair issue (see coordinator.py).
+    """
+    await _setup(hass, config_entry)
+
+    coordinator = config_entry.runtime_data.forecast_coordinator
+
+    with patch(
+        "custom_components.meteoswiss_weather.coordinator.latest_run",
+        side_effect=OgdConnectionError("stac unreachable"),
+    ):
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    assert coordinator.last_update_success is False
+    issue_reg = ir.async_get(hass)
+    assert issue_reg.async_get_issue(DOMAIN, "parse_error_forecast") is None
+
+
+async def test_forecast_daily_parse_error_creates_repair_issue(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A parse error while fetching the daily files creates the repair issue."""
+    await _setup(hass, config_entry)
+
+    coordinator = config_entry.runtime_data.forecast_coordinator
+    # Clear the cached run so the daily-download branch runs again.
+    coordinator.last_run = None
+
+    with patch.object(
+        coordinator._backend, "fetch_daily", side_effect=OgdParseError("bad daily")
+    ):
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    issue_reg = ir.async_get(hass)
+    assert issue_reg.async_get_issue(DOMAIN, "parse_error_forecast") is not None
+
+
+async def test_forecast_daily_connection_error_creates_no_repair_issue(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A connection error while fetching the daily files posts no repair issue."""
+    await _setup(hass, config_entry)
+
+    coordinator = config_entry.runtime_data.forecast_coordinator
+    coordinator.last_run = None
+
+    with patch.object(
+        coordinator._backend,
+        "fetch_daily",
+        side_effect=OgdConnectionError("daily unreachable"),
+    ):
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    assert coordinator.last_update_success is False
+    issue_reg = ir.async_get(hass)
+    assert issue_reg.async_get_issue(DOMAIN, "parse_error_forecast") is None
+
+
+async def test_forecast_hourly_parse_error_creates_repair_issue(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A parse error while fetching the hourly files creates the repair issue."""
+    await _setup(hass, config_entry)
+
+    coordinator = config_entry.runtime_data.forecast_coordinator
+    # Enable the hourly download and clear its throttle so the branch runs.
+    coordinator._hourly_enabled = True
+    coordinator._last_hourly_fetch = None
+
+    with patch.object(
+        coordinator._backend, "fetch_hourly", side_effect=OgdParseError("bad hourly")
+    ):
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    issue_reg = ir.async_get(hass)
+    assert issue_reg.async_get_issue(DOMAIN, "parse_error_forecast") is not None
+
+
+async def test_forecast_hourly_connection_error_creates_no_repair_issue(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A connection error while fetching the hourly files posts no repair issue."""
+    await _setup(hass, config_entry)
+
+    coordinator = config_entry.runtime_data.forecast_coordinator
+    coordinator._hourly_enabled = True
+    coordinator._last_hourly_fetch = None
+
+    with patch.object(
+        coordinator._backend,
+        "fetch_hourly",
+        side_effect=OgdConnectionError("hourly unreachable"),
+    ):
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    assert coordinator.last_update_success is False
+    issue_reg = ir.async_get(hass)
     assert issue_reg.async_get_issue(DOMAIN, "parse_error_forecast") is None
