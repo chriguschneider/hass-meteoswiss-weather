@@ -1,0 +1,175 @@
+"""Tests for the weather platform (issue #10).
+
+Spins up an in-process Home Assistant with the ``mock_ogd`` fixture
+(conftest.py) so the entity is built from the trimmed real fixtures; no test
+hits the network. Covers the current-condition attributes read from the
+station observation, the daily forecast returned by ``weather.get_forecasts``,
+and the availability contract across the two coordinators.
+"""
+
+from __future__ import annotations
+
+import pytest
+from homeassistant.components.sun import STATE_ABOVE_HORIZON, STATE_BELOW_HORIZON
+from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
+
+from custom_components.meteoswiss_weather.const import (
+    CONF_POINT_ID,
+    CONF_POINT_NAME,
+    CONF_POINT_TYPE_ID,
+    CONF_POSTAL_CODE,
+    CONF_STATION_ABBR,
+    CONF_STATION_NAME,
+    DOMAIN,
+)
+from custom_components.meteoswiss_weather.ogd.const import station_now_url
+
+_STATION_ABBR = "BER"
+_ENTITY_ID = "weather.koniz"
+
+
+@pytest.fixture
+def config_entry() -> MockConfigEntry:
+    """A config entry shaped exactly like the config flow produces."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_POINT_ID: 309800,
+            CONF_POINT_TYPE_ID: 2,
+            CONF_POSTAL_CODE: "3098",
+            CONF_POINT_NAME: "Köniz",
+            CONF_STATION_ABBR: _STATION_ABBR,
+            CONF_STATION_NAME: "Bern / Zollikofen",
+        },
+        title="Köniz",
+        unique_id="2-309800",
+    )
+
+
+async def _setup(
+    hass: HomeAssistant, entry: MockConfigEntry, *, sun: str = STATE_ABOVE_HORIZON
+) -> None:
+    """Set the sun state, add the entry and run setup to completion."""
+    hass.states.async_set("sun.sun", sun)
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_current_conditions_from_station(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Current-condition attributes come from the latest station row."""
+    await _setup(hass, config_entry)
+
+    state = hass.states.get(_ENTITY_ID)
+    assert state is not None
+
+    # The last BER row carrying a temperature is 00:40 (docs/ogd.md §A1).
+    attrs = state.attributes
+    assert attrs["temperature"] == 19.5
+    assert attrs["humidity"] == 88.0
+    assert attrs["dew_point"] == 17.2
+    assert attrs["pressure"] == 1014.8  # QFF, reduced to sea level
+    assert attrs["wind_speed"] == 4.0
+    assert attrs["wind_bearing"] == 245
+    assert attrs["wind_gust_speed"] == 5.5
+    assert attrs["attribution"] == "Source: MeteoSwiss"
+
+
+async def test_condition_from_daily_symbol_daytime(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """With the sun up, today's symbol 1 becomes ``sunny``."""
+    await _setup(hass, config_entry, sun=STATE_ABOVE_HORIZON)
+    assert hass.states.get(_ENTITY_ID).state == "sunny"
+
+
+async def test_condition_from_daily_symbol_nighttime(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """With the sun down, the same sunny symbol becomes ``clear-night``."""
+    await _setup(hass, config_entry, sun=STATE_BELOW_HORIZON)
+    assert hass.states.get(_ENTITY_ID).state == "clear-night"
+
+
+async def test_daily_forecast_service(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """``weather.get_forecasts`` (daily) returns the 9 fixture days."""
+    await _setup(hass, config_entry)
+
+    response = await hass.services.async_call(
+        "weather",
+        "get_forecasts",
+        {"entity_id": _ENTITY_ID, "type": "daily"},
+        blocking=True,
+        return_response=True,
+    )
+
+    forecasts = response[_ENTITY_ID]["forecast"]
+    assert len(forecasts) == 9
+
+    first = forecasts[0]
+    assert first["datetime"] == "2026-08-27"
+    assert first["condition"] == "sunny"  # daily summary uses the day variant
+    assert first["temperature"] == 20.0  # native max
+    assert first["templow"] == 10.0  # native min
+    assert first["precipitation"] == 0.0
+
+    # Values increase day by day in the fixtures — check the last day too.
+    assert forecasts[-1]["datetime"] == "2026-09-04"
+    assert forecasts[-1]["temperature"] == 28.0
+
+
+async def test_device_info(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """The entity registers a service device keyed on the unique id."""
+    from homeassistant.helpers import device_registry as dr
+    from homeassistant.helpers import entity_registry as er
+
+    await _setup(hass, config_entry)
+
+    entity_reg = er.async_get(hass)
+    entry = entity_reg.async_get(_ENTITY_ID)
+    assert entry is not None
+    assert entry.unique_id == "2-309800"
+
+    device_reg = dr.async_get(hass)
+    device = device_reg.async_get(entry.device_id)
+    assert device is not None
+    assert (DOMAIN, "2-309800") in device.identifiers
+    assert device.manufacturer == "MeteoSwiss"
+    assert device.configuration_url == "https://opendatadocs.meteoswiss.ch"
+
+
+async def test_unavailable_when_station_fails(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A later station failure flips the entity to ``unavailable``."""
+    await _setup(hass, config_entry)
+    assert hass.states.get(_ENTITY_ID).state != "unavailable"
+
+    coordinator = config_entry.runtime_data.station_coordinator
+    mock_ogd.clear_requests()
+    mock_ogd.get(station_now_url(_STATION_ABBR), status=500)
+
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert hass.states.get(_ENTITY_ID).state == "unavailable"

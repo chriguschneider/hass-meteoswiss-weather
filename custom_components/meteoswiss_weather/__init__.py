@@ -2,9 +2,8 @@
 
 Sets up the two data coordinators (ADR-0002) and stores them, together with
 the resolved forecast point, station and forecast backend, on
-``entry.runtime_data``. Entity platforms consume that handle; ``PLATFORMS``
-stays empty here because the weather and sensor platforms land in their own
-issues.
+``entry.runtime_data``. The weather platform consumes that handle; the sensor
+platform lands in its own issue.
 """
 
 from __future__ import annotations
@@ -26,7 +25,7 @@ from .const import (
 from .coordinator import ForecastCoordinator, StationCoordinator
 from .ogd import BulkCsvBackend, ForecastBackend, ForecastPoint
 
-PLATFORMS: list[Platform] = []
+PLATFORMS: list[Platform] = [Platform.WEATHER]
 
 
 @dataclass
