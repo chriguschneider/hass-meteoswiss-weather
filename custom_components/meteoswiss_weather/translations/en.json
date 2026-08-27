@@ -1,4 +1,19 @@
 {
+  "entity": {
+    "sensor": {
+      "temperature": { "name": "Temperature" },
+      "humidity": { "name": "Humidity" },
+      "pressure_qff": { "name": "Pressure QFF" },
+      "wind_speed": { "name": "Wind speed" },
+      "wind_bearing": { "name": "Wind bearing" },
+      "gust_speed": { "name": "Wind gust speed" },
+      "precipitation": { "name": "Precipitation (10 min)" },
+      "dew_point": { "name": "Dew point" },
+      "pressure_qfe": { "name": "Pressure QFE" },
+      "sunshine_duration": { "name": "Sunshine duration (10 min)" },
+      "global_radiation": { "name": "Global radiation" }
+    }
+  },
   "config": {
     "step": {
       "user": {

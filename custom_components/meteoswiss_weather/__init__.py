@@ -26,7 +26,7 @@ from .const import (
 from .coordinator import ForecastCoordinator, StationCoordinator
 from .ogd import BulkCsvBackend, ForecastBackend, ForecastPoint
 
-PLATFORMS: list[Platform] = [Platform.WEATHER]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.WEATHER]
 
 
 @dataclass
