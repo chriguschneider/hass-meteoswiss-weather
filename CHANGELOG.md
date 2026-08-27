@@ -9,6 +9,14 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- CI: the Claude agent workflows check out with `persist-credentials: false`.
+  `actions/checkout@v7` keeps `GITHUB_TOKEN` in an `includeIf` credentials
+  file that `claude-code-action` does not clear, so the reviewer's fix commit
+  on PR #26 was pushed as `github-actions[bot]` and its CI runs waited for a
+  manual approval instead of letting auto-merge proceed
+
 ## [v0.0.1] — 2026-08-26
 
 Repository scaffold. Not released: the first release is cut once the
