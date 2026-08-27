@@ -9,6 +9,17 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Daily forecast now has temperatures and precipitation for postal-code
+  points.** The daily client fetched `tre200dx`/`tre200dn`/`rka150d0`, which
+  MeteoSwiss publishes for weather stations only — so the default configuration
+  (a postal-code point) silently got `temp_max`/`temp_min`/`precipitation` of
+  `None` and only a symbol. It now fetches the local-calendar-day
+  `tre200px`/`tre200pn`/`rka150p0` variants, which cover every point type. The
+  daily refresh grows from ~2 MB to ~5 MB, still far below the hourly opt-in
+  (ADR-0002). (#34)
+
 ### Added
 
 - **Hourly forecast** as an opt-in option (off by default; ADR-0002). When

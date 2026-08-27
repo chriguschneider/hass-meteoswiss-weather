@@ -155,9 +155,23 @@ point_id;point_type_id;Date;tre200h0
 | `dkl010h0` wind direction, hourly | 31.1 MB | |
 | `sre000h0` sunshine, hourly | 29.4 MB | |
 | `nprohihs` high clouds, hourly | 32.5 MB | |
-| `tre200dx` / `tre200dn` daily max / min temperature | 0.21 MB | |
-| `rka150d0` daily precipitation | 0.20 MB | |
-| `jp2000d0` daily weather symbol | 1.2 MB | |
+| `tre200dx` / `tre200dn` daily max / min temperature (UTC day, **stations only**) | 0.21 MB | 8,352 = 928 type-1 points × 9 days; **no type 2/3 rows** |
+| `rka150d0` daily precipitation (UTC day, **stations only**) | 0.20 MB | stations only, as above |
+| `tre200px` / `tre200pn` daily max / min temperature (**local day, all points**) | 1.33 MB | 50,670 = 8,352 type 1 + 36,639 type 2 + 5,679 type 3 |
+| `rka150p0` daily precipitation (**local day, all points**) | 1.29 MB | all point types, as above |
+| `jp2000d0` daily weather symbol (all points) | 1.2 MB | 50,670 = types 1 + 2 + 3 |
+
+**The integration fetches the `p`-variants, not the `d`/`0`-variants.**
+Measured on run `202608271100` (2026-08-27): `tre200dx`/`tre200dn`/`rka150d0`
+contain **only** station points (`point_type_id=1`). The config-flow default is
+a postal-code centre (`point_type_id=2`), which has **no rows at all** in those
+files, so a daily forecast built from them silently has `temp_max=temp_min=
+precipitation=None` (issue #34). The `p`-variants are aggregated over the
+**local calendar day** (00:00–24:00 local, the boundary the MeteoSwiss app uses)
+and are the only daily files that carry non-station points. On the 8,352 station
+rows present in both files of a pair, `tre200dx` and `tre200px` agree on 97.3 %
+of values — the same quantity on a better day boundary. Live `309800;2` values
+on 2026-08-27: `tre200px=29.1`, `tre200pn=16.7`, `rka150p0=0.1`, `jp2000d0=2`.
 
 - Download of a 32 MB file: 0.3 s on a fibre connection; naive Python
   split-parse: 1.8 s on a Pi 5. Parse in the executor.
@@ -185,9 +199,19 @@ point_id;point_type_id;Date;tre200h0
 
 | daily | meaning |
 |---|---|
-| `tre200dx` / `tre200dn` | max / min temperature; `tre200px` / `tre200pn` percentiles |
-| `rka150d0` | precipitation sum; `rka150p0`, `rreq10p0` / `rreq90p0` probability / percentiles |
-| `jp2000d0` | **daily weather symbol** |
+| `tre200px` / `tre200pn` | max / min temperature, **local calendar day (00:00–24:00 local), all point types** — the ones the integration fetches |
+| `rka150p0` | precipitation total, **local calendar day, all point types** — the one the integration fetches |
+| `tre200dx` / `tre200dn` | max / min temperature, **UTC day, stations only** — do **not** use for postal-code points (issue #34) |
+| `rka150d0` | precipitation total, **UTC day (0 UTC – 0 UTC), stations only** — do **not** use for postal-code points (issue #34) |
+| `jp2000d0` | **daily weather symbol** (all point types) |
+
+**Trap (issue #34):** the `p`-suffix on `tre200px`/`tre200pn` and the `p0` on
+`rka150p0` are *not* percentiles/probabilities — the official
+`ogd-local-forecasting_meta_parameters.csv` descriptions are "daily maximum /
+minimum / total 00:00 – 24:00 local time". They are the same quantity as the
+`d`/`0`-variants on the local-day boundary, and — unlike the `d`/`0` files —
+they cover every point type. The `d`/`0` daily files are **station-only**, so
+using them for the default postal-code point yields no temperatures at all.
 
 The symbol codes must be mapped to Home Assistant conditions
 (`sunny`, `partlycloudy`, `rainy`, `snowy`, `lightning-rainy`, …). The

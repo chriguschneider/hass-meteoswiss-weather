@@ -44,11 +44,16 @@ OBSERVATION_STATION = "ber"
 # Number of daily forecast runs to keep in the STAC items fixture.
 MAX_RUNS_IN_ITEMS = 2
 
-# Daily parameter codes to download.
-DAILY_PARAMS = ("tre200dx", "tre200dn", "rka150d0", "jp2000d0")
+# Daily parameter codes to download. The ``p``-variants are used, not the
+# ``d``/``0``-variants: the ``d`` files are station-only, so a postal-code
+# point would have no temperatures or precipitation (issue #34, docs/ogd.md
+# §E4). ``jp2000d0`` (the symbol) already covers all point types.
+DAILY_PARAMS = ("tre200px", "tre200pn", "rka150p0", "jp2000d0")
 
-# Forecast point to keep in the daily CSV fixtures.
-KEEP_FORECAST_POINT = (309800, 2)
+# Forecast points to keep in the daily CSV fixtures. Must include a postal-code
+# centre (type 2) — the config-flow default — so the fixtures can catch the
+# issue #34 regression, plus a station point (type 1) to prove both survive.
+KEEP_DAILY_POINTS = {(1, 1), (309800, 2), (309801, 2)}
 
 # Observation rows to keep (last N rows including header).
 OBSERVATION_TAIL_ROWS = 3
@@ -102,14 +107,13 @@ def _trim_csv_points(raw: bytes) -> bytes:
 
 
 def _trim_csv_daily(raw: bytes, param: str) -> bytes:
-    """Keep only the KEEP_FORECAST_POINT rows; preserve encoding."""
+    """Keep only the KEEP_DAILY_POINTS rows; preserve encoding and order."""
     text = raw.decode("iso-8859-1")
-    pid, ptid = KEEP_FORECAST_POINT
     reader = csv.DictReader(io.StringIO(text), delimiter=";")
     assert reader.fieldnames, f"no header in {param} CSV"
     rows = [
         r for r in reader
-        if int(r["point_id"]) == pid and int(r["point_type_id"]) == ptid
+        if (int(r["point_id"]), int(r["point_type_id"])) in KEEP_DAILY_POINTS
     ]
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=reader.fieldnames, delimiter=";",

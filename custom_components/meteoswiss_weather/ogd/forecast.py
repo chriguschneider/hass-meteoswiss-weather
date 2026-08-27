@@ -2,7 +2,7 @@
 
 Reads the official ``ch.meteoschweiz.ogd-local-forecasting`` files (ADR-0001).
 Columns are addressed by header, never by position (docs/ogd.md §E4). The
-daily parameter files are small (order of 2 MB together); the hourly files are
+daily parameter files are small (order of 5 MB together); the hourly files are
 the whole traffic budget and live behind the backend seam (ADR-0002).
 """
 
