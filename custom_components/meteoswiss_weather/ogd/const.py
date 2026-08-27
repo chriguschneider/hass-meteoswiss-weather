@@ -41,10 +41,20 @@ POINT_TYPE_MOUNTAIN = 3
 
 # Daily parameter codes fetched for the default forecast (ADR-0002): max/min
 # temperature, precipitation sum, weather symbol. These four files are the
-# whole cost of a daily refresh (order of 2 MB).
-DAILY_TEMP_MAX = "tre200dx"
-DAILY_TEMP_MIN = "tre200dn"
-DAILY_PRECIPITATION = "rka150d0"
+# whole cost of a daily refresh (order of 5 MB).
+#
+# The ``p``-variants (``…px``/``…pn``/``…p0``) are used deliberately, not the
+# ``d``/``0``-variants (``tre200dx``/``tre200dn``/``rka150d0``): the daily
+# ``d`` files are aggregated over the UTC day and are published **for stations
+# only** (point_type_id 1). The default configuration is a postal-code centre
+# (type 2), for which those files carry no rows at all, so the forecast would
+# silently have no temperatures or precipitation (issue #34). The ``p``-variants
+# are aggregated over the **local calendar day** — the boundary the MeteoSwiss
+# app uses — and are the only daily files that contain non-station points
+# (types 1, 2 and 3). ``jp2000d0`` (the symbol) already covers all types.
+DAILY_TEMP_MAX = "tre200px"
+DAILY_TEMP_MIN = "tre200pn"
+DAILY_PRECIPITATION = "rka150p0"
 DAILY_SYMBOL = "jp2000d0"
 DAILY_REQUIRED_PARAMS: tuple[str, ...] = (
     DAILY_TEMP_MAX,

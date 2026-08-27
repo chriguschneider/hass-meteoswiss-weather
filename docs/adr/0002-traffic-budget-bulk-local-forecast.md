@@ -11,8 +11,11 @@ forecast points** in Switzerland. Measured on 2026-08-26 (`docs/ogd.md`):
 
 - hourly parameters (temperature, precipitation, symbol, wind, gust,
   direction, sunshine, clouds): **29–33 MB each**, ~1.24 million rows;
-- daily parameters (min/max temperature, daily precipitation): 0.2 MB;
-  the daily symbol 1.2 MB;
+- daily parameters (min/max temperature, daily precipitation): the
+  station-only UTC-day `d`/`0`-variants are 0.2 MB, but the integration must
+  use the all-point local-day `p`-variants (`tre200px`/`tre200pn`/`rka150p0`)
+  at ~1.3 MB each — the `d`/`0` files carry no postal-code points at all
+  (issue #34); the daily symbol `jp2000d0` is 1.2 MB;
 - rows are sorted by **time, not by point** — the ~220 rows of one point
   are spread across the whole file, so neither a streaming early exit nor
   an HTTP Range request can shorten the download;
@@ -28,8 +31,9 @@ which removes the problem — but not before.
 ## Decision
 
 - **Daily forecast is the default** and is the only thing fetched unless
-  the user opts in. It uses daily parameter files only (order of 2 MB per
-  refresh).
+  the user opts in. It uses daily parameter files only (order of 5 MB per
+  refresh: three all-point `p`-variant files at ~1.3 MB plus the 1.2 MB
+  symbol).
 - **Hourly forecast is an option, off by default.** When on, the client
   fetches at most the documented minimum parameter set (`tre200h0`,
   `rre150h0`, `jww003i0`, `fu3010h0`; gusts `fu3010h1` and direction
@@ -56,3 +60,10 @@ which removes the problem — but not before.
   change a constant.
 - When the point API ships, the backend swap is a contained change; this
   ADR is then superseded rather than edited.
+- The daily default uses the local-calendar-day `p`-variants
+  (`tre200px`/`tre200pn`/`rka150p0`), **not** the UTC-day `d`/`0`-variants
+  (`tre200dx`/`tre200dn`/`rka150d0`): the `d`/`0` daily files are published for
+  weather stations only, so the default postal-code point would get no
+  temperatures or precipitation from them (issue #34). This raised the daily
+  refresh from ~2 MB to ~5 MB — still three orders of magnitude below the
+  hourly opt-in, so the decision above is unchanged.

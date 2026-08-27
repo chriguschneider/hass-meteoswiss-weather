@@ -107,7 +107,7 @@ async def test_condition_from_daily_symbol_daytime(
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """With the sun up, today's symbol 1 becomes ``sunny``."""
+    """With the sun up, today's sunny symbol (code 2) becomes ``sunny``."""
     await _setup(hass, config_entry, sun=STATE_ABOVE_HORIZON)
     assert hass.states.get(_ENTITY_ID).state == "sunny"
 
@@ -142,15 +142,16 @@ async def test_daily_forecast_service(
     assert len(forecasts) == 9
 
     first = forecasts[0]
+    # Real 309800;2 (Köniz) values from run 2026-08-27 02:00 UTC.
     assert first["datetime"] == "2026-08-27"
-    assert first["condition"] == "sunny"  # daily summary uses the day variant
-    assert first["temperature"] == 20.0  # native max
-    assert first["templow"] == 10.0  # native min
+    assert first["condition"] == "sunny"  # symbol 2 → sunny
+    assert first["temperature"] == 29.3  # native max
+    assert first["templow"] == 16.9  # native min
     assert first["precipitation"] == 0.0
 
-    # Values increase day by day in the fixtures — check the last day too.
+    # Check the last day too.
     assert forecasts[-1]["datetime"] == "2026-09-04"
-    assert forecasts[-1]["temperature"] == 28.0
+    assert forecasts[-1]["temperature"] == 23.9
 
 
 async def test_device_info(
