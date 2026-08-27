@@ -169,7 +169,7 @@ async def test_latest_run_no_complete_run_raises(session) -> None:
         "type": "FeatureCollection",
         "features": [
             {"assets": {
-                "vnut12.lssw.202608270300.tre200dx.csv": {"href": "x"},
+                "vnut12.lssw.202608270300.tre200px.csv": {"href": "x"},
             }},
         ],
     }
@@ -185,8 +185,8 @@ async def test_latest_run_follows_pagination(session) -> None:
         "type": "FeatureCollection",
         "features": [
             {"assets": {
-                f"vnut12.lssw.{RUN_TS}.tre200dx.csv": {"href": _asset_url("tre200dx")},
-                f"vnut12.lssw.{RUN_TS}.tre200dn.csv": {"href": _asset_url("tre200dn")},
+                f"vnut12.lssw.{RUN_TS}.tre200px.csv": {"href": _asset_url("tre200px")},
+                f"vnut12.lssw.{RUN_TS}.tre200pn.csv": {"href": _asset_url("tre200pn")},
             }},
         ],
         "links": [{"rel": "next", "href": page2}],
@@ -195,7 +195,7 @@ async def test_latest_run_follows_pagination(session) -> None:
         "type": "FeatureCollection",
         "features": [
             {"assets": {
-                f"vnut12.lssw.{RUN_TS}.rka150d0.csv": {"href": _asset_url("rka150d0")},
+                f"vnut12.lssw.{RUN_TS}.rka150p0.csv": {"href": _asset_url("rka150p0")},
                 f"vnut12.lssw.{RUN_TS}.jp2000d0.csv": {"href": _asset_url("jp2000d0")},
             }},
         ],
@@ -229,11 +229,12 @@ def test_parse_daily_nine_days_for_309800() -> None:
     daily = parse_daily(_daily_texts(), _koeniz_point())
     assert len(daily) == 9
     first = daily[0]
+    # Values are the real 309800;2 (Köniz) rows from run 2026-08-27 02:00 UTC.
     assert first.date == date(2026, 8, 27)
-    assert first.temp_max == 20.0
-    assert first.temp_min == 10.0
+    assert first.temp_max == 29.3
+    assert first.temp_min == 16.9
     assert first.precipitation == 0.0
-    assert first.symbol == 1
+    assert first.symbol == 2
     # Every day carries the four modelled fields.
     assert all(
         d.temp_max is not None and d.temp_min is not None
@@ -243,7 +244,29 @@ def test_parse_daily_nine_days_for_309800() -> None:
     # Sorted ascending by date, spanning nine consecutive days.
     assert [d.date for d in daily] == sorted(d.date for d in daily)
     assert daily[-1].date == date(2026, 9, 4)
-    assert daily[-1].symbol == 9
+    assert daily[-1].symbol == 1
+
+
+def test_parse_daily_postal_code_point_has_all_measurements() -> None:
+    """Issue #34 regression: a postal-code point must get real temperatures.
+
+    The daily ``d``-variant files (``tre200dx``/``tre200dn``/``rka150d0``)
+    carry station rows only, so parsing the default postal-code centre against
+    them yields ``temp_max=temp_min=precipitation=None`` and just a symbol.
+    Parsing the real ``p``-variant fixtures for point ``309800;2`` must give a
+    non-``None`` value for all three on every one of the nine days. This test
+    fails on ``master`` (old codes + fabricated fixtures could hide it); it can
+    only pass because the fixtures are trimmed real files.
+    """
+    point = _koeniz_point()
+    assert point.point_type_id == 2  # a postal-code centre, the config default
+    daily = parse_daily(_daily_texts(), point)
+    assert len(daily) == 9
+    for day in daily:
+        assert day.temp_max is not None, day.date
+        assert day.temp_min is not None, day.date
+        assert day.precipitation is not None, day.date
+        assert day.symbol is not None, day.date
 
 
 def test_parse_daily_is_order_independent() -> None:
@@ -263,11 +286,11 @@ def test_parse_daily_is_order_independent() -> None:
 def test_parse_daily_discriminates_on_point_type_id() -> None:
     """A row with the right id but wrong type must be ignored."""
     text = (
-        "point_id;point_type_id;Date;tre200dx\n"
+        "point_id;point_type_id;Date;tre200px\n"
         "309800;1;202608270000;99.0\n"   # same id, station type -> ignored
         "309800;2;202608270000;21.5\n"
     )
-    daily = parse_daily({"tre200dx": text}, _koeniz_point())
+    daily = parse_daily({"tre200px": text}, _koeniz_point())
     assert len(daily) == 1
     assert daily[0].temp_max == 21.5
 
@@ -275,8 +298,8 @@ def test_parse_daily_discriminates_on_point_type_id() -> None:
 def test_parse_daily_leaves_missing_parameter_none() -> None:
     """A day present only in some files keeps the absent fields at None."""
     texts = {
-        "tre200dx": (
-            "point_id;point_type_id;Date;tre200dx\n309800;2;202608270000;21.5\n"
+        "tre200px": (
+            "point_id;point_type_id;Date;tre200px\n309800;2;202608270000;21.5\n"
         ),
     }
     daily = parse_daily(texts, _koeniz_point())
@@ -300,8 +323,8 @@ async def test_bulk_backend_fetch_daily(session) -> None:
         daily = await backend.fetch_daily(_koeniz_point())
 
     assert len(daily) == 9
-    assert daily[0].temp_max == 20.0
-    assert daily[0].symbol == 1
+    assert daily[0].temp_max == 29.3
+    assert daily[0].symbol == 2
 
 
 # --- hourly parser ----------------------------------------------------------

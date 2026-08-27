@@ -37,9 +37,11 @@ directly to `tests/fixtures/`. Review the diff before committing.
 | `ogd-smn_ber_t_now.csv` | `ch.meteoschweiz.ogd-smn/ber/ogd-smn_ber_t_now.csv` | Last 3 rows kept |
 | `ogd-local-forecasting_meta_point.csv` | `ch.meteoschweiz.ogd-local-forecasting/ogd-local-forecasting_meta_point.csv` | Trimmed to points 1, 309800, 309801, 5000 |
 | `ogd-local-forecasting_items.json` | STAC items listing for `ch.meteoschweiz.ogd-local-forecasting` | Trimmed to two runs (02:00 complete, 03:00 incomplete) |
-| `vnut12.lssw.202608270200.*.csv` | Daily parameter files, run 2026-08-27 02:00 UTC | Trimmed to point 309800 (9 rows) |
+| `vnut12.lssw.202608270200.{tre200px,tre200pn,rka150p0,jp2000d0}.csv` | Daily parameter files, run 2026-08-27 02:00 UTC | Trimmed to points 1, 309800, 309801 (27 rows). The `p`-variants are used, not the station-only `d`-variants (issue #34) |
+| `vnut12.lssw.202608270200.{tre200h0,rre150h0,jww003i0,fu3010h0,fu3010h1,dkl010h0}.csv` | Hourly parameter files (opt-in), run 2026-08-27 02:00 UTC | Synthetic 24-hour rows for point 309800 |
 
 ### Size budget
 
 Keep each fixture under 50 KB. The daily parameter CSVs for the full
-dataset are ~0.2 MB each; the trimmed versions are a few hundred bytes.
+dataset are ~1.3 MB each (the `p`-variants cover every point type); the
+trimmed versions are a few hundred bytes.
