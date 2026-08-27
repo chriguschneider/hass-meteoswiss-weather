@@ -77,21 +77,21 @@ class FakeBackend:
             temp_max=25.0,
             temp_min=15.0,
             precipitation=0.0,
-            symbol=2,  # sunny
+            symbol=2,  # mostly sunny, some clouds → partlycloudy
         ),
         DailyForecast(
             date=date(2026, 8, 28),
             temp_max=20.0,
             temp_min=12.0,
             precipitation=1.5,
-            symbol=6,  # partly cloudy with rain
+            symbol=6,  # sunny intervals, isolated showers → rainy
         ),
         DailyForecast(
             date=date(2026, 8, 29),
             temp_max=18.0,
             temp_min=11.0,
             precipitation=3.0,
-            symbol=13,  # rainy
+            symbol=13,  # sunny intervals, possible thunderstorms → lightning-rainy
         ),
     ]
     HOURLY: list[HourlyForecast] = [
@@ -264,7 +264,7 @@ async def test_daily_forecast_from_fake_backend(
     assert first["temperature"] == 25.0
     assert first["templow"] == 15.0
     assert first["precipitation"] == 0.0
-    assert first["condition"] == "sunny"  # symbol 2 → sunny
+    assert first["condition"] == "partlycloudy"  # symbol 2 → partlycloudy
 
     last = forecasts[-1]
     assert last["datetime"] == "2026-08-29"
