@@ -1,4 +1,14 @@
 {
+  "issues": {
+    "parse_error_station": {
+      "title": "MeteoSwiss station file format changed",
+      "description": "The SwissMetNet station observation file could not be parsed. The upstream format may have changed. Check `docs/ogd.md` in the integration repository for the current format and open a drift issue if the layout no longer matches."
+    },
+    "parse_error_forecast": {
+      "title": "MeteoSwiss forecast file format changed",
+      "description": "The local forecast file could not be parsed. The upstream format may have changed. Check `docs/ogd.md` in the integration repository for the current format and open a drift issue if the layout no longer matches."
+    }
+  },
   "entity": {
     "sensor": {
       "temperature": { "name": "Temperature" },
