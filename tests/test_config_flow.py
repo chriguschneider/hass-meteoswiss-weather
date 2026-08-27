@@ -157,6 +157,51 @@ async def test_single_point_postal_code_skips_point_step(
 
 
 # ---------------------------------------------------------------------------
+# Radar cross-promotion hint (ADR-0003)
+# ---------------------------------------------------------------------------
+
+
+async def test_station_step_shows_radar_hint_when_not_installed(
+    hass: HomeAssistant, mock_ogd_functions
+) -> None:
+    """The station step advertises the radar sibling when it is absent."""
+    hass.config.latitude = 47.377
+    hass.config.longitude = 8.542
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_POSTAL_CODE: 8001}
+    )
+    assert result["step_id"] == "station"
+    hint = result["description_placeholders"]["radar_hint"]
+    assert "hass-meteoswiss-radar" in hint
+
+
+async def test_station_step_hides_radar_hint_when_installed(
+    hass: HomeAssistant, mock_ogd_functions
+) -> None:
+    """When the radar integration is loaded the hint placeholder is empty.
+
+    It must still be present so the frontend never renders a literal
+    ``{radar_hint}`` placeholder from the description string.
+    """
+    hass.config.latitude = 47.377
+    hass.config.longitude = 8.542
+    hass.config.components.add("meteoswiss_radar")
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_POSTAL_CODE: 8001}
+    )
+    assert result["step_id"] == "station"
+    assert result["description_placeholders"] == {"radar_hint": ""}
+
+
+# ---------------------------------------------------------------------------
 # Duplicate-entry abort
 # ---------------------------------------------------------------------------
 

@@ -45,7 +45,7 @@
       },
       "station": {
         "title": "Select weather station",
-        "description": "Choose the SwissMetNet station to use for current conditions. The nearest station is pre-selected.",
+        "description": "Choose the SwissMetNet station to use for current conditions. The nearest station is pre-selected.{radar_hint}",
         "data": {
           "station_abbr": "Weather station"
         }
