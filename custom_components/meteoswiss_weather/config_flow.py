@@ -32,7 +32,7 @@ from .const import (
 )
 from .ogd import (
     ForecastPoint,
-    OgdConnectionError,
+    OgdError,
     Station,
     fetch_points,
     fetch_stations,
@@ -76,7 +76,9 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
         try:
             self._all_points = await fetch_points(session)
             self._all_stations = await fetch_stations(session)
-        except OgdConnectionError:
+        except OgdError:
+            # Any OGD failure (network or malformed metadata) becomes the
+            # ``cannot_connect`` error key rather than leaking out of the flow.
             self._all_points = None
             self._all_stations = None
             return False
