@@ -59,6 +59,10 @@ Or use the My-link shortcut:
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chriguschneider&repository=hass-meteoswiss-weather&category=integration)
 
+## Configuration
+
+See [**CONFIGURATION.md**](docs/CONFIGURATION.md) for setup steps, the hourly forecast option and its cost, entity references, dashboard examples, and a FAQ (warnings, traffic, station selection, etc.).
+
 ## The radar
 
 The animated precipitation radar lives in the sibling integration
