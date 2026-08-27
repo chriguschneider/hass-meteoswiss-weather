@@ -11,22 +11,18 @@
   <a href="#ai-assisted-development"><img alt="AI Assisted" src="https://img.shields.io/badge/AI-assisted-2196F3.svg" /></a>
 </p>
 
-> **Status: under construction.** This repository holds the scaffold, the
-> architecture decisions and the plan. There is nothing to install yet.
-> Progress is tracked in
-> [issue #3](https://github.com/chriguschneider/hass-meteoswiss-weather/issues/3).
-
-## What it will do
+## What it does
 
 - **A `weather` entity per Swiss postal code**: current conditions from the
   nearest SwissMetNet station (10-minute values) and the same 9-day local
   forecast the MeteoSwiss app shows, with the app's weather symbols.
 - **Hourly forecast as an option** — off by default, because of what it
   costs (see below).
-- **Station sensors**: temperature, humidity, dew point, pressure, wind,
-  gusts, precipitation, sunshine, radiation.
 - **No YAML.** UI setup, picks the forecast point and station from your
   Home Assistant location, lets you override both.
+
+Still coming: station sensors (temperature, humidity, dew point, pressure,
+wind, gusts, precipitation, sunshine, radiation).
 
 ## Why another MeteoSwiss integration
 
@@ -50,8 +46,18 @@ Two honest consequences:
 
 ## Install
 
-Not yet. Once the first release exists it will be installable through HACS
-as a custom repository, and the default store will be requested after that.
+Install via [HACS](https://hacs.xyz/) as a **custom repository**:
+
+1. In Home Assistant, go to **HACS → Integrations → ⋮ → Custom repositories**.
+2. Add `https://github.com/chriguschneider/hass-meteoswiss-weather` as an
+   **Integration**.
+3. Search for *MeteoSwiss Weather* and install it.
+4. Restart Home Assistant, then go to **Settings → Devices & Services → Add
+   integration** and search for *MeteoSwiss Weather*.
+
+Or use the My-link shortcut:
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chriguschneider&repository=hass-meteoswiss-weather&category=integration)
 
 ## The radar
 

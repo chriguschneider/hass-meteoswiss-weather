@@ -9,13 +9,34 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+## [v0.1.0] — 2026-08-27
+
+First release: the integration produces a live `weather` entity per Swiss
+postal code.
+
+### Added
+
+- **`weather` entity** with current conditions (temperature, humidity,
+  pressure, wind speed and direction, precipitation) sourced from the
+  nearest SwissMetNet station (10-minute values) and a 9-day daily forecast
+  sourced from the MeteoSwiss local-forecast file for the configured point.
+  Hourly forecast is a per-entry option (off by default; ADR-0002).
+- **`ogd/` client package** — pure Python (no HA imports): STAC catalogue
+  discovery, station CSV download and parsing, local-forecast CSV download
+  and parsing, weather-symbol mapping to HA condition strings.
+- **Three-step config flow**: postal-code entry → forecast point selection
+  → nearest-station confirmation. Options flow lets users toggle hourly
+  forecast.
+- Station and forecast `DataUpdateCoordinator`s with conditional HTTP
+  requests and executor-offloaded CSV parsing.
+
 ### Fixed
 
 - CI: the Claude agent workflows check out with `persist-credentials: false`.
   `actions/checkout@v7` keeps `GITHUB_TOKEN` in an `includeIf` credentials
   file that `claude-code-action` does not clear, so the reviewer's fix commit
   on PR #26 was pushed as `github-actions[bot]` and its CI runs waited for a
-  manual approval instead of letting auto-merge proceed
+  manual approval instead of letting auto-merge proceed.
 
 ## [v0.0.1] — 2026-08-26
 
@@ -36,5 +57,6 @@ integration produces a weather entity (see the tracking issue in the README).
   tag-triggered release gate with a zip asset, and the opt-in Claude agent
   workflows (label, mention, autopilot, reviewer)
 
-[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.1.0...HEAD
+[v0.1.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.0.1...v0.1.0
 [v0.0.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/releases/tag/v0.0.1
