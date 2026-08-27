@@ -18,11 +18,11 @@
   forecast the MeteoSwiss app shows, with the app's weather symbols.
 - **Hourly forecast as an option** — off by default, because of what it
   costs (see below).
+- **Station sensors**: temperature, humidity, dew point, pressure, wind,
+  gusts, precipitation, sunshine and radiation from the chosen SwissMetNet
+  station, refreshed every 10 minutes.
 - **No YAML.** UI setup, picks the forecast point and station from your
   Home Assistant location, lets you override both.
-
-Still coming: station sensors (temperature, humidity, dew point, pressure,
-wind, gusts, precipitation, sunshine, radiation).
 
 ## Why another MeteoSwiss integration
 
