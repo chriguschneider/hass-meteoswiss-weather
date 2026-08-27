@@ -1,0 +1,7 @@
+point_id;point_type_id;station_abbr;postal_code;point_name;point_type_de;point_type_fr;point_type_it;point_type_en;point_height_masl;point_coordinates_lv95_east;point_coordinates_lv95_north;point_coordinates_wgs84_lat;point_coordinates_wgs84_lon
+309800;2;;3098;Köniz;PLZ;NPA;NPA;postal code;595;2600000;1197000;46.924500;7.414700
+309801;2;;3098;Schliern b. Köniz;PLZ;NPA;NPA;postal code;620;2599000;1195000;46.910000;7.400000
+1;1;BER;;Bern / Zollikofen;station;station;stazione;station;552;2601929;1204410;46.990765;7.464061
+5000;3;;;Jungfraujoch;mountain;montagne;montagna;mountain;3571;2641930;1155275;46.547500;7.985500
+800100;2;;8001;Zürich;PLZ;NPA;NPA;postal code;408;2683000;1247000;47.376900;8.541700
+100300;2;;1003;Lausanne;PLZ;NPA;NPA;postal code;495;2538000;1152000;46.519700;6.632300

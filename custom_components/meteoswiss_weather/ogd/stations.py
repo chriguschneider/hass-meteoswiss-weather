@@ -10,7 +10,6 @@ from __future__ import annotations
 import csv
 import io
 from datetime import UTC, datetime
-from math import asin, cos, radians, sin, sqrt
 
 import aiohttp
 
@@ -20,6 +19,7 @@ from .const import (
     STATION_ENCODING,
     station_now_url,
 )
+from .geo import haversine_km
 from .http import CachedResponse, get_text
 from .models import Observation, OgdParseError, Station
 
@@ -94,21 +94,11 @@ async def fetch_stations(session: aiohttp.ClientSession) -> list[Station]:
     return stations
 
 
-def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Great-circle distance in kilometres between two WGS84 points."""
-    r = 6371.0088
-    p1, p2 = radians(lat1), radians(lat2)
-    dphi = radians(lat2 - lat1)
-    dlambda = radians(lon2 - lon1)
-    a = sin(dphi / 2) ** 2 + cos(p1) * cos(p2) * sin(dlambda / 2) ** 2
-    return 2 * r * asin(sqrt(a))
-
-
 def nearest_stations(
     stations: list[Station], lat: float, lon: float, *, limit: int = 3
 ) -> list[Station]:
     """The ``limit`` stations closest to ``lat``/``lon``, nearest first."""
-    ordered = sorted(stations, key=lambda s: _haversine_km(lat, lon, s.lat, s.lon))
+    ordered = sorted(stations, key=lambda s: haversine_km(lat, lon, s.lat, s.lon))
     return ordered[:limit]
 
 
