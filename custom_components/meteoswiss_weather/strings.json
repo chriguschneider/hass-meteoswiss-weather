@@ -3,14 +3,48 @@
     "step": {
       "user": {
         "title": "MeteoSwiss Weather",
-        "description": "Enter the Swiss postal code of the place to forecast. The integration uses the official MeteoSwiss open data: the local forecast for that postal code and the nearest SwissMetNet station.",
+        "description": "Set up the official MeteoSwiss open data integration. The postal code is pre-filled from your Home Assistant location.",
         "data": {
           "postal_code": "Postal code"
+        },
+        "data_description": {
+          "postal_code": "Swiss postal code (PLZ) of the place to forecast."
+        }
+      },
+      "point": {
+        "title": "Select forecast point",
+        "description": "This postal code has more than one forecast point. Select the one you want.",
+        "data": {
+          "point_id": "Forecast point"
+        }
+      },
+      "station": {
+        "title": "Select weather station",
+        "description": "Choose the SwissMetNet station to use for current conditions. The nearest station is pre-selected.",
+        "data": {
+          "station_abbr": "Weather station"
         }
       }
     },
+    "error": {
+      "cannot_connect": "Could not connect to the MeteoSwiss open data service. Check your network and try again.",
+      "unknown_postal_code": "No forecast point found for this postal code. Check the code and try again."
+    },
     "abort": {
-      "already_configured": "This postal code is already configured."
+      "already_configured": "This forecast point is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "MeteoSwiss Weather options",
+        "data": {
+          "hourly_forecast": "Enable hourly forecast"
+        },
+        "data_description": {
+          "hourly_forecast": "Downloads roughly 1 GB per day, refreshed every 3 hours. Disabled by default to stay within the fair-use traffic budget."
+        }
+      }
     }
   }
 }
