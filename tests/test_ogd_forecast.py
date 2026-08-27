@@ -25,11 +25,13 @@ from custom_components.meteoswiss_weather.ogd import (
     latest_run,
     nearest_point,
     parse_daily,
+    parse_hourly,
     points_for_postal_code,
 )
 from custom_components.meteoswiss_weather.ogd.const import (
     COLLECTION_FORECAST,
     DAILY_REQUIRED_PARAMS,
+    HOURLY_REQUIRED_PARAMS,
     META_POINT_URL,
     stac_items_url,
 )
@@ -302,7 +304,94 @@ async def test_bulk_backend_fetch_daily(session) -> None:
     assert daily[0].symbol == 1
 
 
-async def test_bulk_backend_fetch_hourly_not_implemented(session) -> None:
-    backend = BulkCsvBackend(session)
-    with pytest.raises(NotImplementedError):
-        await backend.fetch_hourly(_koeniz_point())
+# --- hourly parser ----------------------------------------------------------
+
+
+def _hourly_texts() -> dict[str, str]:
+    return {
+        param: _fixture_text(f"vnut12.lssw.{RUN_TS}.{param}.csv")
+        for param in HOURLY_REQUIRED_PARAMS
+    }
+
+
+def test_parse_hourly_24h_for_309800() -> None:
+    hourly = parse_hourly(_hourly_texts(), _koeniz_point())
+    assert len(hourly) == 24
+
+    first = hourly[0]
+    # The first hour is the top of 2026-08-27 00:00 UTC (aware).
+    assert first.time == datetime(2026, 8, 27, 0, 0, tzinfo=UTC)
+    assert first.temperature == 10.0
+    assert first.precipitation == 0.0
+    assert first.symbol == 1
+    assert first.wind_speed_kmh == 5.0
+    assert first.gust_kmh == 8.0
+    assert first.wind_bearing == 180
+
+    # Every field of the modelled set is populated for every hour.
+    assert all(
+        h.temperature is not None
+        and h.precipitation is not None
+        and h.symbol is not None
+        and h.wind_speed_kmh is not None
+        and h.gust_kmh is not None
+        and h.wind_bearing is not None
+        for h in hourly
+    )
+    # Sorted ascending, 24 consecutive hours ending at 23:00.
+    assert [h.time for h in hourly] == sorted(h.time for h in hourly)
+    assert hourly[-1].time == datetime(2026, 8, 27, 23, 0, tzinfo=UTC)
+
+    # Hour 12 carries the distinctive rainy symbol (7), proving per-hour
+    # symbols survive the merge.
+    noon = next(h for h in hourly if h.time.hour == 12)
+    assert noon.symbol == 7
+    assert noon.temperature == 16.0
+
+
+def test_parse_hourly_is_order_independent() -> None:
+    """Shuffle every file's data rows; the merged result must not change."""
+    rng = random.Random(4321)
+    shuffled: dict[str, str] = {}
+    for param, text in _hourly_texts().items():
+        lines = text.splitlines()
+        header, body = lines[0], lines[1:]
+        rng.shuffle(body)
+        shuffled[param] = "\n".join([header, *body]) + "\n"
+
+    point = _koeniz_point()
+    assert parse_hourly(shuffled, point) == parse_hourly(_hourly_texts(), point)
+
+
+def test_parse_hourly_discriminates_on_point_type_id() -> None:
+    """A row with the right id but wrong type must be ignored."""
+    text = (
+        "point_id;point_type_id;Date;tre200h0\n"
+        "309800;1;202608270000;99.0\n"   # same id, station type -> ignored
+        "309800;2;202608270000;12.5\n"
+    )
+    hourly = parse_hourly({"tre200h0": text}, _koeniz_point())
+    assert len(hourly) == 1
+    assert hourly[0].temperature == 12.5
+
+
+# --- backend (hourly) -------------------------------------------------------
+
+
+def _hourly_asset_url(param: str) -> str:
+    return f"{ASSET_BASE}/vnut12.lssw.{RUN_TS}.{param}.csv"
+
+
+async def test_bulk_backend_fetch_hourly(session) -> None:
+    with aioresponses() as mock:
+        mock.get(ITEMS_URL, status=200,
+                 body=_fixture_bytes("ogd-local-forecasting_items.json"))
+        for param in HOURLY_REQUIRED_PARAMS:
+            mock.get(_hourly_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        backend = BulkCsvBackend(session)
+        hourly = await backend.fetch_hourly(_koeniz_point())
+
+    assert len(hourly) == 24
+    assert hourly[0].temperature == 10.0
+    assert hourly[0].wind_bearing == 180

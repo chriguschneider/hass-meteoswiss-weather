@@ -42,7 +42,7 @@
           "hourly_forecast": "Enable hourly forecast"
         },
         "data_description": {
-          "hourly_forecast": "Downloads roughly 1 GB per day, refreshed every 3 hours. Disabled by default to stay within the fair-use traffic budget."
+          "hourly_forecast": "Downloads roughly 1.5 GB per day, refreshed at most every 3 hours. Disabled by default to stay within the fair-use traffic budget."
         }
       }
     }

@@ -9,13 +9,18 @@ and the availability contract across the two coordinators.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
+from freezegun import freeze_time
 from homeassistant.components.sun import STATE_ABOVE_HORIZON, STATE_BELOW_HORIZON
+from homeassistant.components.weather import WeatherEntityFeature
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
 from custom_components.meteoswiss_weather.const import (
+    CONF_HOURLY_FORECAST,
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
@@ -30,19 +35,35 @@ _STATION_ABBR = "BER"
 _ENTITY_ID = "weather.koniz"
 
 
+def _entry_data() -> dict:
+    return {
+        CONF_POINT_ID: 309800,
+        CONF_POINT_TYPE_ID: 2,
+        CONF_POSTAL_CODE: "3098",
+        CONF_POINT_NAME: "Köniz",
+        CONF_STATION_ABBR: _STATION_ABBR,
+        CONF_STATION_NAME: "Bern / Zollikofen",
+    }
+
+
 @pytest.fixture
 def config_entry() -> MockConfigEntry:
     """A config entry shaped exactly like the config flow produces."""
     return MockConfigEntry(
         domain=DOMAIN,
-        data={
-            CONF_POINT_ID: 309800,
-            CONF_POINT_TYPE_ID: 2,
-            CONF_POSTAL_CODE: "3098",
-            CONF_POINT_NAME: "Köniz",
-            CONF_STATION_ABBR: _STATION_ABBR,
-            CONF_STATION_NAME: "Bern / Zollikofen",
-        },
+        data=_entry_data(),
+        title="Köniz",
+        unique_id="2-309800",
+    )
+
+
+@pytest.fixture
+def hourly_config_entry() -> MockConfigEntry:
+    """A config entry with the opt-in hourly forecast enabled."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        data=_entry_data(),
+        options={CONF_HOURLY_FORECAST: True},
         title="Köniz",
         unique_id="2-309800",
     )
@@ -173,3 +194,66 @@ async def test_unavailable_when_station_fails(
     await hass.async_block_till_done()
 
     assert hass.states.get(_ENTITY_ID).state == "unavailable"
+
+
+# --- hourly forecast (opt-in, ADR-0002) ------------------------------------
+
+
+async def test_hourly_feature_absent_when_option_off(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """FORECAST_HOURLY is not advertised while the option is off."""
+    await _setup(hass, config_entry)
+    features = hass.states.get(_ENTITY_ID).attributes["supported_features"]
+    assert not features & WeatherEntityFeature.FORECAST_HOURLY
+    assert features & WeatherEntityFeature.FORECAST_DAILY
+
+
+async def test_hourly_feature_and_forecast_when_option_on(
+    hass: HomeAssistant,
+    hourly_config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """With the option on, FORECAST_HOURLY is advertised and returns 24 hours."""
+    with freeze_time(datetime(2026, 8, 27, 2, 0, tzinfo=UTC)):
+        await _setup(hass, hourly_config_entry)
+
+        features = hass.states.get(_ENTITY_ID).attributes["supported_features"]
+        assert features & WeatherEntityFeature.FORECAST_HOURLY
+
+        response = await hass.services.async_call(
+            "weather",
+            "get_forecasts",
+            {"entity_id": _ENTITY_ID, "type": "hourly"},
+            blocking=True,
+            return_response=True,
+        )
+
+    forecasts = response[_ENTITY_ID]["forecast"]
+    assert len(forecasts) == 24
+
+    first = forecasts[0]
+    assert first["datetime"] == "2026-08-27T00:00:00+00:00"
+    assert first["temperature"] == 10.0
+    assert first["precipitation"] == 0.0
+    assert first["wind_speed"] == 5.0
+    assert first["wind_gust_speed"] == 8.0
+    assert first["wind_bearing"] == 180
+    assert first["condition"] == "sunny"  # symbol 1 at hour 0
+
+
+async def test_condition_prefers_current_hour_symbol(
+    hass: HomeAssistant,
+    hourly_config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """With hourly on, the current hour's symbol overrides the daily symbol.
+
+    At 12:00 UTC the hourly symbol is 7 (rainy) while today's daily symbol is
+    1 (sunny); the entity state must follow the sharper hourly value.
+    """
+    with freeze_time(datetime(2026, 8, 27, 12, 0, tzinfo=UTC)):
+        await _setup(hass, hourly_config_entry)
+        assert hass.states.get(_ENTITY_ID).state == "rainy"

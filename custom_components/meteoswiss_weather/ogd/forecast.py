@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import date
+from datetime import UTC, date, datetime
 
 import aiohttp
 
@@ -21,12 +21,18 @@ from .const import (
     DAILY_TEMP_MAX,
     DAILY_TEMP_MIN,
     FORECAST_ENCODING,
+    HOURLY_GUST,
+    HOURLY_PRECIPITATION,
+    HOURLY_SYMBOL,
+    HOURLY_TEMPERATURE,
+    HOURLY_WIND_DIRECTION,
+    HOURLY_WIND_SPEED,
     META_POINT_URL,
     POINT_TYPE_POSTAL_CODE,
 )
 from .geo import haversine_km
 from .http import get_text
-from .models import DailyForecast, ForecastPoint, OgdParseError
+from .models import DailyForecast, ForecastPoint, HourlyForecast, OgdParseError
 
 # Header columns of ogd-local-forecasting_meta_point.csv (docs/ogd.md §E4).
 _POINT_ID = "point_id"
@@ -51,6 +57,18 @@ _DAILY_FIELDS: dict[str, str] = {
     DAILY_TEMP_MIN: "temp_min",
     DAILY_PRECIPITATION: "precipitation",
     DAILY_SYMBOL: "symbol",
+}
+
+# Hourly parameter code -> HourlyForecast field (ADR-0002 minimum set plus the
+# gust and wind-direction files the entity exposes). ``symbol`` is the integer
+# icon code; the rest are floats.
+_HOURLY_FIELDS: dict[str, str] = {
+    HOURLY_TEMPERATURE: "temperature",
+    HOURLY_PRECIPITATION: "precipitation",
+    HOURLY_SYMBOL: "symbol",
+    HOURLY_WIND_SPEED: "wind_speed_kmh",
+    HOURLY_GUST: "gust_kmh",
+    HOURLY_WIND_DIRECTION: "wind_bearing",
 }
 
 
@@ -178,4 +196,55 @@ def parse_daily(
     return [
         DailyForecast(date=day, **values)
         for day, values in sorted(by_date.items())
+    ]
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    """Parse an hourly ``Date`` cell (``YYYYMMDDHHMM`` UTC) into an aware dt."""
+    if value is None:
+        return None
+    digits = value.strip()
+    if len(digits) < 12 or not digits[:12].isdigit():
+        return None
+    return datetime(
+        int(digits[:4]),
+        int(digits[4:6]),
+        int(digits[6:8]),
+        int(digits[8:10]),
+        int(digits[10:12]),
+        tzinfo=UTC,
+    )
+
+
+def parse_hourly(
+    text_by_param: dict[str, str], point: ForecastPoint
+) -> list[HourlyForecast]:
+    """Merge the hourly parameter files into one forecast for ``point``.
+
+    A **plain function** so the backend can hand it to an executor (ADR-0002).
+    Each file is ~30 MB and holds every point's ~220 rows spread across the
+    whole file; only the rows matching ``point`` are kept while iterating, so
+    the ~1.2 M rows are never materialised as a list. Order-independent: rows
+    are keyed by timestamp, then sorted at the end.
+    """
+    by_time: dict[datetime, dict[str, float | int | None]] = {}
+
+    for param, text in text_by_param.items():
+        field = _HOURLY_FIELDS.get(param)
+        if field is None:
+            continue  # a parameter this forecast does not model
+        cast = _to_int if field == "symbol" else _to_float
+        for row in _reader(text):
+            if _to_int(row.get(_DATA_POINT_ID)) != point.point_id:
+                continue
+            if _to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
+                continue
+            when = _parse_datetime(row.get(_DATA_DATE))
+            if when is None:
+                continue
+            by_time.setdefault(when, {})[field] = cast(row.get(param))
+
+    return [
+        HourlyForecast(time=when, **values)
+        for when, values in sorted(by_time.items())
     ]
