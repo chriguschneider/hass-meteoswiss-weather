@@ -1,11 +1,18 @@
 """MeteoSwiss forecast symbol → Home Assistant condition mapping.
 
 The MeteoSwiss local-forecast parameters ``jp2000d0`` (daily) and
-``jww003i0`` (hourly) carry integer icon codes.  Day codes run from 1 to
-about 42; night codes are the day base plus 100 (101–142).
+``jww003i0`` (hourly) carry integer icon codes.  Day codes run from 1 to 42;
+night codes run from 101 to 142 and are **not** a mechanical ``+100`` of the
+day meaning — the icon set assigns them independently (e.g. ``26`` is *high
+clouds* → ``sunny`` but ``126`` is *high cloud* at night → ``cloudy``), so
+they are mapped from their own entries here.
 
-Derived from Rudd-O/hamsclientfork (MIT) and cross-checked against the
-MeteoSwiss app icon set; see docs/symbols.md for the full table.
+The table is copied faithfully from ``CODE_TO_CONDITION_MAP`` in
+`Rudd-O/homeassistant-meteoswiss <https://github.com/Rudd-O/homeassistant-meteoswiss/blob/master/custom_components/meteoswiss/const.py>`_
+(MIT), which in turn dumps the official MeteoSwiss weather-icon spreadsheet
+(``2022-02-14-Wetter-Icons-inkl-beschreibung``).  The English descriptions in
+the trailing comments are that spreadsheet's wording.  See docs/symbols.md for
+the full reviewable table.
 """
 
 from __future__ import annotations
@@ -18,61 +25,97 @@ _LOGGER = logging.getLogger(__name__)
 # every forecast refresh for the same unknown code.
 _unknown_logged: set[int] = set()
 
-# Day-code (1–42) → HA ATTR_CONDITION_* string.
-# Night codes (101–142) share this table via ``night_code - 100``.
-# The ``clear-night`` override (for codes whose day equivalent is ``sunny``)
-# is applied at call time; it is not stored here.
-_DAY_CONDITIONS: dict[int, str] = {
-    # --- clear to overcast --------------------------------------------------
-    1: "sunny",           # Sonnig (Sunny)
-    2: "sunny",           # Leicht bewölkt, sonnig (Slightly cloudy, sunny)
-    3: "partlycloudy",    # Wechselnd bewölkt (Partly cloudy)
-    4: "cloudy",          # Stark bewölkt (Mostly cloudy)
-    5: "cloudy",          # Bedeckt (Overcast)
-    # --- precipitation (no convection) --------------------------------------
-    6: "rainy",           # Bedeckt, etwas Regen (Overcast, some rain)
-    7: "rainy",           # Regen (Rain)
-    8: "pouring",         # Starker Regen (Heavy rain)
-    9: "snowy-rainy",     # Regen und Schnee / Schneeregen (Sleet)
-    10: "snowy",          # Schneefall (Snowfall)
-    11: "snowy",          # Leichter Schneefall (Light snowfall)
-    # --- fog ----------------------------------------------------------------
-    12: "fog",            # Nebel (Fog)
-    13: "fog",            # Hochnebel (High fog / stratus)
-    # --- convection ---------------------------------------------------------
-    14: "lightning",      # Gewitter möglich (Thunderstorm possible)
-    15: "lightning-rainy",# Gewitter (Thunderstorm)
-    16: "lightning-rainy",# Gewitter mit Regen (Thunderstorm with rain)
-    17: "hail",           # Gewitter mit Hagel (Thunderstorm with hail)
-    18: "hail",           # Hagel (Hail showers)
-    # --- mixed: sunny base --------------------------------------------------
-    19: "rainy",          # Sonnig, leichter Regen (Sunny, light rain)
-    20: "rainy",          # Sonnig, Regen (Sunny, rain)
-    27: "rainy",          # Sonnig, Schauer (Sunny, showers)
-    28: "lightning-rainy",# Sonnig, Gewitter mit Regen (Sunny, thunderstorm)
-    29: "snowy",          # Sonnig, Schneeschauer (Sunny, snow showers)
-    30: "snowy-rainy",    # Sonnig, Graupelschauer (Sunny, sleet showers)
-    36: "hail",           # Sonnig, Gewitter mit Hagel (Sunny, thunderstorm + hail)
-    # --- mixed: partly-cloudy base ------------------------------------------
-    21: "rainy",          # Wechselnd bewölkt, Schauer (Partly cloudy, showers)
-    22: "lightning-rainy",# Wechselnd bewölkt, Gewitter (Partly cloudy, thunderstorm)
-    23: "snowy",          # Wechselnd bewölkt, Schneeschauer (Partly cloudy, snow)
-    31: "snowy-rainy",    # Wechselnd bewölkt, Graupelschauer (Partly cloudy, sleet)
-    37: "hail",           # Wechselnd bewölkt, Gewitter m. Hagel (Partly cloudy + hail)
-    # --- mixed: overcast base -----------------------------------------------
-    24: "rainy",          # Bedeckt, leichter Regen (Overcast, light rain)
-    25: "lightning-rainy",# Bedeckt, Gewitter (Overcast, thunderstorm)
-    26: "snowy",          # Bedeckt, Schneefall (Overcast, snowfall)
-    32: "snowy-rainy",    # Bedeckt, Graupelschauer (Overcast, sleet)
-    33: "snowy",          # Bedeckt, starker Schneefall (Overcast, heavy snow)
-    34: "rainy",          # Bedeckt, Regen (Overcast, rain)
-    35: "pouring",        # Bedeckt, starker Regen (Overcast, heavy rain)
-    38: "hail",           # Bedeckt, Gewitter mit Hagel (Overcast, thunderstorm + hail)
-    42: "lightning-rainy",# Bedeckt, Gewitter (Overcast, thunderstorm, no rain icon)
-    # --- fog with precipitation ---------------------------------------------
-    39: "rainy",          # Nebel mit Niederschlag (Fog with precipitation)
-    40: "rainy",          # Hochnebel mit Niederschlag (High fog with precipitation)
-    41: "snowy",          # Hochnebel mit Schneefall (High fog with snowfall)
+# MeteoSwiss icon code → HA ATTR_CONDITION_* string.  Day codes are 1–42,
+# night codes 101–142; each is mapped independently (see module docstring).
+# Comments are the official spreadsheet's English descriptions, kept verbatim
+# so this table can be reviewed against the app icon set.
+_CONDITIONS: dict[int, str] = {
+    # --- day codes (1–42) ---------------------------------------------------
+    1: "sunny",            # sunny
+    2: "partlycloudy",     # mostly sunny, some clouds
+    3: "partlycloudy",     # partly sunny, thick passing clouds
+    4: "partlycloudy",     # overcast
+    5: "cloudy",           # very cloudy
+    6: "rainy",            # sunny intervals, isolated showers
+    7: "snowy-rainy",      # sunny intervals, isolated sleet
+    8: "snowy",            # sunny intervals, snow showers
+    9: "rainy",            # overcast, some rain showers
+    10: "snowy-rainy",     # overcast, some sleet
+    11: "snowy",           # overcast, some snow showers
+    12: "lightning",       # sunny intervals, chance of thunderstorms
+    13: "lightning-rainy", # sunny intervals, possible thunderstorms
+    14: "rainy",           # very cloudy, light rain
+    15: "snowy-rainy",     # very cloudy, light sleet
+    16: "snowy",           # very cloudy, light snow showers
+    17: "rainy",           # very cloudy, intermittent rain
+    18: "snowy-rainy",     # very cloudy, intermittent sleet
+    19: "snowy",           # very cloudy, intermittent snow
+    20: "pouring",         # very overcast with rain
+    21: "snowy-rainy",     # very overcast with frequent sleet
+    22: "snowy",           # very overcast with heavy snow
+    23: "lightning-rainy", # very overcast, slight chance of storms
+    24: "lightning-rainy", # very overcast with storms
+    25: "lightning-rainy", # very cloudy, very stormy
+    26: "sunny",           # high clouds
+    27: "fog",             # stratus
+    28: "fog",             # fog
+    29: "rainy",           # sunny intervals, scattered showers
+    30: "snowy",           # sunny intervals, scattered snow showers
+    31: "snowy-rainy",     # sunny intervals, scattered sleet
+    32: "lightning-rainy", # sunny intervals, some showers
+    33: "rainy",           # short sunny intervals, frequent rain
+    34: "snowy",           # short sunny intervals, frequent snowfalls
+    35: "cloudy",          # overcast and dry
+    36: "lightning",       # partly sunny, slightly stormy
+    37: "snowy",           # partly sunny, stormy snow showers
+    38: "lightning-rainy", # overcast, thundery showers
+    39: "snowy-rainy",     # overcast, thundery snow showers
+    40: "lightning",       # very cloudy, slightly stormy
+    41: "lightning",       # overcast, slightly stormy
+    42: "snowy",           # very cloudy, thundery snow showers
+    # --- night codes (101–142) ----------------------------------------------
+    101: "clear-night",     # clear
+    102: "partlycloudy",    # slightly overcast
+    103: "partlycloudy",    # heavy cloud formations
+    104: "partlycloudy",    # overcast
+    105: "cloudy",          # very cloudy
+    106: "rainy",           # overcast, scattered showers
+    107: "snowy-rainy",     # overcast, scattered rain and snow showers
+    108: "snowy",           # overcast, snow showers
+    109: "rainy",           # overcast, some showers
+    110: "snowy-rainy",     # overcast, some rain and snow showers
+    111: "snowy",           # overcast, some snow showers
+    112: "lightning",       # slightly stormy
+    113: "lightning-rainy", # storms
+    114: "rainy",           # very cloudy, light rain
+    115: "snowy-rainy",     # very cloudy, light rain and snow showers
+    116: "snowy",           # very cloudy, light snowfall
+    117: "rainy",           # very cloudy, intermittent rain
+    118: "snowy-rainy",     # very cloudy, intermittent mixed rain and snowfall
+    119: "snowy",           # very cloudy, intermittent snowfall
+    120: "pouring",         # very cloudy, constant rain
+    121: "snowy-rainy",     # very cloudy, frequent rain and snowfall
+    122: "snowy",           # very cloudy, heavy snowfall
+    123: "lightning-rainy", # very cloudy, slightly stormy
+    124: "lightning-rainy", # very cloudy, stormy
+    125: "lightning-rainy", # very cloudy, storms
+    126: "cloudy",          # high cloud
+    127: "fog",             # stratus
+    128: "fog",             # fog
+    129: "rainy",           # slightly overcast, scattered showers
+    130: "snowy",           # slightly overcast, scattered snowfall
+    131: "snowy-rainy",     # slightly overcast, rain and snow showers
+    132: "lightning-rainy", # slightly overcast, some showers
+    133: "rainy",           # overcast, frequent snow showers
+    134: "snowy",           # overcast, frequent snow showers
+    135: "cloudy",          # overcast and dry
+    136: "lightning",       # slightly overcast, slightly stormy
+    137: "snowy",           # slightly overcast, stormy snow showers
+    138: "lightning-rainy", # overcast, thundery showers
+    139: "snowy-rainy",     # overcast, thundery snow showers
+    140: "lightning",       # very cloudy, slightly stormy
+    141: "lightning",       # overcast, slightly stormy
+    142: "snowy",           # very cloudy, thundery snow showers
 }
 
 
@@ -83,10 +126,12 @@ def condition_for_symbol(
 ) -> str | None:
     """Return the HA ``ATTR_CONDITION_*`` string for a MeteoSwiss symbol code.
 
-    Night codes (101–142) yield the same condition as the day base
-    (``code - 100``) except that any code whose day base maps to ``sunny``
-    yields ``clear-night`` instead.  A day code (1–42) with
-    ``is_daytime=False`` gets the same ``clear-night`` override.
+    Day codes (1–42) and night codes (101–142) are looked up directly from
+    their own table entries.  ``is_daytime=False`` is a hint used only for a
+    *daily* symbol (a day code) rendered at night: the code's night
+    counterpart (``code + 100``) is substituted when the table has one, so the
+    icon set's independent night meaning is honoured (e.g. ``26`` → ``sunny``
+    by day but ``126`` → ``cloudy`` at night).
 
     Returns ``None`` for ``None`` input or unknown codes; unknown codes are
     logged once per unique value at ``DEBUG`` level.
@@ -94,18 +139,14 @@ def condition_for_symbol(
     if code is None:
         return None
 
-    night = 101 <= code <= 199
-    day_code = (code - 100) if night else code
+    # A daytime daily symbol shown at night takes its own night counterpart.
+    if is_daytime is False and 1 <= code <= 42 and (code + 100) in _CONDITIONS:
+        code += 100
 
-    condition = _DAY_CONDITIONS.get(day_code)
+    condition = _CONDITIONS.get(code)
     if condition is None:
         if code not in _unknown_logged:
             _LOGGER.debug("Unknown MeteoSwiss symbol code %d", code)
             _unknown_logged.add(code)
         return None
-
-    # Return the night variant when the code itself is a night code, or when
-    # the caller signals nighttime for a day code.
-    if (night or is_daytime is False) and condition == "sunny":
-        return "clear-night"
     return condition

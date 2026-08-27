@@ -2,17 +2,25 @@
 
 The MeteoSwiss local-forecast parameters `jp2000d0` (daily weather symbol)
 and `jww003i0` (hourly weather symbol) carry integer icon codes.  Day codes
-run from 1 to about 42; night codes are the day base plus 100 (101–142).
+run from 1 to 42; night codes run from 101 to 142.
 
-**Source:** Rudd-O/hamsclientfork (MIT) used as the starting reference;
-cross-checked against the MeteoSwiss app icon set.  Descriptions come from
-the MeteoSwiss developer resources and the OGD parameter metadata file
-(`ogd-local-forecasting_meta_parameters.csv`).
+**Source:** the table is copied faithfully from `CODE_TO_CONDITION_MAP` in
+[`Rudd-O/homeassistant-meteoswiss`](https://github.com/Rudd-O/homeassistant-meteoswiss/blob/master/custom_components/meteoswiss/const.py)
+(MIT, in production for three years), which dumps the official MeteoSwiss
+weather-icon spreadsheet
+(`2022-02-14-Wetter-Icons-inkl-beschreibung-v1-an-website.xlsx`).  The English
+descriptions below are that spreadsheet's wording.
 
-**Night-code rule:** night codes 101–142 yield the same HA condition as
-their day base (code − 100), *except* that any code whose day base maps to
-`sunny` yields `clear-night` instead.  In this table that applies to codes
-101 and 102 (both map to `clear-night`).
+**Night codes are independent, not day + 100.** The icon set assigns
+101–142 their own meanings, so the mapping does **not** derive a night code
+from `code − 100`.  The clearest example: day code `26` is *high clouds* →
+`sunny`, but night code `126` is *high cloud* → `cloudy`; day `1` is `sunny`
+while night `101` is `clear-night`.  Each code is mapped from its own entry.
+
+**`is_daytime` hint:** a *daily* symbol (a day code 1–42) shown at night is
+substituted by its night counterpart `code + 100` when the table has one, so
+the night meaning above is honoured.  The hourly symbol (`jww003i0`) already
+carries the day/night variant and is looked up directly.
 
 **Unknown codes:** `condition_for_symbol()` returns `None` and emits one
 `DEBUG`-level log per unique unknown code.
@@ -21,68 +29,101 @@ their day base (code − 100), *except* that any code whose day base maps to
 
 ## Day codes (1–42)
 
-| Code | MeteoSwiss label (de) | MeteoSwiss label (en) | HA condition |
-|-----:|----------------------|-----------------------|--------------|
-| 1 | Sonnig | Sunny | `sunny` |
-| 2 | Leicht bewölkt, sonnig | Slightly cloudy, sunny | `sunny` |
-| 3 | Wechselnd bewölkt | Partly cloudy | `partlycloudy` |
-| 4 | Stark bewölkt | Mostly cloudy | `cloudy` |
-| 5 | Bedeckt | Overcast | `cloudy` |
-| 6 | Bedeckt, etwas Regen | Overcast, some rain | `rainy` |
-| 7 | Regen | Rain | `rainy` |
-| 8 | Starker Regen | Heavy rain | `pouring` |
-| 9 | Regen und Schnee / Schneeregen | Rain and snow / sleet | `snowy-rainy` |
-| 10 | Schneefall | Snowfall | `snowy` |
-| 11 | Leichter Schneefall | Light snowfall | `snowy` |
-| 12 | Nebel | Fog | `fog` |
-| 13 | Hochnebel | High fog / stratus | `fog` |
-| 14 | Gewitter möglich | Thunderstorm possible | `lightning` |
-| 15 | Gewitter | Thunderstorm | `lightning-rainy` |
-| 16 | Gewitter mit Regen | Thunderstorm with rain | `lightning-rainy` |
-| 17 | Gewitter mit Hagel | Thunderstorm with hail | `hail` |
-| 18 | Hagel | Hail showers | `hail` |
-| 19 | Sonnig, leichter Regen | Sunny, light rain | `rainy` |
-| 20 | Sonnig, Regen | Sunny, rain | `rainy` |
-| 21 | Wechselnd bewölkt, Schauer | Partly cloudy, showers | `rainy` |
-| 22 | Wechselnd bewölkt, Gewitter | Partly cloudy, thunderstorm | `lightning-rainy` |
-| 23 | Wechselnd bewölkt, Schneeschauer | Partly cloudy, snow showers | `snowy` |
-| 24 | Bedeckt, leichter Regen | Overcast, light rain | `rainy` |
-| 25 | Bedeckt, Gewitter | Overcast, thunderstorm | `lightning-rainy` |
-| 26 | Bedeckt, Schneefall | Overcast, snowfall | `snowy` |
-| 27 | Sonnig, Schauer | Sunny, showers | `rainy` |
-| 28 | Sonnig, Gewitter mit Regen | Sunny, thunderstorm with rain | `lightning-rainy` |
-| 29 | Sonnig, Schneeschauer | Sunny, snow showers | `snowy` |
-| 30 | Sonnig, Graupelschauer | Sunny, sleet showers | `snowy-rainy` |
-| 31 | Wechselnd bewölkt, Graupelschauer | Partly cloudy, sleet showers | `snowy-rainy` |
-| 32 | Bedeckt, Graupelschauer | Overcast, sleet showers | `snowy-rainy` |
-| 33 | Bedeckt, starker Schneefall | Overcast, heavy snowfall | `snowy` |
-| 34 | Bedeckt, Regen | Overcast, rain | `rainy` |
-| 35 | Bedeckt, starker Regen | Overcast, heavy rain | `pouring` |
-| 36 | Sonnig, Gewitter mit Hagel | Sunny, thunderstorm with hail | `hail` |
-| 37 | Wechselnd bewölkt, Gewitter mit Hagel | Partly cloudy, thunderstorm with hail | `hail` |
-| 38 | Bedeckt, Gewitter mit Hagel | Overcast, thunderstorm with hail | `hail` |
-| 39 | Nebel mit Niederschlag | Fog with precipitation | `rainy` |
-| 40 | Hochnebel mit Niederschlag | High fog with precipitation | `rainy` |
-| 41 | Hochnebel mit Schneefall | High fog with snowfall | `snowy` |
-| 42 | Bedeckt, Gewitter | Overcast, thunderstorm | `lightning-rainy` |
+| Code | MeteoSwiss meaning (en) | HA condition |
+|-----:|-------------------------|--------------|
+| 1 | sunny | `sunny` |
+| 2 | mostly sunny, some clouds | `partlycloudy` |
+| 3 | partly sunny, thick passing clouds | `partlycloudy` |
+| 4 | overcast | `partlycloudy` |
+| 5 | very cloudy | `cloudy` |
+| 6 | sunny intervals, isolated showers | `rainy` |
+| 7 | sunny intervals, isolated sleet | `snowy-rainy` |
+| 8 | sunny intervals, snow showers | `snowy` |
+| 9 | overcast, some rain showers | `rainy` |
+| 10 | overcast, some sleet | `snowy-rainy` |
+| 11 | overcast, some snow showers | `snowy` |
+| 12 | sunny intervals, chance of thunderstorms | `lightning` |
+| 13 | sunny intervals, possible thunderstorms | `lightning-rainy` |
+| 14 | very cloudy, light rain | `rainy` |
+| 15 | very cloudy, light sleet | `snowy-rainy` |
+| 16 | very cloudy, light snow showers | `snowy` |
+| 17 | very cloudy, intermittent rain | `rainy` |
+| 18 | very cloudy, intermittent sleet | `snowy-rainy` |
+| 19 | very cloudy, intermittent snow | `snowy` |
+| 20 | very overcast with rain | `pouring` |
+| 21 | very overcast with frequent sleet | `snowy-rainy` |
+| 22 | very overcast with heavy snow | `snowy` |
+| 23 | very overcast, slight chance of storms | `lightning-rainy` |
+| 24 | very overcast with storms | `lightning-rainy` |
+| 25 | very cloudy, very stormy | `lightning-rainy` |
+| 26 | high clouds | `sunny` |
+| 27 | stratus | `fog` |
+| 28 | fog | `fog` |
+| 29 | sunny intervals, scattered showers | `rainy` |
+| 30 | sunny intervals, scattered snow showers | `snowy` |
+| 31 | sunny intervals, scattered sleet | `snowy-rainy` |
+| 32 | sunny intervals, some showers | `lightning-rainy` |
+| 33 | short sunny intervals, frequent rain | `rainy` |
+| 34 | short sunny intervals, frequent snowfalls | `snowy` |
+| 35 | overcast and dry | `cloudy` |
+| 36 | partly sunny, slightly stormy | `lightning` |
+| 37 | partly sunny, stormy snow showers | `snowy` |
+| 38 | overcast, thundery showers | `lightning-rainy` |
+| 39 | overcast, thundery snow showers | `snowy-rainy` |
+| 40 | very cloudy, slightly stormy | `lightning` |
+| 41 | overcast, slightly stormy | `lightning` |
+| 42 | very cloudy, thundery snow showers | `snowy` |
 
 ## Night codes (101–142)
 
-Night codes follow the rule above: same condition as the day base, but
-`sunny` → `clear-night`.
-
-| Code | Day base | HA condition |
-|-----:|---------:|--------------|
-| 101 | 1 (Sonnig) | `clear-night` |
-| 102 | 2 (Leicht bewölkt, sonnig) | `clear-night` |
-| 103–142 | 3–42 | same as day base |
-
-The full night mapping is derived at runtime; see
-`custom_components/meteoswiss_weather/symbols.py`.
+| Code | MeteoSwiss meaning (en) | HA condition |
+|-----:|-------------------------|--------------|
+| 101 | clear | `clear-night` |
+| 102 | slightly overcast | `partlycloudy` |
+| 103 | heavy cloud formations | `partlycloudy` |
+| 104 | overcast | `partlycloudy` |
+| 105 | very cloudy | `cloudy` |
+| 106 | overcast, scattered showers | `rainy` |
+| 107 | overcast, scattered rain and snow showers | `snowy-rainy` |
+| 108 | overcast, snow showers | `snowy` |
+| 109 | overcast, some showers | `rainy` |
+| 110 | overcast, some rain and snow showers | `snowy-rainy` |
+| 111 | overcast, some snow showers | `snowy` |
+| 112 | slightly stormy | `lightning` |
+| 113 | storms | `lightning-rainy` |
+| 114 | very cloudy, light rain | `rainy` |
+| 115 | very cloudy, light rain and snow showers | `snowy-rainy` |
+| 116 | very cloudy, light snowfall | `snowy` |
+| 117 | very cloudy, intermittent rain | `rainy` |
+| 118 | very cloudy, intermittent mixed rain and snowfall | `snowy-rainy` |
+| 119 | very cloudy, intermittent snowfall | `snowy` |
+| 120 | very cloudy, constant rain | `pouring` |
+| 121 | very cloudy, frequent rain and snowfall | `snowy-rainy` |
+| 122 | very cloudy, heavy snowfall | `snowy` |
+| 123 | very cloudy, slightly stormy | `lightning-rainy` |
+| 124 | very cloudy, stormy | `lightning-rainy` |
+| 125 | very cloudy, storms | `lightning-rainy` |
+| 126 | high cloud | `cloudy` |
+| 127 | stratus | `fog` |
+| 128 | fog | `fog` |
+| 129 | slightly overcast, scattered showers | `rainy` |
+| 130 | slightly overcast, scattered snowfall | `snowy` |
+| 131 | slightly overcast, rain and snow showers | `snowy-rainy` |
+| 132 | slightly overcast, some showers | `lightning-rainy` |
+| 133 | overcast, frequent snow showers | `rainy` |
+| 134 | overcast, frequent snow showers | `snowy` |
+| 135 | overcast and dry | `cloudy` |
+| 136 | slightly overcast, slightly stormy | `lightning` |
+| 137 | slightly overcast, stormy snow showers | `snowy` |
+| 138 | overcast, thundery showers | `lightning-rainy` |
+| 139 | overcast, thundery snow showers | `snowy-rainy` |
+| 140 | very cloudy, slightly stormy | `lightning` |
+| 141 | overcast, slightly stormy | `lightning` |
+| 142 | very cloudy, thundery snow showers | `snowy` |
 
 ---
 
-> **Review note:** the German labels and the exact code-to-condition
-> assignments should be verified against the OGD parameter metadata file
-> (`ogd-local-forecasting_meta_parameters.csv`) and the MeteoSwiss app
-> icon set before this table is considered authoritative.
+> Descriptions and code→condition assignments are the reference spreadsheet's.
+> MeteoSwiss models more cloud/rain gradations than Home Assistant does, so
+> several codes collapse onto the same HA condition (e.g. 2/3/4 →
+> `partlycloudy`).  Verify against the app icon set before changing an entry.

@@ -9,6 +9,30 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+## [v0.1.1] — 2026-08-27
+
+### Fixed
+
+- **Weather symbol table was invented, so most forecast conditions were
+  wrong** (#44). The `jp2000d0`/`jww003i0` icon-code → HA-condition map in
+  `symbols.py` did not describe the MeteoSwiss icon set: code `2` reported
+  `sunny` instead of `partlycloudy`, `26` reported `snowy` (a 22 °C
+  September day) instead of `sunny`, `27`/`28` were rain/thunder instead of
+  `fog`, `38` was `hail` instead of `lightning-rainy`, and more — roughly
+  every second forecast day in Switzerland got a wrong icon. The table is
+  now copied faithfully from the reference in
+  `Rudd-O/homeassistant-meteoswiss` (MIT), which dumps the official
+  MeteoSwiss weather-icon spreadsheet, and credited in the module docstring
+  and `docs/symbols.md`.
+- **Night codes are now mapped from their own entries** instead of being
+  synthesised as `day − 100` with only `sunny → clear-night`. The icon set
+  assigns 101–142 independently (e.g. `26` is `sunny` but `126` is
+  `cloudy`), and night codes do occur in the hourly file.
+- The symbol test no longer validates the table against itself; it pins a
+  set of codes to the reference condition and asserts every code 1–42 and
+  101–142 resolves, so a gap can no longer make the entity report no
+  condition at all.
+
 ## [v0.1.0] — 2026-08-27
 
 First release: the integration produces a live `weather` entity per Swiss
@@ -81,6 +105,7 @@ integration produces a weather entity (see the tracking issue in the README).
   tag-triggered release gate with a zip asset, and the opt-in Claude agent
   workflows (label, mention, autopilot, reviewer)
 
-[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.1.1...HEAD
+[v0.1.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.1.0...v0.1.1
 [v0.1.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.0.1...v0.1.0
 [v0.0.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/releases/tag/v0.0.1

@@ -107,9 +107,10 @@ async def test_condition_from_daily_symbol_daytime(
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """With the sun up, today's sunny symbol (code 2) becomes ``sunny``."""
-    await _setup(hass, config_entry, sun=STATE_ABOVE_HORIZON)
-    assert hass.states.get(_ENTITY_ID).state == "sunny"
+    """With the sun up, 2026-08-29's daily symbol (code 1) becomes ``sunny``."""
+    with freeze_time(datetime(2026, 8, 29, 12, 0, tzinfo=UTC)):
+        await _setup(hass, config_entry, sun=STATE_ABOVE_HORIZON)
+        assert hass.states.get(_ENTITY_ID).state == "sunny"
 
 
 async def test_condition_from_daily_symbol_nighttime(
@@ -117,9 +118,14 @@ async def test_condition_from_daily_symbol_nighttime(
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """With the sun down, the same sunny symbol becomes ``clear-night``."""
-    await _setup(hass, config_entry, sun=STATE_BELOW_HORIZON)
-    assert hass.states.get(_ENTITY_ID).state == "clear-night"
+    """With the sun down, the same day symbol (code 1) becomes ``clear-night``.
+
+    A daytime daily symbol shown at night is substituted by its night
+    counterpart (code + 100); 1 → 101 is ``clear-night``.
+    """
+    with freeze_time(datetime(2026, 8, 29, 23, 0, tzinfo=UTC)):
+        await _setup(hass, config_entry, sun=STATE_BELOW_HORIZON)
+        assert hass.states.get(_ENTITY_ID).state == "clear-night"
 
 
 async def test_daily_forecast_service(
@@ -144,7 +150,7 @@ async def test_daily_forecast_service(
     first = forecasts[0]
     # Real 309800;2 (Köniz) values from run 2026-08-27 02:00 UTC.
     assert first["datetime"] == "2026-08-27"
-    assert first["condition"] == "sunny"  # symbol 2 → sunny
+    assert first["condition"] == "partlycloudy"  # symbol 2 → partlycloudy
     assert first["temperature"] == 29.3  # native max
     assert first["templow"] == 16.9  # native min
     assert first["precipitation"] == 0.0
@@ -252,9 +258,10 @@ async def test_condition_prefers_current_hour_symbol(
 ) -> None:
     """With hourly on, the current hour's symbol overrides the daily symbol.
 
-    At 12:00 UTC the hourly symbol is 7 (rainy) while today's daily symbol is
-    1 (sunny); the entity state must follow the sharper hourly value.
+    At 12:00 UTC the hourly symbol is 7 (snowy-rainy) while today's daily
+    symbol is 2 (partlycloudy); the entity state must follow the sharper
+    hourly value.
     """
     with freeze_time(datetime(2026, 8, 27, 12, 0, tzinfo=UTC)):
         await _setup(hass, hourly_config_entry)
-        assert hass.states.get(_ENTITY_ID).state == "rainy"
+        assert hass.states.get(_ENTITY_ID).state == "snowy-rainy"
