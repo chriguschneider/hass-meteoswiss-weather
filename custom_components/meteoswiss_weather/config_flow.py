@@ -186,12 +186,16 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
         options = {s.abbr: f"{s.name} ({s.canton})" for s in nearby}
         default_abbr = nearby[0].abbr if nearby else vol.UNDEFINED
 
-        description_placeholders = {}
+        # The description always references {radar_hint}; supply it in both
+        # cases (empty when the radar integration is already installed) so the
+        # frontend never renders an unfilled placeholder.
+        radar_hint = ""
         if "meteoswiss_radar" not in self.hass.config.components:
-            description_placeholders["radar_hint"] = (
+            radar_hint = (
                 " The animated radar is available in the separate "
                 "MeteoSwiss Radar integration (hass-meteoswiss-radar)."
             )
+        description_placeholders = {"radar_hint": radar_hint}
 
         return self.async_show_form(
             step_id="station",
