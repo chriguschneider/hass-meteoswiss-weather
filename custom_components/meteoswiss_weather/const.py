@@ -1,5 +1,7 @@
 """Constants for the MeteoSwiss Weather integration."""
 
+from datetime import timedelta
+
 DOMAIN = "meteoswiss_weather"
 
 # Keep in sync with manifest.json (tests/test_metadata.py enforces it).
@@ -25,3 +27,14 @@ OGD_STAC_BASE = "https://data.geo.admin.ch/api/stac/v1"
 OGD_FILE_BASE = "https://data.geo.admin.ch"
 COLLECTION_STATIONS = "ch.meteoschweiz.ogd-smn"
 COLLECTION_LOCAL_FORECAST = "ch.meteoschweiz.ogd-local-forecasting"
+
+# Update cadences (ADR-0002).
+# Station files carry 10-minute values, so polling faster buys nothing.
+STATION_UPDATE_INTERVAL = timedelta(minutes=10)
+# The local forecast is republished hourly; the coordinator checks the run
+# stamp each hour and only downloads when it changed.
+FORECAST_CHECK_INTERVAL = timedelta(hours=1)
+# Hard floor for the opt-in hourly forecast: its bulk files are the whole
+# traffic budget (~1 GB/day), so they are never fetched more often than this.
+# tests/test_const.py asserts this stays at least 3 hours.
+HOURLY_FORECAST_MIN_INTERVAL = timedelta(hours=3)
