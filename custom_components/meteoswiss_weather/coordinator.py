@@ -14,6 +14,16 @@ Two coordinators back a config entry (ADR-0002):
 Everything upstream-specific lives in the pure ``ogd`` client (ADR-0001);
 the coordinators only translate its :class:`OgdError` into ``UpdateFailed``
 and hand CSV parsing to the executor via the backend.
+
+Exponential backoff for transient :class:`~ogd.OgdConnectionError` is built
+into :class:`~homeassistant.helpers.update_coordinator.DataUpdateCoordinator`
+(it marks the update as failed and HA's listener machinery reschedules it with
+back-off automatically). No second layer is added here.
+
+A structural :class:`~ogd.OgdParseError` (upstream changed its file layout)
+is different: it will recur on every poll until the integration is updated.
+The coordinators therefore post a HA repair issue on the first occurrence and
+clear it as soon as parsing succeeds again.
 """
 
 from __future__ import annotations
@@ -25,10 +35,16 @@ from datetime import datetime
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.issue_registry import (
+    IssueSeverity,
+    async_create_issue,
+    async_delete_issue,
+)
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    DOMAIN,
     FORECAST_CHECK_INTERVAL,
     HOURLY_FORECAST_MIN_INTERVAL,
     STATION_UPDATE_INTERVAL,
@@ -40,11 +56,16 @@ from .ogd import (
     ForecastPoint,
     HourlyForecast,
     Observation,
-    OgdError,
+    OgdConnectionError,
+    OgdParseError,
     fetch_current,
     latest_run,
 )
 from .ogd.const import COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS
+
+# Issue IDs used in the HA repair-issue registry.
+_ISSUE_STATION_PARSE = "parse_error_station"
+_ISSUE_FORECAST_PARSE = "parse_error_forecast"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -82,16 +103,34 @@ class StationCoordinator(DataUpdateCoordinator[Observation]):
         # Reused across polls so the station file is revalidated conditionally
         # (If-None-Match / If-Modified-Since); get_text mutates it in place.
         self._cache = CachedResponse(body="")
+        # Timestamp of the last successful update; exposed for diagnostics.
+        self.last_success: datetime | None = None
 
     async def _async_update_data(self) -> Observation:
         try:
-            return await fetch_current(
+            obs = await fetch_current(
                 self._session, self._station_abbr, cache=self._cache
             )
-        except OgdError as err:
+        except OgdParseError as err:
+            async_create_issue(
+                self.hass,
+                DOMAIN,
+                _ISSUE_STATION_PARSE,
+                is_fixable=False,
+                severity=IssueSeverity.WARNING,
+                translation_key="parse_error_station",
+            )
+            raise UpdateFailed(
+                f"station {self._station_abbr} parse failed: {err}"
+            ) from err
+        except OgdConnectionError as err:
             raise UpdateFailed(
                 f"station {self._station_abbr} update failed: {err}"
             ) from err
+
+        async_delete_issue(self.hass, DOMAIN, _ISSUE_STATION_PARSE)
+        self.last_success = dt_util.utcnow()
+        return obs
 
 
 class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
@@ -132,6 +171,8 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         # Drives the 3 h throttle (ADR-0002); reset by the entry reload an
         # option change triggers, so enabling hourly fetches promptly.
         self._last_hourly_fetch: datetime | None = None
+        # Timestamp of the last successful update; exposed for diagnostics.
+        self.last_success: datetime | None = None
 
     def _should_fetch_hourly(self) -> bool:
         """Whether enough time has passed to fetch the hourly files again."""
@@ -147,7 +188,17 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
             run = await latest_run(
                 self._session, COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS
             )
-        except OgdError as err:
+        except OgdParseError as err:
+            async_create_issue(
+                self.hass,
+                DOMAIN,
+                _ISSUE_FORECAST_PARSE,
+                is_fixable=False,
+                severity=IssueSeverity.WARNING,
+                translation_key="parse_error_forecast",
+            )
+            raise UpdateFailed(f"forecast run discovery parse failed: {err}") from err
+        except OgdConnectionError as err:
             raise UpdateFailed(f"forecast run discovery failed: {err}") from err
 
         # An unchanged run means the MB-scale daily files would be identical:
@@ -163,7 +214,17 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
                 # The backend downloads the small daily files and parses them
                 # off the event loop; a future per-point backend swaps in here.
                 daily = await self._backend.fetch_daily(self._point)
-            except OgdError as err:
+            except OgdParseError as err:
+                async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    _ISSUE_FORECAST_PARSE,
+                    is_fixable=False,
+                    severity=IssueSeverity.WARNING,
+                    translation_key="parse_error_forecast",
+                )
+                raise UpdateFailed(f"daily forecast parse failed: {err}") from err
+            except OgdConnectionError as err:
                 raise UpdateFailed(f"daily forecast fetch failed: {err}") from err
             self.last_run = run.timestamp
 
@@ -173,8 +234,20 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         if self._should_fetch_hourly():
             try:
                 hourly = await self._backend.fetch_hourly(self._point)
-            except OgdError as err:
+            except OgdParseError as err:
+                async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    _ISSUE_FORECAST_PARSE,
+                    is_fixable=False,
+                    severity=IssueSeverity.WARNING,
+                    translation_key="parse_error_forecast",
+                )
+                raise UpdateFailed(f"hourly forecast parse failed: {err}") from err
+            except OgdConnectionError as err:
                 raise UpdateFailed(f"hourly forecast fetch failed: {err}") from err
             self._last_hourly_fetch = dt_util.utcnow()
 
+        async_delete_issue(self.hass, DOMAIN, _ISSUE_FORECAST_PARSE)
+        self.last_success = dt_util.utcnow()
         return ForecastData(daily=daily, hourly=hourly)
