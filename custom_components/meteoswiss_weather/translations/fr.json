@@ -122,6 +122,26 @@
       }
     }
   },
+  "services": {
+    "import_history": {
+      "name": "Importer l'historique",
+      "description": "Importe l'historique horaire officiel de la station configurée dans les statistiques à long terme de Home Assistant (température moyenne/min/max, moyenne pour l'humidité, le point de rosée, la pression, le vent et le rayonnement, somme horaire pour les précipitations). Statistiques à long terme uniquement, pas les états bruts. Les périodes qui se chevauchent sont remplacées, pas dupliquées. Il s'agit d'un téléchargement ponctuel en dehors du budget de trafic récurrent : environ 1 Mo pour l'année en cours, 8-13 Mo par décennie passée, environ 45 Mo pour tout depuis 1980.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Entrée d'intégration",
+          "description": "L'entrée de configuration MeteoSwiss Weather dont l'historique de station doit être importé."
+        },
+        "start": {
+          "name": "Début",
+          "description": "Heure la plus ancienne à importer (heure locale si aucun fuseau horaire n'est indiqué). Par défaut : 1er janvier de l'année en cours."
+        },
+        "end": {
+          "name": "Fin",
+          "description": "Heure la plus récente à importer (heure locale si aucun fuseau horaire n'est indiqué). Par défaut : maintenant."
+        }
+      }
+    }
+  },
   "options": {
     "step": {
       "init": {

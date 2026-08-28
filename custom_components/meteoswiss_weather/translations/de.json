@@ -122,6 +122,26 @@
       }
     }
   },
+  "services": {
+    "import_history": {
+      "name": "Verlauf importieren",
+      "description": "Importiert den offiziellen stündlichen Verlauf der konfigurierten Station in die Langzeitstatistik von Home Assistant (Mittel-/Min-/Max-Temperatur, Mittelwert für Luftfeuchtigkeit, Taupunkt, Luftdruck, Wind und Strahlung, stündliche Summe für Niederschlag). Nur Langzeitstatistik, keine Rohzustände. Überlappende Zeiträume werden ersetzt, nicht dupliziert. Dies ist ein einmaliger Download außerhalb des laufenden Datenbudgets: etwa 1 MB für das laufende Jahr, 8-13 MB pro vergangenem Jahrzehnt, etwa 45 MB für alles seit 1980.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Integrationseintrag",
+          "description": "Der MeteoSwiss-Wetter-Konfigurationseintrag, dessen Stationsverlauf importiert werden soll."
+        },
+        "start": {
+          "name": "Start",
+          "description": "Frühester zu importierender Zeitpunkt (lokale Zeit, wenn keine Zeitzone angegeben ist). Standard: 1. Januar des laufenden Jahres."
+        },
+        "end": {
+          "name": "Ende",
+          "description": "Spätester zu importierender Zeitpunkt (lokale Zeit, wenn keine Zeitzone angegeben ist). Standard: jetzt."
+        }
+      }
+    }
+  },
   "options": {
     "step": {
       "init": {

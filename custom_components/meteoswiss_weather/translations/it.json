@@ -122,6 +122,26 @@
       }
     }
   },
+  "services": {
+    "import_history": {
+      "name": "Importa cronologia",
+      "description": "Importa la cronologia oraria ufficiale della stazione configurata nelle statistiche a lungo termine di Home Assistant (temperatura media/min/max, media per umidità, punto di rugiada, pressione, vento e radiazione, somma oraria per le precipitazioni). Solo statistiche a lungo termine, non gli stati grezzi. I periodi sovrapposti vengono sostituiti, non duplicati. Si tratta di un download una tantum al di fuori del budget di traffico ricorrente: circa 1 MB per l'anno corrente, 8-13 MB per ogni decennio passato, circa 45 MB per tutto dal 1980.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Voce di integrazione",
+          "description": "La voce di configurazione MeteoSwiss Weather di cui importare la cronologia della stazione."
+        },
+        "start": {
+          "name": "Inizio",
+          "description": "Ora più remota da importare (ora locale se non è indicato alcun fuso orario). Predefinito: 1° gennaio dell'anno corrente."
+        },
+        "end": {
+          "name": "Fine",
+          "description": "Ora più recente da importare (ora locale se non è indicato alcun fuso orario). Predefinito: adesso."
+        }
+      }
+    }
+  },
   "options": {
     "step": {
       "init": {

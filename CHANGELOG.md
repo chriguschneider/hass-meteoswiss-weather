@@ -11,6 +11,18 @@ using the matching section below as release notes.
 
 ### Added
 
+- **Service `import_history`: backfill long-term statistics from the
+  official station history** (#66, ADR-0007). A one-off, user-triggered
+  service imports a station's hourly history (`_h_recent` plus the decade
+  files) into Home Assistant's long-term statistics under the integration's
+  own sensor statistic ids: mean/min/max for temperature, mean for humidity,
+  dew point, pressure, wind, gust and radiation, and an hourly sum for
+  precipitation. Optional `start`/`end` (default: the current year);
+  overlapping periods are replaced, not duplicated. Long-term statistics
+  only — the raw states are untouched. Nothing polls the history files, so
+  this stays outside the recurring ADR-0002 budget. The shared
+  `async_backfill` layer also powers the reconfigure flow's backfill choice
+  (#52).
 - **Hourly forecast now fetched with HTTP Range, plus a horizon option**
   (#50). The bulk hourly files come in two layouts: point-major files are
   fetched as the configured point's contiguous ~5 KB block (located by a

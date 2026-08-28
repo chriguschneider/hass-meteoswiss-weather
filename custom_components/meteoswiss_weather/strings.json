@@ -122,6 +122,26 @@
       }
     }
   },
+  "services": {
+    "import_history": {
+      "name": "Import history",
+      "description": "Imports the configured station's official hourly history into Home Assistant's long-term statistics (mean/min/max temperature, mean for humidity, dew point, pressure, wind and radiation, hourly sum for precipitation). Long-term statistics only, not raw states. Overlapping periods are replaced, not duplicated. This is a one-off download outside the recurring traffic budget: about 1 MB for the current year, 8-13 MB per past decade, about 45 MB for everything since 1980.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Integration entry",
+          "description": "The MeteoSwiss Weather config entry whose station history to import."
+        },
+        "start": {
+          "name": "Start",
+          "description": "Earliest time to import (local time when no timezone is given). Defaults to 1 January of the current year."
+        },
+        "end": {
+          "name": "End",
+          "description": "Latest time to import (local time when no timezone is given). Defaults to now."
+        }
+      }
+    }
+  },
   "options": {
     "step": {
       "init": {
