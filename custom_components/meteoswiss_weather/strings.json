@@ -30,7 +30,10 @@
       "soil_temp_20cm": { "name": "Soil temperature (20 cm)" },
       "air_temp_5cm": { "name": "Air temperature (5 cm)" },
       "diffuse_radiation": { "name": "Diffuse radiation" },
-      "longwave_radiation": { "name": "Longwave radiation" }
+      "longwave_radiation": { "name": "Longwave radiation" },
+      "temp_max_today": { "name": "High temperature today" },
+      "temp_min_today": { "name": "Low temperature today" },
+      "precipitation_today": { "name": "Precipitation today" }
     }
   },
   "config": {
