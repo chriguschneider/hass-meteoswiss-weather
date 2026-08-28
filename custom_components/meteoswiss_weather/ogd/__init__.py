@@ -15,9 +15,16 @@ from .forecast import (
     parse_hourly,
     points_for_postal_code,
 )
+from .hourly import (
+    AiohttpRangeReader,
+    classify_layout,
+    fetch_hourly_file,
+    horizon_end_utc,
+)
 from .http import CachedResponse, get_text
 from .models import (
     DailyForecast,
+    FileLayout,
     ForecastPoint,
     HourlyForecast,
     Observation,
@@ -35,9 +42,11 @@ from .stations import (
 )
 
 __all__ = [
+    "AiohttpRangeReader",
     "BulkCsvBackend",
     "CachedResponse",
     "DailyForecast",
+    "FileLayout",
     "ForecastBackend",
     "ForecastPoint",
     "HourlyForecast",
@@ -47,11 +56,14 @@ __all__ = [
     "OgdParseError",
     "Run",
     "Station",
+    "classify_layout",
     "fetch_current",
     "fetch_datainventory",
+    "fetch_hourly_file",
     "fetch_points",
     "fetch_stations",
     "get_text",
+    "horizon_end_utc",
     "latest_run",
     "nearest_point",
     "nearest_stations",

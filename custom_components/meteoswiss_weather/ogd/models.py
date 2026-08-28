@@ -8,6 +8,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from enum import Enum
+
+
+class FileLayout(Enum):
+    """How the rows of an hourly bulk file are sorted (issue #50).
+
+    Detected at runtime from byte-offset probes; picks the Range strategy:
+    a date-major file is fetched as a horizon prefix, a point-major file has
+    the point's contiguous block located by binary search, and anything
+    unexpected falls back to the full download.
+    """
+
+    # Sorted by Date first: the earliest hours of all points lead the file.
+    DATE_MAJOR = "date_major"
+    # Sorted by (point_type_id, point_id, Date): one point's rows are a block.
+    POINT_MAJOR_TYPE = "point_major_type"
+    # Sorted by (point_id, Date), types mixed: one point_id's rows are a block.
+    POINT_MAJOR_ID = "point_major_id"
+    # Unrecognised order: fetch the whole file and parse it (safe default).
+    FALLBACK = "fallback"
 
 
 class OgdError(Exception):

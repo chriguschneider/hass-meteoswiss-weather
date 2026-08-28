@@ -22,13 +22,17 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CONF_HOURLY_FORECAST,
+    CONF_HOURLY_HORIZON_DAYS,
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
     CONF_POSTAL_CODE,
     CONF_STATION_ABBR,
     CONF_STATION_NAME,
+    DEFAULT_HOURLY_HORIZON_DAYS,
     DOMAIN,
+    HOURLY_HORIZON_CHOICES,
+    HOURLY_HORIZON_FULL_RUN,
 )
 from .ogd import (
     ForecastPoint,
@@ -216,16 +220,43 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
         return MeteoSwissWeatherOptionsFlow()
 
 
+def _horizon_label(days: int) -> str:
+    """Human label for a horizon choice in the options select."""
+    if days == HOURLY_HORIZON_FULL_RUN:
+        return "Full run (all ~220 h)"
+    if days == 0:
+        return "Rest of today only (0 days ahead)"
+    if days == 1:
+        return "Today plus 1 full day"
+    return f"Today plus {days} full days"
+
+
 class MeteoSwissWeatherOptionsFlow(OptionsFlow):
-    """Options flow: toggle the hourly forecast opt-in (ADR-0002)."""
+    """Options flow: the hourly forecast opt-in and its horizon (ADR-0002).
+
+    Two steps so the horizon is only shown when the hourly forecast is on
+    (issue #50): enabling it leads to the horizon select; disabling it saves
+    straight away and leaves the stored horizon (unused) untouched.
+    """
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        if user_input is not None:
-            return self.async_create_entry(data=user_input)
-
         current = self.config_entry.options
+        if user_input is not None:
+            if user_input[CONF_HOURLY_FORECAST]:
+                # Hourly on: the horizon step finishes the flow.
+                return await self.async_step_hourly()
+            # Hourly off: nothing more to ask; keep the previous horizon value.
+            return self.async_create_entry(
+                data={
+                    CONF_HOURLY_FORECAST: False,
+                    CONF_HOURLY_HORIZON_DAYS: current.get(
+                        CONF_HOURLY_HORIZON_DAYS, DEFAULT_HOURLY_HORIZON_DAYS
+                    ),
+                }
+            )
+
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
@@ -234,6 +265,36 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
                         CONF_HOURLY_FORECAST,
                         default=current.get(CONF_HOURLY_FORECAST, False),
                     ): bool
+                }
+            ),
+        )
+
+    async def async_step_hourly(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Second step (hourly on): pick how far ahead the hourly forecast goes."""
+        current = self.config_entry.options
+        if user_input is not None:
+            return self.async_create_entry(
+                data={
+                    CONF_HOURLY_FORECAST: True,
+                    CONF_HOURLY_HORIZON_DAYS: int(
+                        user_input[CONF_HOURLY_HORIZON_DAYS]
+                    ),
+                }
+            )
+
+        choices = {days: _horizon_label(days) for days in HOURLY_HORIZON_CHOICES}
+        return self.async_show_form(
+            step_id="hourly",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_HOURLY_HORIZON_DAYS,
+                        default=current.get(
+                            CONF_HOURLY_HORIZON_DAYS, DEFAULT_HOURLY_HORIZON_DAYS
+                        ),
+                    ): vol.In(choices)
                 }
             ),
         )

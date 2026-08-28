@@ -75,3 +75,75 @@ async def get_text(
         cache.last_modified = last_modified
         return cache
     return CachedResponse(body=body, etag=etag, last_modified=last_modified)
+
+
+@dataclass(slots=True)
+class RangeResponse:
+    """The result of a (possibly partial) byte fetch.
+
+    ``status`` is the HTTP status (200 full, 206 partial, 304 unchanged).
+    ``total_size`` is the full object size when the server disclosed it
+    (``Content-Range`` on a 206, ``Content-Length`` on a 200), else ``None``.
+    ``body`` holds the returned bytes and is empty on a 304.
+    """
+
+    status: int
+    body: bytes
+    etag: str | None = None
+    total_size: int | None = None
+
+
+def _parse_total_size(content_range: str | None) -> int | None:
+    """Total object size from a ``Content-Range: bytes a-b/total`` header."""
+    if not content_range or "/" not in content_range:
+        return None
+    total = content_range.rsplit("/", 1)[1].strip()
+    return int(total) if total.isdigit() else None
+
+
+async def get_bytes(
+    session: aiohttp.ClientSession,
+    url: str,
+    *,
+    start: int | None = None,
+    end: int | None = None,
+    etag: str | None = None,
+    timeout: aiohttp.ClientTimeout = DEFAULT_TIMEOUT,
+) -> RangeResponse:
+    """Fetch ``url`` as bytes, optionally only the ``start``–``end`` range.
+
+    ``start``/``end`` (inclusive, HTTP ``Range`` semantics) request a byte
+    range; the origin answers 206 with ``Content-Range`` (the hourly bulk
+    files honour this, docs/ogd.md §E4). ``etag`` is sent as ``If-None-Match``,
+    so an unchanged object answers 304 — this keeps working together with a
+    ``Range`` (measured, issue #50). A server that ignores ``Range`` and
+    answers 200 with the full body is handled by the caller (the range reader
+    caches the body and slices locally). Any transport error or unexpected
+    status raises :class:`OgdConnectionError`.
+    """
+    headers: dict[str, str] = {}
+    if start is not None or end is not None:
+        headers["Range"] = f"bytes={start if start is not None else 0}-" + (
+            "" if end is None else str(end)
+        )
+    if etag:
+        headers["If-None-Match"] = etag
+
+    try:
+        async with session.get(url, headers=headers, timeout=timeout) as response:
+            status = response.status
+            if status == 304:
+                return RangeResponse(status=304, body=b"", etag=etag)
+            if status not in (200, 206):
+                raise OgdConnectionError(f"GET {url} returned HTTP {status}")
+            body = await response.read()
+            resp_etag = response.headers.get("ETag")
+            if status == 206:
+                total = _parse_total_size(response.headers.get("Content-Range"))
+            else:
+                length = response.headers.get("Content-Length")
+                total = int(length) if length and length.isdigit() else len(body)
+    except aiohttp.ClientError as err:
+        raise OgdConnectionError(f"GET {url} failed: {err}") from err
+
+    return RangeResponse(status=status, body=body, etag=resp_etag, total_size=total)

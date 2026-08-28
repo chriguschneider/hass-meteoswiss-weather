@@ -22,13 +22,16 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meteoswiss_weather.const import (
     CONF_HOURLY_FORECAST,
+    CONF_HOURLY_HORIZON_DAYS,
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
     CONF_POSTAL_CODE,
     CONF_STATION_ABBR,
     CONF_STATION_NAME,
+    DEFAULT_HOURLY_HORIZON_DAYS,
     DOMAIN,
+    HOURLY_HORIZON_FULL_RUN,
 )
 from custom_components.meteoswiss_weather.ogd import ForecastPoint, Station
 
@@ -316,8 +319,78 @@ async def test_options_flow_stores_hourly_flag(
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "init"
 
+    # Enabling the hourly forecast leads to the horizon step (issue #50).
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], user_input={CONF_HOURLY_FORECAST: True}
     )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "hourly"
+    # The horizon defaults to two days ahead.
+    schema_default = result["data_schema"]({})
+    assert schema_default[CONF_HOURLY_HORIZON_DAYS] == DEFAULT_HOURLY_HORIZON_DAYS
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_HOURLY_HORIZON_DAYS: 4}
+    )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_HOURLY_FORECAST] is True
+    assert result["data"][CONF_HOURLY_HORIZON_DAYS] == 4
+
+
+async def test_options_flow_hourly_off_skips_horizon_step(
+    hass: HomeAssistant,
+) -> None:
+    """Leaving the hourly forecast off finishes at the init step (no horizon)."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="2-309800",
+        data={
+            CONF_POINT_ID: 309800,
+            CONF_POINT_TYPE_ID: 2,
+            CONF_POSTAL_CODE: "3098",
+            CONF_POINT_NAME: "Köniz",
+            CONF_STATION_ABBR: "BER",
+            CONF_STATION_NAME: "Bern / Zollikofen",
+        },
+        title="Köniz",
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_HOURLY_FORECAST: False}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_HOURLY_FORECAST] is False
+    # The horizon key is still written (with its default) but the hourly path
+    # never uses it while the toggle is off.
+    assert result["data"][CONF_HOURLY_HORIZON_DAYS] == DEFAULT_HOURLY_HORIZON_DAYS
+
+
+async def test_options_flow_full_run_horizon(hass: HomeAssistant) -> None:
+    """The "full run" sentinel can be selected as the horizon."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="2-309800",
+        data={
+            CONF_POINT_ID: 309800,
+            CONF_POINT_TYPE_ID: 2,
+            CONF_POSTAL_CODE: "3098",
+            CONF_POINT_NAME: "Köniz",
+            CONF_STATION_ABBR: "BER",
+            CONF_STATION_NAME: "Bern / Zollikofen",
+        },
+        title="Köniz",
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_HOURLY_FORECAST: True}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={CONF_HOURLY_HORIZON_DAYS: HOURLY_HORIZON_FULL_RUN},
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_HOURLY_HORIZON_DAYS] == HOURLY_HORIZON_FULL_RUN

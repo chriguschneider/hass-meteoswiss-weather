@@ -9,6 +9,20 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Hourly forecast now fetched with HTTP Range, plus a horizon option**
+  (#50). The bulk hourly files come in two layouts: point-major files are
+  fetched as the configured point's contiguous ~5 KB block (located by a
+  binary search over byte offsets), and the one date-major minimum-set file
+  (`tre200h0`) as a `Range` prefix covering the chosen horizon. Layout is
+  detected at runtime and falls back to a full download if unrecognised. A
+  new `hourly_horizon_days` option (options flow, shown only with the hourly
+  opt-in) chooses how far ahead to fetch, in full local calendar days —
+  default 2 (the rest of today plus two full days), plus a "full run" choice.
+  The hourly opt-in now costs roughly 7–11 MB per refresh at the default
+  horizon instead of ~125 MB. Revises ADR-0002.
+
 ## [v0.1.1] — 2026-08-27
 
 ### Fixed

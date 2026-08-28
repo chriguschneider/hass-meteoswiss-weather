@@ -44,6 +44,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    DEFAULT_HOURLY_HORIZON_DAYS,
     DOMAIN,
     FORECAST_CHECK_INTERVAL,
     HOURLY_FORECAST_MIN_INTERVAL,
@@ -152,6 +153,7 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         point: ForecastPoint,
         *,
         hourly_enabled: bool = False,
+        hourly_horizon_days: int = DEFAULT_HOURLY_HORIZON_DAYS,
     ) -> None:
         super().__init__(
             hass,
@@ -164,6 +166,7 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         self._backend = backend
         self._point = point
         self._hourly_enabled = hourly_enabled
+        self._hourly_horizon_days = hourly_horizon_days
         # Timestamp of the run the current daily data came from; exposed for
         # diagnostics and used to skip re-downloading an unchanged run.
         self.last_run: datetime | None = None
@@ -233,7 +236,9 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         hourly = self.data.hourly if self.data is not None else None
         if self._should_fetch_hourly():
             try:
-                hourly = await self._backend.fetch_hourly(self._point)
+                hourly = await self._backend.fetch_hourly(
+                    self._point, horizon_days=self._hourly_horizon_days
+                )
             except OgdParseError as err:
                 async_create_issue(
                     self.hass,
