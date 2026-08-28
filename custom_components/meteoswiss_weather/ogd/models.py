@@ -145,6 +145,38 @@ class HourlyForecast:
 
 
 @dataclass(frozen=True, slots=True)
+class PollenStation:
+    """One automatic pollen-monitoring station (``ch.meteoschweiz.ogd-pollen``).
+
+    Same shape as :class:`Station` but kept separate to avoid type confusion
+    between the weather-station and pollen-station networks.
+    """
+
+    abbr: str
+    name: str
+    canton: str
+    lat: float
+    lon: float
+    height_masl: float | None
+
+
+@dataclass(slots=True)
+class PollenObservation:
+    """Latest hourly pollen concentration from one station (ADR-0005, issue #53).
+
+    ``ts_utc`` is the ``reference_timestamp`` of the upstream row, UTC.
+    ``values`` maps each taxon code (e.g. ``kabetuh0``) to its concentration
+    in grains/m³ (``None`` when the station left the cell empty). The key set
+    comes from the file header, so it reflects what the station actually
+    measures rather than the full 7-taxon set.
+    """
+
+    station_abbr: str
+    ts_utc: datetime
+    values: dict[str, float | None]
+
+
+@dataclass(frozen=True, slots=True)
 class HourlyHistoryRow:
     """One hour of a station's measured history (ADR-0007, issue #51).
 

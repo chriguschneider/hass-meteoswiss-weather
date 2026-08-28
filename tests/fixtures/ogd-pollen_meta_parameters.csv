@@ -1,0 +1,29 @@
+parameter_shortname;parameter_description_de;parameter_description_fr;parameter_description_it;parameter_description_en;parameter_unit;parameter_decimals;parameter_granularity
+kaalnuh0;Erle - Stündlicher Mittelwert;Aulne - Moyenne horaire;Ontano - Media oraria;Alder - Hourly mean;No/m3;0;h
+kaalnud0;Erle - Täglicher Mittelwert 6-6 UTC;Aulne - Moyenne journalière 6-6 UTC;Ontano - Media giornaliera 6-6 UTC;Alder - Daily mean 6-6 UTC;No/m3;0;d
+kaalnud1;Erle - Täglicher Mittelwert 0-0 UTC;Aulne - Moyenne journalière 0-0 UTC;Ontano - Media giornaliera 0-0 UTC;Alder - Daily mean 0-0 UTC;No/m3;0;d
+kaalnuy0;Erle - Jährliches Integral;Aulne - Intégrale annuelle;Ontano - Integrale annuale;Alder - Annual integral;No/m3;0;y
+kabetuh0;Birke - Stündlicher Mittelwert;Bouleau - Moyenne horaire;Betulla - Media oraria;Birch - Hourly mean;No/m3;0;h
+kabetud0;Birke - Täglicher Mittelwert 6-6 UTC;Bouleau - Moyenne journalière 6-6 UTC;Betulla - Media giornaliera 6-6 UTC;Birch - Daily mean 6-6 UTC;No/m3;0;d
+kabetud1;Birke - Täglicher Mittelwert 0-0 UTC;Bouleau - Moyenne journalière 0-0 UTC;Betulla - Media giornaliera 0-0 UTC;Birch - Daily mean 0-0 UTC;No/m3;0;d
+kabetuy0;Birke - Jährliches Integral;Bouleau - Intégrale annuelle;Betulla - Integrale annuale;Birch - Annual integral;No/m3;0;y
+kacoryh0;Hasel - Stündlicher Mittelwert;Noisetier - Moyenne horaire;Nocciolo - Media oraria;Hazel - Hourly mean;No/m3;0;h
+kacoryd0;Hasel - Täglicher Mittelwert 6-6 UTC;Noisetier - Moyenne journalière 6-6 UTC;Nocciolo - Media giornaliera 6-6 UTC;Hazel - Daily mean 6-6 UTC;No/m3;0;d
+kacoryd1;Hasel - Täglicher Mittelwert 0-0 UTC;Noisetier - Moyenne journalière 0-0 UTC;Nocciolo - Media giornaliera 0-0 UTC;Hazel - Daily mean 0-0 UTC;No/m3;0;d
+kacoryy0;Hasel - Jährliches Integral;Noisetier - Intégrale annuelle;Nocciolo - Integrale annuale;Hazel - Annual integral;No/m3;0;y
+kafaguh0;Buche - Stündlicher Mittelwert;Hêtre - Moyenne horaire;Faggio - Media oraria;Beech - Hourly mean;No/m3;0;h
+kafagud0;Buche - Täglicher Mittelwert 6-6 UTC;Hêtre - Moyenne journalière 6-6 UTC;Faggio - Media giornaliera 6-6 UTC;Beech - Daily mean 6-6 UTC;No/m3;0;d
+kafagud1;Buche - Täglicher Mittelwert 0-0 UTC;Hêtre - Moyenne journalière 0-0 UTC;Faggio - Media giornaliera 0-0 UTC;Beech - Daily mean 0-0 UTC;No/m3;0;d
+kafaguy0;Buche - Jährliches Integral;Hêtre - Intégrale annuelle;Faggio - Integrale annuale;Beech - Annual integral;No/m3;0;y
+kafraxh0;Esche - Stündlicher Mittelwert;Frêne - Moyenne horaire;Frassino - Media oraria;Ash - Hourly mean;No/m3;0;h
+kafraxd0;Esche - Täglicher Mittelwert 6-6 UTC;Frêne - Moyenne journalière 6-6 UTC;Frassino - Media giornaliera 6-6 UTC;Ash - Daily mean 6-6 UTC;No/m3;0;d
+kafraxd1;Esche - Täglicher Mittelwert 0-0 UTC;Frêne - Moyenne journalière 0-0 UTC;Frassino - Media giornaliera 0-0 UTC;Ash - Daily mean 0-0 UTC;No/m3;0;d
+kafraxy0;Esche - Jährliches Integral;Frêne - Intégrale annuelle;Frassino - Integrale annuale;Ash - Annual integral;No/m3;0;y
+kaquerh0;Eiche - Stündlicher Mittelwert;Chêne - Moyenne horaire;Quercia - Media oraria;Oak - Hourly mean;No/m3;0;h
+kaquerd0;Eiche - Täglicher Mittelwert 6-6 UTC;Chêne - Moyenne journalière 6-6 UTC;Quercia - Media giornaliera 6-6 UTC;Oak - Daily mean 6-6 UTC;No/m3;0;d
+kaquerd1;Eiche - Täglicher Mittelwert 0-0 UTC;Chêne - Moyenne journalière 0-0 UTC;Quercia - Media giornaliera 0-0 UTC;Oak - Daily mean 0-0 UTC;No/m3;0;d
+kaquery0;Eiche - Jährliches Integral;Chêne - Intégrale annuelle;Quercia - Integrale annuale;Oak - Annual integral;No/m3;0;y
+khpoach0;Gräser - Stündlicher Mittelwert;Graminées - Moyenne horaire;Graminacee - Media oraria;Grasses - Hourly mean;No/m3;0;h
+khpoacd0;Gräser - Täglicher Mittelwert 6-6 UTC;Graminées - Moyenne journalière 6-6 UTC;Graminacee - Media giornaliera 6-6 UTC;Grasses - Daily mean 6-6 UTC;No/m3;0;d
+khpoacd1;Gräser - Täglicher Mittelwert 0-0 UTC;Graminées - Moyenne journalière 0-0 UTC;Graminacee - Media giornaliera 0-0 UTC;Grasses - Daily mean 0-0 UTC;No/m3;0;d
+khpoacy0;Gräser - Jährliches Integral;Graminées - Intégrale annuelle;Graminacee - Integrale annuale;Grasses - Annual integral;No/m3;0;y

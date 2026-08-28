@@ -33,7 +33,16 @@ from .models import (
     OgdConnectionError,
     OgdError,
     OgdParseError,
+    PollenObservation,
+    PollenStation,
     Station,
+)
+from .pollen import (
+    fetch_pollen_current,
+    fetch_pollen_datainventory,
+    fetch_pollen_parameters,
+    fetch_pollen_stations,
+    nearest_pollen_station,
 )
 from .stac import Run, latest_run
 from .stations import (
@@ -57,6 +66,8 @@ __all__ = [
     "OgdConnectionError",
     "OgdError",
     "OgdParseError",
+    "PollenObservation",
+    "PollenStation",
     "Run",
     "Station",
     "classify_layout",
@@ -64,12 +75,17 @@ __all__ = [
     "fetch_datainventory",
     "fetch_hourly_file",
     "fetch_points",
+    "fetch_pollen_current",
+    "fetch_pollen_datainventory",
+    "fetch_pollen_parameters",
+    "fetch_pollen_stations",
     "fetch_station_history",
     "fetch_stations",
     "get_text",
     "horizon_end_utc",
     "latest_run",
     "nearest_point",
+    "nearest_pollen_station",
     "nearest_stations",
     "parse_daily",
     "parse_hourly",

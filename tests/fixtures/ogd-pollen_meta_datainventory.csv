@@ -1,0 +1,34 @@
+station_abbr;parameter_shortname;meas_cat_nr;data_since;data_till;owner
+PBE;kaalnuh0;1;01.01.2023 00:00;;MeteoSwiss
+PBE;kabetuh0;1;01.01.2023 00:00;;MeteoSwiss
+PBE;kacoryh0;1;01.01.2023 00:00;;MeteoSwiss
+PBE;kafaguh0;1;01.01.2023 00:00;;MeteoSwiss
+PBE;kafraxh0;1;01.01.2023 00:00;;MeteoSwiss
+PBE;kaquerh0;1;01.01.2023 00:00;;MeteoSwiss
+PBE;khpoach0;1;01.01.2023 00:00;;MeteoSwiss
+PBS;kaalnuh0;1;01.01.2023 00:00;;MeteoSwiss
+PBS;kabetuh0;1;01.01.2023 00:00;;MeteoSwiss
+PBS;kacoryh0;1;01.01.2023 00:00;;MeteoSwiss
+PBS;kaquerh0;1;01.01.2023 00:00;;MeteoSwiss
+PBS;khpoach0;1;01.01.2023 00:00;;MeteoSwiss
+PPY;kaalnuh0;1;01.01.2023 00:00;;MeteoSwiss
+PPY;kabetuh0;1;01.01.2023 00:00;;MeteoSwiss
+PPY;kacoryh0;1;01.01.2023 00:00;;MeteoSwiss
+PPY;kafaguh0;1;01.01.2023 00:00;;MeteoSwiss
+PPY;kafraxh0;1;01.01.2023 00:00;;MeteoSwiss
+PPY;kaquerh0;1;01.01.2023 00:00;;MeteoSwiss
+PPY;khpoach0;1;01.01.2023 00:00;;MeteoSwiss
+PZH;kaalnuh0;1;01.01.2023 00:00;;MeteoSwiss
+PZH;kabetuh0;1;01.01.2023 00:00;;MeteoSwiss
+PZH;kacoryh0;1;01.01.2023 00:00;;MeteoSwiss
+PZH;kafaguh0;1;01.01.2023 00:00;;MeteoSwiss
+PZH;kafraxh0;1;01.01.2023 00:00;;MeteoSwiss
+PZH;khpoach0;1;01.01.2023 00:00;;MeteoSwiss
+PZH;kaquerh0;1;01.01.2023 00:00;01.01.2025 00:00;MeteoSwiss
+PLU;kaalnuh0;1;01.01.2023 00:00;;MeteoSwiss
+PLU;kabetuh0;1;01.01.2023 00:00;;MeteoSwiss
+PLU;kacoryh0;1;01.01.2023 00:00;;MeteoSwiss
+PLU;kafaguh0;1;01.01.2023 00:00;;MeteoSwiss
+PLU;kafraxh0;1;01.01.2023 00:00;;MeteoSwiss
+PLU;kaquerh0;1;01.01.2023 00:00;;MeteoSwiss
+PLU;khpoach0;1;01.01.2023 00:00;;MeteoSwiss
