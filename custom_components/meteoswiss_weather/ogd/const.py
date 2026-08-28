@@ -13,11 +13,14 @@ OGD_FILE_BASE = "https://data.geo.admin.ch"
 OGD_STAC_BASE = f"{OGD_FILE_BASE}/api/stac/v1"
 COLLECTION_STATIONS = "ch.meteoschweiz.ogd-smn"
 COLLECTION_FORECAST = "ch.meteoschweiz.ogd-local-forecasting"
+COLLECTION_POLLEN = "ch.meteoschweiz.ogd-pollen"
 
 # SwissMetNet station files are served as Windows-1252; forecast files are
-# Latin-1. Both use ";" as the separator (docs/ogd.md).
+# Latin-1; pollen files are also Windows-1252 (docs/ogd.md). All use ";" as
+# the separator.
 STATION_ENCODING = "cp1252"
 FORECAST_ENCODING = "iso-8859-1"
+POLLEN_ENCODING = "cp1252"
 CSV_SEPARATOR = ";"
 
 # The three station metadata CSVs live at the collection root.
@@ -26,6 +29,18 @@ META_STATIONS_URL = f"{OGD_FILE_BASE}/{COLLECTION_STATIONS}/ogd-smn_meta_station
 # for parameters the chosen station does not carry (issue #46).
 META_DATAINVENTORY_URL = (
     f"{OGD_FILE_BASE}/{COLLECTION_STATIONS}/ogd-smn_meta_datainventory.csv"
+)
+
+# Pollen metadata (download once, cache): station list, parameter names, and
+# inventory of which station measures which taxon (docs/ogd.md §Pollen).
+META_POLLEN_STATIONS_URL = (
+    f"{OGD_FILE_BASE}/{COLLECTION_POLLEN}/ogd-pollen_meta_stations.csv"
+)
+META_POLLEN_PARAMETERS_URL = (
+    f"{OGD_FILE_BASE}/{COLLECTION_POLLEN}/ogd-pollen_meta_parameters.csv"
+)
+META_POLLEN_DATAINVENTORY_URL = (
+    f"{OGD_FILE_BASE}/{COLLECTION_POLLEN}/ogd-pollen_meta_datainventory.csv"
 )
 
 # Local-forecast metadata (download once, cache): the point list resolves a
@@ -130,3 +145,12 @@ def station_stac_item_url(abbr: str) -> str:
 def stac_items_url(collection: str) -> str:
     """STAC items listing for a collection (assets carry the file hrefs)."""
     return f"{OGD_STAC_BASE}/collections/{collection}/items"
+
+
+def pollen_now_url(abbr: str) -> str:
+    """URL of a pollen station's hourly ``now`` file (the one to poll)."""
+    lower = abbr.lower()
+    return (
+        f"{OGD_FILE_BASE}/{COLLECTION_POLLEN}/{lower}"
+        f"/ogd-pollen_{lower}_h_now.csv"
+    )
