@@ -16,7 +16,8 @@ on:
   pull_request:
     types: [closed]
   schedule:
-    - cron: "*/30 * * * *"
+    # Off the :00/:30 slots -- GitHub delays or drops scheduled runs under load.
+    - cron: "13,43 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -27,10 +28,13 @@ jobs:
   advance:
     # For merges: only advance after a merged agent PR. Otherwise (schedule /
     # manual) always run. The open-PR gate below prevents double-starts.
+    # Any merged PR advances, agent or human: a docs/CI merge from a person
+    # used to leave the chain dead until the next cron tick, and GitHub fires
+    # the cron only best-effort (observed on 2026-08-28: about every 10 h
+    # instead of every 30 min). The open-PR gate below prevents double-starts.
     if: >-
       github.event_name != 'pull_request' ||
-      (github.event.pull_request.merged == true &&
-       startsWith(github.event.pull_request.head.ref, 'claude/'))
+      github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
       contents: write
