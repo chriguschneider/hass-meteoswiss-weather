@@ -63,6 +63,13 @@ substantive problems on the branch (**at most 3 rounds**), then either:
   label, or when it could not make the change solid — it then labels the PR
   `needs-verification` and comments exactly what to check.
 
+The reviewer runs **hassfest** next to `ruff` and `pytest` (it is a required
+CI check that pytest does not cover), and after its verdict the job **waits
+for the required checks**: if one fails after auto-merge was armed, the PR
+gets `needs-verification` and a comment naming the check — otherwise it
+would sit silently (the reviewer does not re-run on CI results and the
+autopilot waits while an agent PR is open; PR #74 did exactly that).
+
 To force a human check on anything, add the **`needs-verification`** label to
 the issue or PR. Auto-merge respects branch protection (required checks pass
 first). Reviewer = Opus, author = Sonnet/Opus per label, so it is not grading

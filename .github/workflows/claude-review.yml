@@ -89,7 +89,13 @@ jobs:
                website product JSON), and whether it actually resolves the
                linked issue. Run the checks:
                `pip install -r requirements_test.txt`,
-               `ruff check custom_components tests scripts`, `pytest -q`.
+               `ruff check custom_components tests scripts`, `pytest -q`, and
+               hassfest, which is a required CI check that pytest does not
+               cover (manifest, dependencies, translations, config flow):
+               `docker run --rm -v "$PWD":/github/workspace ghcr.io/home-assistant/hassfest`
+               Treat a hassfest error exactly like a failing test: fix it on
+               the branch (a missing `after_dependencies` entry for an imported
+               component, a strings.json key, ...) and re-run until it is clean.
             2. FIX substantive problems yourself on the PR branch (commit +
                push). Re-run the checks. **At most 3 fix rounds.** Do not fix
                pure style nits. Never push to `master`.
@@ -115,3 +121,35 @@ jobs:
 
             Never bypass required checks. When unsure between the two, prefer
             AUTO-MERGE -- the tests are green.
+
+      # The reviewer's LGTM arms auto-merge, which then waits for the required
+      # checks. If one of them fails afterwards (PR #74: hassfest), nothing
+      # would ever move again: the reviewer does not re-run on CI results and
+      # the autopilot waits while an agent PR is open. So wait for the checks
+      # here and hand a failure to a human instead of leaving it silent.
+      - name: Hand a failing CI to a human instead of deadlocking
+        if: steps.token.outputs.present == 'true'
+        timeout-minutes: 25
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number || github.event.inputs.pr }}
+        run: |
+          armed="$(gh pr view "$PR" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+          if [ "$armed" != "true" ]; then
+            echo "auto-merge is not armed (held or merged already); nothing to watch"
+            exit 0
+          fi
+          # Give the CI run for the reviewer's last push a moment to register.
+          sleep 60
+          if gh pr checks "$PR" --watch --fail-fast; then
+            echo "required checks green; auto-merge will take it from here"
+            exit 0
+          fi
+          failing="$(gh pr checks "$PR" --json name,state \
+            --jq '[.[] | select(.state == "FAILURE") | .name] | join(", ")')"
+          echo "::warning::CI failed after the review: $failing"
+          gh pr edit "$PR" --add-label needs-verification
+          gh pr comment "$PR" --body "$(printf '%s\n\n%s\n\n%s' \
+            "CI failed **after** the review armed auto-merge: **${failing:-see the Checks tab}**." \
+            "Labelled \`needs-verification\` so this does not sit unnoticed -- the reviewer does not re-run on CI results and the autopilot waits while this PR is open." \
+            "Fix it on the branch (or comment \`@claude fix the failing check\`), then remove the label.")"
