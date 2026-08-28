@@ -27,12 +27,15 @@ COLLECTION_STATIONS = "ch.meteoschweiz.ogd-smn"
 COLLECTION_FORECAST = "ch.meteoschweiz.ogd-local-forecasting"
 
 META_STATIONS_URL = f"{OGD_BASE}/{COLLECTION_STATIONS}/ogd-smn_meta_stations.csv"
+META_DATAINVENTORY_URL = (
+    f"{OGD_BASE}/{COLLECTION_STATIONS}/ogd-smn_meta_datainventory.csv"
+)
 META_POINT_URL = (
     f"{OGD_BASE}/{COLLECTION_FORECAST}/ogd-local-forecasting_meta_point.csv"
 )
 STAC_ITEMS_URL = f"{STAC_BASE}/collections/{COLLECTION_FORECAST}/items"
 
-# Stations to keep in the trimmed metadata fixture.
+# Stations to keep in the trimmed metadata fixture and data inventory.
 KEEP_STATIONS = {"ABO", "BER", "RAG"}
 
 # Forecast point primary keys (point_id, point_type_id) to keep.
@@ -70,6 +73,20 @@ def _trim_csv_stations(raw: bytes) -> bytes:
     text = raw.decode("cp1252")
     reader = csv.DictReader(io.StringIO(text), delimiter=";")
     assert reader.fieldnames, "no header in station CSV"
+    rows = [r for r in reader if r["station_abbr"] in KEEP_STATIONS]
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=reader.fieldnames, delimiter=";",
+                            lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(rows)
+    return buf.getvalue().encode("cp1252")
+
+
+def _trim_csv_datainventory(raw: bytes) -> bytes:
+    """Keep KEEP_STATIONS rows from the data inventory; preserve encoding."""
+    text = raw.decode("cp1252")
+    reader = csv.DictReader(io.StringIO(text), delimiter=";")
+    assert reader.fieldnames, "no header in datainventory CSV"
     rows = [r for r in reader if r["station_abbr"] in KEEP_STATIONS]
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=reader.fieldnames, delimiter=";",
@@ -158,6 +175,12 @@ def main() -> None:
     print("Fetching station metadata…")
     raw = _get(META_STATIONS_URL)
     (FIXTURES / "ogd-smn_meta_stations.csv").write_bytes(_trim_csv_stations(raw))
+
+    print("Fetching data inventory…")
+    raw = _get(META_DATAINVENTORY_URL)
+    (FIXTURES / "ogd-smn_meta_datainventory.csv").write_bytes(
+        _trim_csv_datainventory(raw)
+    )
 
     abbr = OBSERVATION_STATION.lower()
     obs_url = f"{OGD_BASE}/{COLLECTION_STATIONS}/{abbr}/ogd-smn_{abbr}_t_now.csv"

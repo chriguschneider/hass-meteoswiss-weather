@@ -26,6 +26,7 @@ from custom_components.meteoswiss_weather.const import (
     DOMAIN,
 )
 from custom_components.meteoswiss_weather.ogd import Observation
+from custom_components.meteoswiss_weather.sensor import _SENSORS
 
 _STATION_ABBR = "BER"
 
@@ -268,3 +269,81 @@ async def test_attribution(
     """Every sensor carries the required MeteoSwiss attribution."""
     await _setup(hass, config_entry)
     assert _attr(hass, "temperature", "attribution") == "Source: MeteoSwiss"
+
+
+# ---------------------------------------------------------------------------
+# Data-inventory filtering (issue #46)
+# ---------------------------------------------------------------------------
+
+
+async def test_full_station_creates_all_sensors(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """BER with all parameters in the inventory → all sensor descriptions created."""
+    await _setup(hass, config_entry)
+    entity_reg = er.async_get(hass)
+    device_unique_id = "2-309800"
+    sensor_count = sum(
+        1
+        for desc in _SENSORS
+        if entity_reg.async_get_entity_id(
+            "sensor", DOMAIN, f"{device_unique_id}_{desc.key}"
+        ) is not None
+    )
+    # All 11 descriptions must produce a registry entry.
+    assert sensor_count == len(_SENSORS)
+
+
+async def test_reduced_station_creates_only_carried_sensors(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd_reduced: AiohttpClientMocker,
+) -> None:
+    """BER with only precipitation in the inventory → only that sensor created."""
+    await _setup(hass, config_entry)
+    entity_reg = er.async_get(hass)
+    device_unique_id = "2-309800"
+
+    # Precipitation sensor must be registered.
+    assert entity_reg.async_get_entity_id(
+        "sensor", DOMAIN, f"{device_unique_id}_precipitation"
+    ) is not None
+
+    # Every other sensor must NOT be registered.
+    for desc in _SENSORS:
+        if desc.parameter_code == "rre150z0":
+            continue
+        entity_id = entity_reg.async_get_entity_id(
+            "sensor", DOMAIN, f"{device_unique_id}_{desc.key}"
+        )
+        assert entity_id is None, (
+            f"sensor for key={desc.key!r} should not exist for a reduced station"
+        )
+
+
+async def test_orphan_registry_entries_removed_on_setup(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd_reduced: AiohttpClientMocker,
+) -> None:
+    """Registry entries for non-carried parameters are removed when setup runs."""
+    # Pre-register a stale entry as if a previous full-station setup had run.
+    entity_reg = er.async_get(hass)
+    config_entry.add_to_hass(hass)
+    stale_entry = entity_reg.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "2-309800_temperature",
+        config_entry=config_entry,
+        suggested_object_id="koniz_temperature",
+    )
+    assert stale_entry is not None  # pre-condition: orphan exists
+
+    # Set up the integration with reduced inventory (precipitation only).
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    # The stale temperature entry must have been removed.
+    assert entity_reg.async_get("sensor.koniz_temperature") is None

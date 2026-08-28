@@ -27,7 +27,12 @@ from .models import (
     Station,
 )
 from .stac import Run, latest_run
-from .stations import fetch_current, fetch_stations, nearest_stations
+from .stations import (
+    fetch_current,
+    fetch_datainventory,
+    fetch_stations,
+    nearest_stations,
+)
 
 __all__ = [
     "BulkCsvBackend",
@@ -43,6 +48,7 @@ __all__ = [
     "Run",
     "Station",
     "fetch_current",
+    "fetch_datainventory",
     "fetch_points",
     "fetch_stations",
     "get_text",

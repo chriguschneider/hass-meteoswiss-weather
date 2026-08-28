@@ -19,11 +19,13 @@ from custom_components.meteoswiss_weather.ogd import (
     OgdConnectionError,
     OgdParseError,
     fetch_current,
+    fetch_datainventory,
     fetch_stations,
     get_text,
     nearest_stations,
 )
 from custom_components.meteoswiss_weather.ogd.const import (
+    META_DATAINVENTORY_URL,
     META_STATIONS_URL,
     station_now_url,
 )
@@ -197,3 +199,62 @@ async def test_get_text_200_updates_cache_in_place(session) -> None:
     assert refreshed is cache
     assert cache.body == "new"
     assert cache.etag == '"v2"'
+
+
+# ---------------------------------------------------------------------------
+# Data inventory (issue #46)
+# ---------------------------------------------------------------------------
+
+
+async def test_fetch_datainventory_full_station(session) -> None:
+    """BER in the fixture has all 11 sensor parameter codes."""
+    with aioresponses() as mock:
+        mock.get(
+            META_DATAINVENTORY_URL,
+            status=200,
+            body=_fixture_bytes("ogd-smn_meta_datainventory.csv"),
+        )
+        inventory = await fetch_datainventory(session)
+
+    assert "BER" in inventory
+    ber_params = inventory["BER"]
+    # All 11 parameter codes that sensor.py maps to observation fields.
+    expected = {
+        "tre200s0", "ure200s0", "tde200s0", "pp0qffs0", "prestas0",
+        "fu3010z0", "dkl010z0", "fu3010z1", "rre150z0", "sre000z0", "gre000z0",
+    }
+    assert expected == ber_params
+
+
+async def test_fetch_datainventory_reduced_station(session) -> None:
+    """RAG in the fixture has only precipitation."""
+    with aioresponses() as mock:
+        mock.get(
+            META_DATAINVENTORY_URL,
+            status=200,
+            body=_fixture_bytes("ogd-smn_meta_datainventory.csv"),
+        )
+        inventory = await fetch_datainventory(session)
+
+    assert "RAG" in inventory
+    assert inventory["RAG"] == frozenset({"rre150z0"})
+
+
+async def test_fetch_datainventory_missing_header_raises_parse_error(session) -> None:
+    with aioresponses() as mock:
+        mock.get(META_DATAINVENTORY_URL, status=200, body=b"bad;header\n1;2\n")
+        with pytest.raises(OgdParseError):
+            await fetch_datainventory(session)
+
+
+async def test_fetch_datainventory_station_not_in_inventory_absent(session) -> None:
+    """A station absent from the inventory is not in the returned dict."""
+    with aioresponses() as mock:
+        mock.get(
+            META_DATAINVENTORY_URL,
+            status=200,
+            body=b"station_abbr;parameter;measurement_since\nBER;tre200s0;1981-10-01\n",
+        )
+        inventory = await fetch_datainventory(session)
+
+    assert "ZZZ" not in inventory

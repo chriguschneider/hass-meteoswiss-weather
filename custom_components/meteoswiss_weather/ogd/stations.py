@@ -15,6 +15,7 @@ import aiohttp
 
 from .const import (
     CSV_SEPARATOR,
+    META_DATAINVENTORY_URL,
     META_STATIONS_URL,
     STATION_ENCODING,
     station_now_url,
@@ -22,6 +23,10 @@ from .const import (
 from .geo import haversine_km
 from .http import CachedResponse, get_text
 from .models import Observation, OgdParseError, Station
+
+# Header columns of ogd-smn_meta_datainventory.csv the client depends on.
+_INV_ABBR = "station_abbr"
+_INV_PARAM = "parameter"
 
 # Header columns of ogd-smn_meta_stations.csv the client depends on.
 _ABBR = "station_abbr"
@@ -92,6 +97,37 @@ async def fetch_stations(session: aiohttp.ClientSession) -> list[Station]:
     if not stations:
         raise OgdParseError("station metadata contained no usable stations")
     return stations
+
+
+async def fetch_datainventory(
+    session: aiohttp.ClientSession,
+) -> dict[str, frozenset[str]]:
+    """Fetch and parse the data inventory.
+
+    Returns a mapping ``STATION_ABBR → frozenset[parameter_code]`` for every
+    station that appears in the file. A station absent from the inventory is not
+    in the returned dict; callers should treat that as "unknown" and fall back to
+    the full sensor set.
+    """
+    response = await get_text(
+        session, META_DATAINVENTORY_URL, encoding=STATION_ENCODING
+    )
+    reader = _reader(response.body)
+    if (
+        reader.fieldnames is None
+        or _INV_ABBR not in reader.fieldnames
+        or _INV_PARAM not in reader.fieldnames
+    ):
+        raise OgdParseError("data inventory is missing its header")
+
+    inventory: dict[str, set[str]] = {}
+    for row in reader:
+        abbr = (row.get(_INV_ABBR) or "").strip().upper()
+        param = (row.get(_INV_PARAM) or "").strip()
+        if abbr and param:
+            inventory.setdefault(abbr, set()).add(param)
+
+    return {abbr: frozenset(params) for abbr, params in inventory.items()}
 
 
 def nearest_stations(

@@ -20,9 +20,13 @@ STATION_ENCODING = "cp1252"
 FORECAST_ENCODING = "iso-8859-1"
 CSV_SEPARATOR = ";"
 
-# The three station metadata CSVs live at the collection root; only the
-# station list is needed to place the nearest station.
+# The three station metadata CSVs live at the collection root.
 META_STATIONS_URL = f"{OGD_FILE_BASE}/{COLLECTION_STATIONS}/ogd-smn_meta_stations.csv"
+# Which station measures which parameter since when; used to skip sensors
+# for parameters the chosen station does not carry (issue #46).
+META_DATAINVENTORY_URL = (
+    f"{OGD_FILE_BASE}/{COLLECTION_STATIONS}/ogd-smn_meta_datainventory.csv"
+)
 
 # Local-forecast metadata (download once, cache): the point list resolves a
 # postal code to a forecast point, the parameter list names the columns.
