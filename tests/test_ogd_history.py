@@ -243,8 +243,12 @@ def test_parse_missing_header_raises():
 # fetch_station_history: end-to-end with mocked HTTP
 # ---------------------------------------------------------------------------
 
-async def test_fetch_station_history_recent_only(session) -> None:
+async def test_fetch_station_history_recent_only(session, freezer) -> None:
     """Range in 2026 → STAC item + recent file fetched; rows returned."""
+    # Pin the clock: file selection depends on the current year (see the
+    # _current_year kwarg used by the select_* tests), and fetch_station_history
+    # reads it from datetime.now(); freeze so this stays deterministic past 2026.
+    freezer.move_to("2026-08-28")
     stac_body = (FIXTURES / "ogd-smn_ber_stac_item.json").read_bytes()
     with aioresponses() as mock:
         mock.get(BER_STAC_URL, status=200, body=stac_body)
@@ -262,8 +266,9 @@ async def test_fetch_station_history_recent_only(session) -> None:
     assert rows[0].ts_utc == datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
 
 
-async def test_fetch_station_history_recent_plus_decade(session) -> None:
+async def test_fetch_station_history_recent_plus_decade(session, freezer) -> None:
     """Range spanning 2025-2026 → STAC + decade + recent fetched; rows combined."""
+    freezer.move_to("2026-08-28")  # keep file selection deterministic past 2026
     stac_body = (FIXTURES / "ogd-smn_ber_stac_item.json").read_bytes()
     with aioresponses() as mock:
         mock.get(BER_STAC_URL, status=200, body=stac_body)
