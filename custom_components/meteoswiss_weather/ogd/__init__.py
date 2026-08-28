@@ -15,6 +15,7 @@ from .forecast import (
     parse_hourly,
     points_for_postal_code,
 )
+from .history import fetch_station_history, select_history_files
 from .hourly import (
     AiohttpRangeReader,
     classify_layout,
@@ -27,6 +28,7 @@ from .models import (
     FileLayout,
     ForecastPoint,
     HourlyForecast,
+    HourlyHistoryRow,
     Observation,
     OgdConnectionError,
     OgdError,
@@ -50,6 +52,7 @@ __all__ = [
     "ForecastBackend",
     "ForecastPoint",
     "HourlyForecast",
+    "HourlyHistoryRow",
     "Observation",
     "OgdConnectionError",
     "OgdError",
@@ -61,6 +64,7 @@ __all__ = [
     "fetch_datainventory",
     "fetch_hourly_file",
     "fetch_points",
+    "fetch_station_history",
     "fetch_stations",
     "get_text",
     "horizon_end_utc",
@@ -70,4 +74,5 @@ __all__ = [
     "parse_daily",
     "parse_hourly",
     "points_for_postal_code",
+    "select_history_files",
 ]

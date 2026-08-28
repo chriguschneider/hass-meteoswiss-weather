@@ -1,0 +1,30 @@
+{
+  "type": "Feature",
+  "id": "ber",
+  "assets": {
+    "ogd-smn_ber_t_now.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn/ber/ogd-smn_ber_t_now.csv",
+      "type": "text/csv"
+    },
+    "ogd-smn_ber_h_now.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn/ber/ogd-smn_ber_h_now.csv",
+      "type": "text/csv"
+    },
+    "ogd-smn_ber_h_recent.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn/ber/ogd-smn_ber_h_recent.csv",
+      "type": "text/csv"
+    },
+    "ogd-smn_ber_h_historical_2020-2029.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn/ber/ogd-smn_ber_h_historical_2020-2029.csv",
+      "type": "text/csv"
+    },
+    "ogd-smn_ber_h_historical_2010-2019.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn/ber/ogd-smn_ber_h_historical_2010-2019.csv",
+      "type": "text/csv"
+    },
+    "ogd-smn_ber_h_historical_2000-2009.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn/ber/ogd-smn_ber_h_historical_2000-2009.csv",
+      "type": "text/csv"
+    }
+  }
+}

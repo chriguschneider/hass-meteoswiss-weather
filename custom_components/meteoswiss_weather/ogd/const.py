@@ -122,6 +122,11 @@ def station_now_url(abbr: str) -> str:
     return f"{OGD_FILE_BASE}/{COLLECTION_STATIONS}/{lower}/ogd-smn_{lower}_t_now.csv"
 
 
+def station_stac_item_url(abbr: str) -> str:
+    """STAC item URL for a single station (id = lowercase abbreviation)."""
+    return f"{OGD_STAC_BASE}/collections/{COLLECTION_STATIONS}/items/{abbr.lower()}"
+
+
 def stac_items_url(collection: str) -> str:
     """STAC items listing for a collection (assets carry the file hrefs)."""
     return f"{OGD_STAC_BASE}/collections/{collection}/items"
