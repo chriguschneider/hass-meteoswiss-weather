@@ -27,7 +27,12 @@ from .const import (
 from .forecast import aggregate_daily_wind, parse_daily, parse_hourly
 from .hourly import fetch_hourly_file, fetch_wind_block, horizon_end_utc
 from .http import get_text
-from .models import DailyForecast, ForecastPoint, HourlyForecast
+from .models import (
+    DailyForecast,
+    ForecastPoint,
+    HourlyForecast,
+    OgdConnectionError,
+)
 from .stac import Run, latest_run
 
 _LOGGER = logging.getLogger(__name__)
@@ -97,17 +102,34 @@ class BulkCsvBackend:
             self._wind_run = run.timestamp
             return None
 
-        results = await asyncio.gather(
-            *(
-                fetch_wind_block(
-                    self._session,
-                    run.asset_url(param),
-                    point,
-                    cached_start=self._block_starts.get(param),
+        # Wind is a best-effort bonus on the default daily refresh: a transient
+        # connection error while probing/fetching a block must degrade wind to
+        # None, never fail the whole daily update and lose the temperature,
+        # precipitation and symbol that fetched fine (ADR-0002 revision 3, the
+        # same "never crash the default daily refresh" contract as the missing-
+        # asset and non-point-major guardrails above).
+        try:
+            results = await asyncio.gather(
+                *(
+                    fetch_wind_block(
+                        self._session,
+                        run.asset_url(param),
+                        point,
+                        cached_start=self._block_starts.get(param),
+                    )
+                    for param in DAILY_WIND_PARAMS
                 )
-                for param in DAILY_WIND_PARAMS
             )
-        )
+        except OgdConnectionError as err:
+            _LOGGER.warning(
+                "daily wind skipped for run %s: %s; wind fields will be None "
+                "for all days",
+                run.timestamp.isoformat(),
+                err,
+            )
+            self._wind_texts = {}
+            self._wind_run = run.timestamp
+            return None
 
         if any(r is None for r in results):
             _LOGGER.warning(
