@@ -66,10 +66,24 @@ STATION_UPDATE_INTERVAL = timedelta(minutes=10)
 # The local forecast is republished hourly; the coordinator checks the run
 # stamp each hour and only downloads when it changed.
 FORECAST_CHECK_INTERVAL = timedelta(hours=1)
-# Hard floor for the opt-in hourly forecast: its bulk files are the whole
-# traffic budget (~1 GB/day), so they are never fetched more often than this.
-# tests/test_const.py asserts this stays at least 3 hours.
-HOURLY_FORECAST_MIN_INTERVAL = timedelta(hours=3)
+
+# Tiered hourly refresh (ADR-0002 revision 2, issue #68). Measuring all 24 runs
+# of 2026-08-27 for two points (docs/ogd.md, "Change rhythm across runs") showed
+# the bulk hourly files change on the model run rhythm, not hourly: the near term
+# (today + tomorrow) moves at the ICON-CH1 landing hours, days 2+ move at the
+# ICON-CH2 landing hours, and six runs a day change nothing. The lazy hourly
+# provider fetches each tier only at its landing hours, or when the tier's cached
+# data is older than its staleness fallback. tests/test_const.py asserts these.
+#
+# Near tier: the date-major temperature prefix up to the end of tomorrow (local
+# calendar day = horizon_days 1), refreshed at the ICON-CH1 runs or after 3 h.
+HOURLY_NEAR_HORIZON_DAYS = 1
+HOURLY_NEAR_RUN_HOURS: frozenset[int] = frozenset({2, 5, 8, 11, 14, 17, 20, 23})
+HOURLY_NEAR_MAX_AGE = timedelta(hours=3)
+# Far tier: the rest of the configured horizon, refreshed at the ICON-CH2 runs
+# (which the next CH1 run refines) or after 6 h.
+HOURLY_FAR_RUN_HOURS: frozenset[int] = frozenset({5, 11, 17, 23})
+HOURLY_FAR_MAX_AGE = timedelta(hours=6)
 # Pollen data is published hourly; one request per hour per station is enough
 # (ADR-0005). Conditional requests (If-None-Match) keep most polls to a 304.
 POLLEN_UPDATE_INTERVAL = timedelta(hours=1)

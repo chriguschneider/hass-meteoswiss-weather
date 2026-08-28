@@ -102,6 +102,24 @@ HOURLY_REQUIRED_PARAMS: tuple[str, ...] = (
     HOURLY_WIND_DIRECTION,
 )
 
+# The tiered refresh (issue #68, ADR-0002 revision 2) fetches the required set in
+# two groups scheduled independently:
+#   - the **date-major** file(s) are split into the near/far horizon tiers — only
+#     ``tre200h0`` is date-major, so a horizon prefix carries the near term
+#     cheaply and the far range extends it (docs/ogd.md §E4, "Row order");
+#   - the **point-major** files (precipitation, symbol, wind, gust, direction)
+#     are fetched whole per run — one point's ~220 rows are a ~5 KB block, so
+#     they are refreshed with every new run at negligible cost.
+# tests/test_const.py asserts the two groups partition HOURLY_REQUIRED_PARAMS.
+HOURLY_DATE_MAJOR_PARAMS: tuple[str, ...] = (HOURLY_TEMPERATURE,)
+HOURLY_POINT_MAJOR_PARAMS: tuple[str, ...] = (
+    HOURLY_PRECIPITATION,
+    HOURLY_SYMBOL,
+    HOURLY_WIND_SPEED,
+    HOURLY_GUST,
+    HOURLY_WIND_DIRECTION,
+)
+
 # The three point-major hourly wind files fetched with every daily refresh to
 # populate ``native_wind_speed``, ``native_wind_gust_speed``, and
 # ``wind_bearing`` on each ``DailyForecast`` entry (issue #60, ADR-0002

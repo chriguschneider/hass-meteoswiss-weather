@@ -112,8 +112,15 @@ class FakeBackend:
         return self.DAILY
 
     async def fetch_hourly(
-        self, point: ForecastPoint, *, horizon_days: int = -1
+        self,
+        point: ForecastPoint,
+        *,
+        horizon_days: int = -1,
+        params: tuple[str, ...] = (),
     ) -> list[HourlyForecast]:
+        # The tiered provider (issue #68) asks for the temperature and the
+        # point-major group on separate schedules; this in-memory backend
+        # returns the same fixed hours regardless, and the provider merges them.
         return self.HOURLY
 
 

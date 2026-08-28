@@ -44,7 +44,11 @@ class ForecastBackend(Protocol):
     async def fetch_daily(self, point: ForecastPoint) -> list[DailyForecast]: ...
 
     async def fetch_hourly(
-        self, point: ForecastPoint, *, horizon_days: int = HOURLY_HORIZON_FULL_RUN
+        self,
+        point: ForecastPoint,
+        *,
+        horizon_days: int = HOURLY_HORIZON_FULL_RUN,
+        params: tuple[str, ...] = HOURLY_REQUIRED_PARAMS,
     ) -> list[HourlyForecast]: ...
 
 
@@ -197,23 +201,30 @@ class BulkCsvBackend:
         return daily
 
     async def fetch_hourly(
-        self, point: ForecastPoint, *, horizon_days: int = HOURLY_HORIZON_FULL_RUN
+        self,
+        point: ForecastPoint,
+        *,
+        horizon_days: int = HOURLY_HORIZON_FULL_RUN,
+        params: tuple[str, ...] = HOURLY_REQUIRED_PARAMS,
     ) -> list[HourlyForecast]:
         # The bulk hourly files are the whole traffic budget (~30 MB each), so
-        # this path only runs behind the opt-in option and the 3 h throttle the
-        # coordinator enforces (ADR-0002). Each file is fetched with the cheapest
-        # Range strategy for its layout (issue #50): a horizon prefix for the
-        # date-major files, the point's contiguous block for the point-major
-        # ones, and the full file only as a fallback.
+        # this path only runs behind the opt-in option and the tiered schedule
+        # the provider enforces (ADR-0002 revision 2). Each file is fetched with
+        # the cheapest Range strategy for its layout (issue #50): a horizon prefix
+        # for the date-major files, the point's contiguous block for the
+        # point-major ones, and the full file only as a fallback.
+        #
+        # ``params`` is the subset to fetch — the tiered provider (issue #68) asks
+        # for the date-major temperature file (near/far horizon) and the
+        # point-major group on independent schedules, so this fetches only what a
+        # given tier needs rather than the whole set every time.
         #
         # When fetch_daily() has already fetched the three point-major wind blocks
         # for this run, reuse their cached texts without a second download
         # (issue #60, ADR-0002 revision 3). When the cache is absent (no prior
-        # daily call, or a different run), all HOURLY_REQUIRED_PARAMS are fetched
-        # the normal way — the same as before issue #60.
-        run = await latest_run(
-            self._session, COLLECTION_FORECAST, HOURLY_REQUIRED_PARAMS
-        )
+        # daily call, or a different run), the requested params are fetched the
+        # normal way — the same as before issue #60.
+        run = await latest_run(self._session, COLLECTION_FORECAST, params)
         horizon_end = horizon_end_utc(horizon_days, datetime.now(UTC))
 
         # Direct cache check (no re-probe): only hit if daily already ran.
@@ -223,9 +234,9 @@ class BulkCsvBackend:
             else None
         )
         params_to_fetch = (
-            [p for p in HOURLY_REQUIRED_PARAMS if p not in DAILY_WIND_PARAMS]
+            [p for p in params if p not in DAILY_WIND_PARAMS]
             if wind_cache is not None
-            else list(HOURLY_REQUIRED_PARAMS)
+            else list(params)
         )
 
         results = await asyncio.gather(
@@ -247,7 +258,11 @@ class BulkCsvBackend:
                 self._block_starts[param] = result.block_start
 
         if wind_cache is not None:
-            text_by_param.update(wind_cache)
+            # Only fold in cached wind texts for wind params this call requested,
+            # so a temperature-only (near/far) fetch stays temperature-only.
+            text_by_param.update(
+                {p: t for p, t in wind_cache.items() if p in params}
+            )
 
         # The download is the cost this option pays for; record it so a user can
         # see what enabling the hourly forecast actually spends (ADR-0002).
