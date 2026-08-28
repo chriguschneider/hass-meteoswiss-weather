@@ -21,7 +21,16 @@
       "dew_point": { "name": "Dew point" },
       "pressure_qfe": { "name": "Pressure QFE" },
       "sunshine_duration": { "name": "Sunshine duration (10 min)" },
-      "global_radiation": { "name": "Global radiation" }
+      "global_radiation": { "name": "Global radiation" },
+      "snow_depth": { "name": "Snow depth" },
+      "wind_chill": { "name": "Wind chill" },
+      "pressure_qnh": { "name": "Pressure QNH" },
+      "soil_temp_5cm": { "name": "Soil temperature (5 cm)" },
+      "soil_temp_10cm": { "name": "Soil temperature (10 cm)" },
+      "soil_temp_20cm": { "name": "Soil temperature (20 cm)" },
+      "air_temp_5cm": { "name": "Air temperature (5 cm)" },
+      "diffuse_radiation": { "name": "Diffuse radiation" },
+      "longwave_radiation": { "name": "Longwave radiation" }
     }
   },
   "config": {
