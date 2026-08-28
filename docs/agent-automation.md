@@ -77,13 +77,17 @@ its own work.
 
 ## Autopilot: backlog grind (`claude-autopilot.yml`)
 
-Every 30 min, **if no agent PR is open**, it takes the next open P-issue
+After **every closed PR**, every completed **CI** or **review** run, every
+issue label/assignment change, and on a cron at :13/:43 (which GitHub fires
+only best-effort; on 2026-08-28 it ran about every 10 h) — **if no agent PR
+is open**, it takes the next open P-issue
 (P1 before P2 before P3, lowest number first), opens a draft PR, the
 reviewer auto-merges it, and the next tick takes the next — until the
 backlog is empty. One PR at a time (no conflicts). Skips issues whose title
 starts with `Tracking:`, anything assigned, and anything labelled `agent:go`,
 `agent:in-progress` or `needs-verification`. Pause it by disabling the
-workflow in Actions.
+workflow in Actions; kick it by hand with `gh workflow run claude-autopilot.yml`
+when nothing is running and the backlog is not empty.
 
 **Ordering the backlog** therefore means: give an issue a P-label only when
 its prerequisites are merged, or accept that the agent will hit a missing
