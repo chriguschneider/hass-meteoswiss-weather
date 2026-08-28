@@ -47,6 +47,16 @@ DEFAULT_HOURLY_HORIZON_DAYS = 2
 HOURLY_HORIZON_CHOICES: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6, 7, 8,
                                            HOURLY_HORIZON_FULL_RUN)
 
+# B9/B11 date-major hourly additions behind per-entity gating (issue #69). Both
+# are only meaningful with the hourly opt-in on, and each turns on extra
+# date-major files (a horizon prefix each, ~7–11 MB) — the expensive path — so
+# they are off by default (ADR-0002 gating rule). ``cloud_layers`` fetches the
+# three cloud-cover files (high/mid/low) and exposes ``cloud_coverage`` (the max
+# of the layers) plus the three layers as hourly attributes; ``temp_percentiles``
+# fetches the p10/p90 temperature files and exposes them as hourly attributes.
+CONF_HOURLY_CLOUD_LAYERS = "hourly_cloud_layers"
+CONF_HOURLY_TEMP_PERCENTILES = "hourly_temp_percentiles"
+
 # Official MeteoSwiss open data (ADR-0001). The STAC catalogue lists the
 # files; the files themselves are plain HTTPS downloads under OGD_FILE_BASE.
 OGD_STAC_BASE = "https://data.geo.admin.ch/api/stac/v1"

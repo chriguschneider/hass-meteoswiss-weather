@@ -22,8 +22,10 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meteoswiss_weather.const import (
     CONF_HISTORY_ACTION,
+    CONF_HOURLY_CLOUD_LAYERS,
     CONF_HOURLY_FORECAST,
     CONF_HOURLY_HORIZON_DAYS,
+    CONF_HOURLY_TEMP_PERCENTILES,
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
@@ -537,6 +539,84 @@ async def test_options_flow_stores_hourly_flag(
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_HOURLY_FORECAST] is True
     assert result["data"][CONF_HOURLY_HORIZON_DAYS] == 4
+
+
+async def test_options_flow_hourly_step_gated_additions(
+    hass: HomeAssistant,
+) -> None:
+    """The hourly step carries the B9/B11 toggles and persists them (issue #69)."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="2-309800",
+        data={
+            CONF_POINT_ID: 309800,
+            CONF_POINT_TYPE_ID: 2,
+            CONF_POSTAL_CODE: "3098",
+            CONF_POINT_NAME: "Köniz",
+            CONF_STATION_ABBR: "BER",
+            CONF_STATION_NAME: "Bern / Zollikofen",
+        },
+        title="Köniz",
+    )
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_HOURLY_FORECAST: True}
+    )
+    assert result["step_id"] == "hourly"
+    # Both gated toggles default off (ADR-0002 gating; the expensive path).
+    schema_default = result["data_schema"]({})
+    assert schema_default[CONF_HOURLY_CLOUD_LAYERS] is False
+    assert schema_default[CONF_HOURLY_TEMP_PERCENTILES] is False
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_HOURLY_HORIZON_DAYS: 2,
+            CONF_HOURLY_CLOUD_LAYERS: True,
+            CONF_HOURLY_TEMP_PERCENTILES: False,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_HOURLY_CLOUD_LAYERS] is True
+    assert result["data"][CONF_HOURLY_TEMP_PERCENTILES] is False
+
+
+async def test_options_flow_hourly_off_forces_gated_additions_off(
+    hass: HomeAssistant,
+) -> None:
+    """Turning hourly off writes both gated toggles as False (issue #69)."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="2-309800",
+        data={
+            CONF_POINT_ID: 309800,
+            CONF_POINT_TYPE_ID: 2,
+            CONF_POSTAL_CODE: "3098",
+            CONF_POINT_NAME: "Köniz",
+            CONF_STATION_ABBR: "BER",
+            CONF_STATION_NAME: "Bern / Zollikofen",
+        },
+        # Previously enabled; turning hourly off must not leave them dangling on.
+        options={
+            CONF_HOURLY_FORECAST: True,
+            CONF_HOURLY_CLOUD_LAYERS: True,
+            CONF_HOURLY_TEMP_PERCENTILES: True,
+        },
+        title="Köniz",
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={CONF_HOURLY_FORECAST: False}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_HOURLY_CLOUD_LAYERS] is False
+    assert result["data"][CONF_HOURLY_TEMP_PERCENTILES] is False
 
 
 async def test_options_flow_hourly_off_skips_horizon_step(

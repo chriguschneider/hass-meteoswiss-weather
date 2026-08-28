@@ -80,8 +80,8 @@ from .ogd import (
 from .ogd.const import (
     COLLECTION_FORECAST,
     DAILY_REQUIRED_PARAMS,
-    HOURLY_DATE_MAJOR_PARAMS,
     HOURLY_POINT_MAJOR_PARAMS,
+    hourly_date_major_params,
 )
 
 # Issue IDs used in the HA repair-issue registry.
@@ -166,18 +166,28 @@ class HourlyForecastProvider:
         *,
         enabled: bool,
         horizon_days: int,
+        cloud_layers: bool = False,
+        temp_percentiles: bool = False,
     ) -> None:
         self._hass = hass
         self._backend = backend
         self._point = point
         self._enabled = enabled
         self._horizon_days = horizon_days
+        # The date-major files to fetch on the near/far schedule: always the
+        # temperature file, plus the B9 cloud and B11 percentile files only when
+        # their option is on (the fetch-set registry, issue #69). Nothing extra
+        # is fetched when neither is enabled.
+        self._date_major_params = hourly_date_major_params(
+            cloud_layers=cloud_layers, temp_percentiles=temp_percentiles
+        )
         self._lock = asyncio.Lock()
-        # The merged forecast last built from the three groups below.
+        # The merged forecast last built from the groups below.
         self._hourly: list[HourlyForecast] | None = None
-        # Temperature by hour from the date-major near/far fetches, and the
+        # The date-major fields by hour (temperature, and — when enabled — cloud
+        # layers and temperature percentiles) from the near/far fetches, and the
         # point-major fields (precip, symbol, wind, gust, bearing) by hour.
-        self._temp: dict[datetime, float | None] = {}
+        self._date_major: dict[datetime, HourlyForecast] = {}
         self._point_major: dict[datetime, HourlyForecast] = {}
         # Per-group bookkeeping: the run each was last fetched at and when.
         self._near_run: datetime | None = None
@@ -231,7 +241,7 @@ class HourlyForecastProvider:
         """Refresh whichever tiers are due for ``run``; keep last-good on error."""
         now = dt_util.utcnow()
         try:
-            changed = await self._refresh_temperature(run, now)
+            changed = await self._refresh_date_major(run, now)
             changed = await self._refresh_point_major(run, now) or changed
         except OgdParseError as err:
             async_create_issue(
@@ -252,12 +262,14 @@ class HourlyForecastProvider:
         if changed:
             self._hourly = self._merge()
 
-    async def _refresh_temperature(self, run: datetime, now: datetime) -> bool:
-        """Refresh the date-major temperature via the far then near tiers.
+    async def _refresh_date_major(self, run: datetime, now: datetime) -> bool:
+        """Refresh the date-major group via the far then near tiers.
 
-        The far tier spans the near window, so a due far fetch supersedes and
-        also satisfies the near tier; only when far is not due but near is does
-        the cheaper near prefix run.
+        The date-major group is the temperature file plus, when enabled, the B9
+        cloud and B11 percentile files (issue #69) — all fetched together as one
+        horizon prefix on this schedule. The far tier spans the near window, so a
+        due far fetch supersedes and also satisfies the near tier; only when far
+        is not due but near is does the cheaper near prefix run.
         """
         if _tier_due(
             run=run,
@@ -270,9 +282,9 @@ class HourlyForecastProvider:
             far = await self._backend.fetch_hourly(
                 self._point,
                 horizon_days=self._horizon_days,
-                params=HOURLY_DATE_MAJOR_PARAMS,
+                params=self._date_major_params,
             )
-            self._temp = {hour.time: hour.temperature for hour in far}
+            self._date_major = {hour.time: hour for hour in far}
             self._far_run = self._near_run = run
             self._far_fetch = self._near_fetch = now
             return True
@@ -288,12 +300,12 @@ class HourlyForecastProvider:
             near = await self._backend.fetch_hourly(
                 self._point,
                 horizon_days=HOURLY_NEAR_HORIZON_DAYS,
-                params=HOURLY_DATE_MAJOR_PARAMS,
+                params=self._date_major_params,
             )
-            # Overwrite only the near-window hours; keep the far-window
-            # temperatures from the last far fetch (that tier refreshes slower).
+            # Overwrite only the near-window hours; keep the far-window values
+            # from the last far fetch (that tier refreshes slower).
             for hour in near:
-                self._temp[hour.time] = hour.temperature
+                self._date_major[hour.time] = hour
             self._near_run = run
             self._near_fetch = now
             return True
@@ -315,14 +327,21 @@ class HourlyForecastProvider:
         return True
 
     def _merge(self) -> list[HourlyForecast]:
-        """Combine the temperature and point-major groups by hour, sorted."""
+        """Combine the date-major and point-major groups by hour, sorted.
+
+        The date-major group carries temperature and — when their option is on —
+        the cloud layers and temperature percentiles (issue #69); the
+        point-major group carries precipitation, symbol, wind and the B7/B8/B10
+        additions. Each hour reads its fields from whichever group holds them.
+        """
         result: list[HourlyForecast] = []
-        for when in sorted(set(self._temp) | set(self._point_major)):
+        for when in sorted(set(self._date_major) | set(self._point_major)):
+            dm = self._date_major.get(when)
             block = self._point_major.get(when)
             result.append(
                 HourlyForecast(
                     time=when,
-                    temperature=self._temp.get(when),
+                    temperature=dm.temperature if dm else None,
                     precipitation=block.precipitation if block else None,
                     symbol=block.symbol if block else None,
                     wind_speed_kmh=block.wind_speed_kmh if block else None,
@@ -333,6 +352,11 @@ class HourlyForecastProvider:
                     ),
                     zero_degree_level=block.zero_degree_level if block else None,
                     radiation=block.radiation if block else None,
+                    cloud_high=dm.cloud_high if dm else None,
+                    cloud_mid=dm.cloud_mid if dm else None,
+                    cloud_low=dm.cloud_low if dm else None,
+                    temperature_p10=dm.temperature_p10 if dm else None,
+                    temperature_p90=dm.temperature_p90 if dm else None,
                 )
             )
         return result
@@ -409,6 +433,8 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         *,
         hourly_enabled: bool = False,
         hourly_horizon_days: int = DEFAULT_HOURLY_HORIZON_DAYS,
+        hourly_cloud_layers: bool = False,
+        hourly_temp_percentiles: bool = False,
     ) -> None:
         super().__init__(
             hass,
@@ -434,6 +460,8 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
             point,
             enabled=hourly_enabled,
             horizon_days=hourly_horizon_days,
+            cloud_layers=hourly_cloud_layers,
+            temp_percentiles=hourly_temp_percentiles,
         )
 
     async def _async_update_data(self) -> ForecastData:

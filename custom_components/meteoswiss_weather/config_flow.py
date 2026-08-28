@@ -29,8 +29,10 @@ from homeassistant.helpers.selector import (
 from .const import (
     BACKFILL_AVAILABLE,
     CONF_HISTORY_ACTION,
+    CONF_HOURLY_CLOUD_LAYERS,
     CONF_HOURLY_FORECAST,
     CONF_HOURLY_HORIZON_DAYS,
+    CONF_HOURLY_TEMP_PERCENTILES,
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
@@ -540,6 +542,10 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
         self._hourly: bool = False
         self._pollen: bool = False
         self._hourly_horizon: int = DEFAULT_HOURLY_HORIZON_DAYS
+        # B9/B11 gated date-major additions (issue #69); only offered on the
+        # hourly step, so they are False whenever the hourly opt-in is off.
+        self._cloud_layers: bool = False
+        self._temp_percentiles: bool = False
         # Loaded lazily in async_step_pollen_station.
         self._pollen_stations: list[PollenStation] | None = None
         self._pollen_ref_lat: float = 0.0
@@ -563,6 +569,9 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
                 data={
                     CONF_HOURLY_FORECAST: False,
                     CONF_HOURLY_HORIZON_DAYS: self._hourly_horizon,
+                    # Hourly off: the gated additions cannot apply (issue #69).
+                    CONF_HOURLY_CLOUD_LAYERS: False,
+                    CONF_HOURLY_TEMP_PERCENTILES: False,
                     CONF_POLLEN: False,
                     CONF_POLLEN_STATION: current.get(CONF_POLLEN_STATION, ""),
                 }
@@ -587,16 +596,25 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
     async def async_step_hourly(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Second step (hourly on): pick how far ahead the hourly forecast goes."""
+        """Second step (hourly on): horizon plus the B9/B11 gated additions.
+
+        The cloud-layer and percentile toggles live here rather than on the init
+        step because each only makes sense with the hourly forecast on, and each
+        turns on extra expensive date-major files (issue #69, ADR-0002 gating).
+        """
         current = self.config_entry.options
         if user_input is not None:
             self._hourly_horizon = int(user_input[CONF_HOURLY_HORIZON_DAYS])
+            self._cloud_layers = bool(user_input[CONF_HOURLY_CLOUD_LAYERS])
+            self._temp_percentiles = bool(user_input[CONF_HOURLY_TEMP_PERCENTILES])
             if self._pollen:
                 return await self.async_step_pollen_station()
             return self.async_create_entry(
                 data={
                     CONF_HOURLY_FORECAST: True,
                     CONF_HOURLY_HORIZON_DAYS: self._hourly_horizon,
+                    CONF_HOURLY_CLOUD_LAYERS: self._cloud_layers,
+                    CONF_HOURLY_TEMP_PERCENTILES: self._temp_percentiles,
                     CONF_POLLEN: False,
                     CONF_POLLEN_STATION: current.get(CONF_POLLEN_STATION, ""),
                 }
@@ -612,7 +630,15 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
                         default=current.get(
                             CONF_HOURLY_HORIZON_DAYS, DEFAULT_HOURLY_HORIZON_DAYS
                         ),
-                    ): vol.In(choices)
+                    ): vol.In(choices),
+                    vol.Required(
+                        CONF_HOURLY_CLOUD_LAYERS,
+                        default=current.get(CONF_HOURLY_CLOUD_LAYERS, False),
+                    ): bool,
+                    vol.Required(
+                        CONF_HOURLY_TEMP_PERCENTILES,
+                        default=current.get(CONF_HOURLY_TEMP_PERCENTILES, False),
+                    ): bool,
                 }
             ),
         )
@@ -663,6 +689,8 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
                 data={
                     CONF_HOURLY_FORECAST: self._hourly,
                     CONF_HOURLY_HORIZON_DAYS: self._hourly_horizon,
+                    CONF_HOURLY_CLOUD_LAYERS: self._cloud_layers,
+                    CONF_HOURLY_TEMP_PERCENTILES: self._temp_percentiles,
                     CONF_POLLEN: True,
                     CONF_POLLEN_STATION: pollen_abbr,
                 }

@@ -171,10 +171,14 @@
         "title": "Horizont der Stundenprognose",
         "description": "Wie weit die Stundenprognose vorausgeladen wird, in vollen lokalen Kalendertagen. Ein kürzerer Horizont lädt weniger. «Voller Lauf» lädt alle ~220 Stunden (rund 9 Tage).",
         "data": {
-          "hourly_horizon_days": "Prognosehorizont"
+          "hourly_horizon_days": "Prognosehorizont",
+          "hourly_cloud_layers": "Wolkendecke-Schichten einschliessen",
+          "hourly_temp_percentiles": "Temperaturperzentile einschliessen"
         },
         "data_description": {
-          "hourly_horizon_days": "Standard: der Rest von heute plus zwei volle Tage (rund 7–11 MB pro Aktualisierung). «Voller Lauf» lädt jede Stunde (rund 30 MB pro Aktualisierung)."
+          "hourly_horizon_days": "Standard: der Rest von heute plus zwei volle Tage (rund 7–11 MB pro Aktualisierung). «Voller Lauf» lädt jede Stunde (rund 30 MB pro Aktualisierung).",
+          "hourly_cloud_layers": "Fügt cloud_coverage (das Maximum der hohen, mittleren und tiefen Schicht) sowie die drei Schichten als stündliche Attribute hinzu. Lädt drei zusätzliche Dateien pro Aktualisierung, vervierfacht also etwa den stündlichen Datenverkehr. Standardmässig aus.",
+          "hourly_temp_percentiles": "Fügt das 10.- und 90.-Temperaturperzentil (das Unsicherheitsband der Prognose) als stündliche Attribute hinzu. Lädt zwei zusätzliche Dateien pro Aktualisierung. Standardmässig aus."
         }
       },
       "pollen_station": {

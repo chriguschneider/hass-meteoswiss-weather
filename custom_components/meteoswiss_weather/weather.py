@@ -282,6 +282,31 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
             forecast["precipitation_probability"] = round(
                 hour.precipitation_probability
             )
+        # B9 (issue #69): cloud_coverage is HA's single number — documented as
+        # the maximum of the three layers, since a card shows one figure. The
+        # three layers ride along as extra hourly attributes for anyone who wants
+        # the breakdown. Only present when the cloud-layer option is on (the
+        # files are otherwise not fetched).
+        layers = [
+            layer
+            for layer in (hour.cloud_high, hour.cloud_mid, hour.cloud_low)
+            if layer is not None
+        ]
+        if layers:
+            forecast["cloud_coverage"] = round(max(layers))
+            forecast["cloud_coverage_high"] = hour.cloud_high
+            forecast["cloud_coverage_mid"] = hour.cloud_mid
+            forecast["cloud_coverage_low"] = hour.cloud_low
+        # B11 (issue #69): the temperature uncertainty band, as extra attributes
+        # next to the median temperature. Only present when the percentile option
+        # is on. These are custom keys, not the standard native_temperature that
+        # Home Assistant unit-converts, so they carry the native °C value and are
+        # named without the ``native_`` prefix to avoid implying a conversion HA
+        # does not perform on unknown keys.
+        if hour.temperature_p10 is not None:
+            forecast["temperature_p10"] = hour.temperature_p10
+        if hour.temperature_p90 is not None:
+            forecast["temperature_p90"] = hour.temperature_p90
         return forecast
 
     @callback

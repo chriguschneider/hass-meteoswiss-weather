@@ -23,7 +23,9 @@ from custom_components.meteoswiss_weather.ogd.const import (
     COLLECTION_FORECAST,
     DAILY_REQUIRED_PARAMS,
     DAILY_WIND_PARAMS,
+    HOURLY_CLOUD_PARAMS,
     HOURLY_REQUIRED_PARAMS,
+    HOURLY_TEMP_PERCENTILE_PARAMS,
     META_DATAINVENTORY_URL,
     META_POINT_URL,
     META_POLLEN_DATAINVENTORY_URL,
@@ -126,8 +128,15 @@ def _register_mock_ogd(
 
     # Hourly parameter CSV files (opt-in). Registered unconditionally so tests
     # can assert they are *not* fetched when the option is off; the default
-    # config entry has no options, so nothing here is downloaded.
-    for param in HOURLY_REQUIRED_PARAMS:
+    # config entry has no options, so nothing here is downloaded. The B9/B11
+    # gated date-major additions (issue #69) join the list so a test with those
+    # options on finds their files, while a plain hourly test never fetches them.
+    hourly_params = (
+        *HOURLY_REQUIRED_PARAMS,
+        *HOURLY_CLOUD_PARAMS,
+        *HOURLY_TEMP_PERCENTILE_PARAMS,
+    )
+    for param in hourly_params:
         aioclient_mock.get(
             f"{_ASSET_BASE}/vnut12.lssw.{_RUN_TS}.{param}.csv",
             content=_fixture_bytes(f"vnut12.lssw.{_RUN_TS}.{param}.csv"),

@@ -157,6 +157,16 @@ class HourlyForecast:
     zero_degree_level: float | None = None
     # B10: global radiation (W/m²).
     radiation: float | None = None
+    # B9: cloud cover by layer (%), high/mid/low. Off unless the cloud-layer
+    # option is on — the three files are date-major and expensive (issue #69).
+    cloud_high: float | None = None
+    cloud_mid: float | None = None
+    cloud_low: float | None = None
+    # B11: temperature 10th/90th percentile (°C), the forecast's uncertainty
+    # band. Off unless the percentile option is on — both files are date-major
+    # (issue #69).
+    temperature_p10: float | None = None
+    temperature_p90: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

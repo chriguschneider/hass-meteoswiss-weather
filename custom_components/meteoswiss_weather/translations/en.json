@@ -171,10 +171,14 @@
         "title": "Hourly forecast horizon",
         "description": "How far ahead to fetch the hourly forecast, counted in full local calendar days. A shorter horizon downloads less. \"Full run\" fetches all ~220 hours (about 9 days).",
         "data": {
-          "hourly_horizon_days": "Forecast horizon"
+          "hourly_horizon_days": "Forecast horizon",
+          "hourly_cloud_layers": "Include cloud cover layers",
+          "hourly_temp_percentiles": "Include temperature percentiles"
         },
         "data_description": {
-          "hourly_horizon_days": "Default: the rest of today plus two full days (about 7–11 MB per refresh). \"Full run\" fetches every hour (about 30 MB per refresh)."
+          "hourly_horizon_days": "Default: the rest of today plus two full days (about 7–11 MB per refresh). \"Full run\" fetches every hour (about 30 MB per refresh).",
+          "hourly_cloud_layers": "Adds cloud_coverage (the maximum of the high, mid and low layers) plus the three layers as hourly attributes. Downloads three extra bulk files per refresh, so it roughly quadruples the hourly traffic. Off by default.",
+          "hourly_temp_percentiles": "Adds the 10th and 90th temperature percentiles (the forecast's uncertainty band) as hourly attributes. Downloads two extra bulk files per refresh. Off by default."
         }
       },
       "pollen_station": {

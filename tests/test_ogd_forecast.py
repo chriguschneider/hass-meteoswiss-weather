@@ -33,9 +33,16 @@ from custom_components.meteoswiss_weather.ogd.const import (
     COLLECTION_FORECAST,
     DAILY_REQUIRED_PARAMS,
     DAILY_WIND_PARAMS,
+    HOURLY_CLOUD_HIGH,
+    HOURLY_CLOUD_LOW,
+    HOURLY_CLOUD_MID,
+    HOURLY_CLOUD_PARAMS,
     HOURLY_PRECIP_PROBABILITY,
     HOURLY_RADIATION,
     HOURLY_REQUIRED_PARAMS,
+    HOURLY_TEMP_P10,
+    HOURLY_TEMP_P90,
+    HOURLY_TEMP_PERCENTILE_PARAMS,
     HOURLY_ZERO_DEGREE,
     META_POINT_URL,
     stac_items_url,
@@ -498,6 +505,87 @@ def test_parse_hourly_b7_b8_b10_merged_with_full_set() -> None:
     assert hourly[0].radiation == 0.0
     h10 = next(h for h in hourly if h.time.hour == 10)
     assert h10.radiation is not None and h10.radiation > 0
+
+
+# --- B9/B11 gated additions (issue #69) -------------------------------------
+
+
+def test_parse_hourly_b9_cloud_layers() -> None:
+    """B9: the three cloud files map to cloud_high/mid/low on HourlyForecast.
+
+    Fixture for 309800;2: high = 20 + 2*h, mid = 40 (const), low = 10 (const).
+    """
+    texts = {
+        param: _fixture_text(f"vnut12.lssw.{RUN_TS}.{param}.csv")
+        for param in HOURLY_CLOUD_PARAMS
+    }
+    hourly = parse_hourly(texts, _koeniz_point())
+    assert len(hourly) == 24
+    assert hourly[0].cloud_high == 20.0
+    assert hourly[0].cloud_mid == 40.0
+    assert hourly[0].cloud_low == 10.0
+    # High cloud rises over the day; mid/low stay constant.
+    h12 = next(h for h in hourly if h.time.hour == 12)
+    assert h12.cloud_high == 44.0
+    assert h12.cloud_mid == 40.0
+    # Fields from files not in this set stay None.
+    assert all(h.temperature is None for h in hourly)
+
+
+def test_parse_hourly_b11_temperature_percentiles() -> None:
+    """B11: treq10h0/treq90h0 map to temperature_p10/p90 and bracket the median.
+
+    Fixture for 309800;2: p10 = 8 + 0.5*h, p90 = 13 + 0.5*h; the median
+    temperature (tre200h0) is 10 + 0.5*h, so p10 < temp < p90 at every hour.
+    """
+    texts = {
+        param: _fixture_text(f"vnut12.lssw.{RUN_TS}.{param}.csv")
+        for param in HOURLY_TEMP_PERCENTILE_PARAMS
+    }
+    hourly = parse_hourly(texts, _koeniz_point())
+    assert len(hourly) == 24
+    assert hourly[0].temperature_p10 == 8.0
+    assert hourly[0].temperature_p90 == 13.0
+    assert all(
+        h.temperature_p10 is not None and h.temperature_p90 is not None
+        for h in hourly
+    )
+    # The band brackets the median temperature file at every hour.
+    median = parse_hourly(
+        {"tre200h0": _fixture_text(f"vnut12.lssw.{RUN_TS}.tre200h0.csv")},
+        _koeniz_point(),
+    )
+    temp_by_hour = {h.time: h.temperature for h in median}
+    for h in hourly:
+        assert h.temperature_p10 < temp_by_hour[h.time] < h.temperature_p90
+
+
+def test_parse_hourly_b9_b11_merged_with_full_set() -> None:
+    """The gated fields survive a merge alongside the always-on minimum set."""
+    texts = _hourly_texts()
+    for param in (*HOURLY_CLOUD_PARAMS, *HOURLY_TEMP_PERCENTILE_PARAMS):
+        texts[param] = _fixture_text(f"vnut12.lssw.{RUN_TS}.{param}.csv")
+    hourly = parse_hourly(texts, _koeniz_point())
+    assert len(hourly) == 24
+    first = hourly[0]
+    # The base fields are still there…
+    assert first.temperature == 10.0
+    assert first.symbol == 1
+    # …and the gated fields are populated too.
+    assert first.cloud_high == 20.0
+    assert first.cloud_mid == 40.0
+    assert first.cloud_low == 10.0
+    assert first.temperature_p10 == 8.0
+    assert first.temperature_p90 == 13.0
+
+
+def test_cloud_files_are_the_measured_codes() -> None:
+    """Guard the three cloud codes against a typo (docs/ogd.md §E4, issue #69)."""
+    assert HOURLY_CLOUD_HIGH == "nprohihs"
+    assert HOURLY_CLOUD_MID == "npromths"
+    assert HOURLY_CLOUD_LOW == "nprolohs"
+    assert HOURLY_TEMP_P10 == "treq10h0"
+    assert HOURLY_TEMP_P90 == "treq90h0"
 
 
 # --- daily wind aggregation (issue #60) ------------------------------------

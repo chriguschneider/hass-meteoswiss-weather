@@ -20,9 +20,12 @@ from custom_components.meteoswiss_weather.const import (
 from custom_components.meteoswiss_weather.ogd.const import (
     DAILY_REQUIRED_PARAMS,
     DAILY_SYMBOL,
+    HOURLY_CLOUD_PARAMS,
     HOURLY_DATE_MAJOR_PARAMS,
     HOURLY_POINT_MAJOR_PARAMS,
     HOURLY_REQUIRED_PARAMS,
+    HOURLY_TEMP_PERCENTILE_PARAMS,
+    hourly_date_major_params,
 )
 
 
@@ -65,6 +68,52 @@ def test_hourly_param_groups_partition_the_required_set() -> None:
     assert set(HOURLY_DATE_MAJOR_PARAMS) | set(HOURLY_POINT_MAJOR_PARAMS) == set(
         HOURLY_REQUIRED_PARAMS
     )
+
+
+def test_fetch_set_registry_fetches_nothing_extra_by_default() -> None:
+    """Issue #69: with no gated option on, only the base date-major set fetches.
+
+    The B9 cloud and B11 percentile files are date-major and expensive (a
+    horizon prefix each), so they must never be fetched unless their option is
+    enabled. With both off the registry returns exactly the base set.
+    """
+    assert hourly_date_major_params() == HOURLY_DATE_MAJOR_PARAMS
+    assert (
+        hourly_date_major_params(cloud_layers=False, temp_percentiles=False)
+        == HOURLY_DATE_MAJOR_PARAMS
+    )
+    # None of the extra files leak into the default set.
+    default = set(hourly_date_major_params())
+    assert not default & set(HOURLY_CLOUD_PARAMS)
+    assert not default & set(HOURLY_TEMP_PERCENTILE_PARAMS)
+
+
+def test_fetch_set_registry_adds_only_the_enabled_files() -> None:
+    """Each option adds exactly its own files, and both together add both sets."""
+    base = set(HOURLY_DATE_MAJOR_PARAMS)
+
+    clouds = set(hourly_date_major_params(cloud_layers=True))
+    assert clouds == base | set(HOURLY_CLOUD_PARAMS)
+    assert not clouds & set(HOURLY_TEMP_PERCENTILE_PARAMS)
+
+    percentiles = set(hourly_date_major_params(temp_percentiles=True))
+    assert percentiles == base | set(HOURLY_TEMP_PERCENTILE_PARAMS)
+    assert not percentiles & set(HOURLY_CLOUD_PARAMS)
+
+    both = set(hourly_date_major_params(cloud_layers=True, temp_percentiles=True))
+    assert both == base | set(HOURLY_CLOUD_PARAMS) | set(HOURLY_TEMP_PERCENTILE_PARAMS)
+
+
+def test_gated_files_are_disjoint_from_the_point_major_group() -> None:
+    """The B9/B11 files are date-major, never part of the point-major group.
+
+    Guards the layout assumption behind their cost: they are fetched as horizon
+    prefixes on the near/far schedule, not as cheap point blocks.
+    """
+    gated = set(HOURLY_CLOUD_PARAMS) | set(HOURLY_TEMP_PERCENTILE_PARAMS)
+    assert not gated & set(HOURLY_POINT_MAJOR_PARAMS)
+    # They are also disjoint from the always-on required set (opt-in additions).
+    assert not gated & set(HOURLY_REQUIRED_PARAMS)
 
 
 def test_station_and_forecast_intervals() -> None:

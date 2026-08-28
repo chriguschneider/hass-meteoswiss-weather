@@ -171,10 +171,14 @@
         "title": "Orizzonte delle previsioni orarie",
         "description": "Quanto in avanti scaricare le previsioni orarie, in giorni di calendario locali interi. Un orizzonte più breve scarica meno. «Ciclo completo» scarica tutte le ~220 ore (circa 9 giorni).",
         "data": {
-          "hourly_horizon_days": "Orizzonte di previsione"
+          "hourly_horizon_days": "Orizzonte di previsione",
+          "hourly_cloud_layers": "Includi gli strati di copertura nuvolosa",
+          "hourly_temp_percentiles": "Includi i percentili di temperatura"
         },
         "data_description": {
-          "hourly_horizon_days": "Predefinito: il resto di oggi più due giorni interi (circa 7–11 MB per aggiornamento). «Ciclo completo» scarica ogni ora (circa 30 MB per aggiornamento)."
+          "hourly_horizon_days": "Predefinito: il resto di oggi più due giorni interi (circa 7–11 MB per aggiornamento). «Ciclo completo» scarica ogni ora (circa 30 MB per aggiornamento).",
+          "hourly_cloud_layers": "Aggiunge cloud_coverage (il massimo degli strati alto, medio e basso) e i tre strati come attributi orari. Scarica tre file aggiuntivi per aggiornamento, quadruplicando circa il traffico orario. Disattivato per impostazione predefinita.",
+          "hourly_temp_percentiles": "Aggiunge il 10° e il 90° percentile di temperatura (la banda di incertezza della previsione) come attributi orari. Scarica due file aggiuntivi per aggiornamento. Disattivato per impostazione predefinita."
         }
       },
       "pollen_station": {
