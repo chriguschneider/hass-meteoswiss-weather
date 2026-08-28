@@ -142,3 +142,27 @@ class HourlyForecast:
     wind_speed_kmh: float | None = None
     gust_kmh: float | None = None
     wind_bearing: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class HourlyHistoryRow:
+    """One hour of a station's measured history (ADR-0007, issue #51).
+
+    ``ts_utc`` is the ``reference_timestamp`` of the upstream row, UTC.
+    Every other field is optional: an empty cell yields ``None`` rather than
+    an invented value. The hourly mean/min/max temperatures match the shape
+    of a Home Assistant long-term statistics row.
+    """
+
+    ts_utc: datetime
+    temp_mean: float | None = None
+    temp_min: float | None = None
+    temp_max: float | None = None
+    humidity: float | None = None
+    dew_point: float | None = None
+    pressure_qff: float | None = None
+    wind_speed_kmh: float | None = None
+    gust_kmh: float | None = None
+    precipitation_sum: float | None = None
+    sunshine: float | None = None
+    global_radiation: float | None = None
