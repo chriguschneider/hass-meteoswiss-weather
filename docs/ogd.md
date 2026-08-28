@@ -179,6 +179,15 @@ on 2026-08-27: `tre200px=29.1`, `tre200pn=16.7`, `rka150p0=0.1`, `jp2000d0=2`.
   `309800` start at byte ~70 KB and end at byte ~32.4 MB. There is no way
   to download only one point: no early exit, and `Range` requests (which
   the server does honour, HTTP 206) cannot help.
+- **Correction, measured 2026-08-28 (run `202608280400`):** the bullet
+  above holds for `tre200h0` — and for `treq10h0`, `treq90h0` and the
+  three `npro*` cloud files — only. The other ten hourly files
+  (`jww003i0`, `rre150h0`, `rre003i0`, `rp0003i0`, `fu3010h0`,
+  `fu3010h1`, `dkl010h0`, `zprfr0hs`, `gre000h0`, `sre000h0`) are
+  **point-major**: one point's ~220 rows are contiguous (~5 KB) and a
+  single `Range` request fetches them. `If-None-Match` works together
+  with `Range` (304 on unchanged). Full table, method and consequences:
+  issue #50, which rewrites this section.
 - 220 hourly timestamps per point = 9 days + a few hours.
 - Daily files are cheap; hourly files are the whole budget. See ADR-0002.
 
