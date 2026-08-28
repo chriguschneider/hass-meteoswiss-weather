@@ -1,0 +1,87 @@
+{
+  "issues": {
+    "parse_error_station": {
+      "title": "MeteoSwiss: Format der Stationsdatei geändert",
+      "description": "Die SwissMetNet-Stationsbeobachtungsdatei konnte nicht eingelesen werden. Das Upstream-Format hat sich möglicherweise geändert. Prüfen Sie `docs/ogd.md` im Integration-Repository für das aktuelle Format und eröffnen Sie ein Drift-Issue, wenn das Layout nicht mehr übereinstimmt."
+    },
+    "parse_error_forecast": {
+      "title": "MeteoSwiss: Format der Prognosedatei geändert",
+      "description": "Die lokale Prognosedatei konnte nicht eingelesen werden. Das Upstream-Format hat sich möglicherweise geändert. Prüfen Sie `docs/ogd.md` im Integration-Repository für das aktuelle Format und eröffnen Sie ein Drift-Issue, wenn das Layout nicht mehr übereinstimmt."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": { "name": "Lufttemperatur 2 m" },
+      "humidity": { "name": "Relative Luftfeuchtigkeit 2 m" },
+      "pressure_qff": { "name": "Luftdruck auf Meereshöhe (QFF)" },
+      "wind_speed": { "name": "Windgeschwindigkeit (10 Min. Mittel)" },
+      "wind_bearing": { "name": "Windrichtung (10 Min. Mittel)" },
+      "gust_speed": { "name": "Böenspitze (1 s)" },
+      "precipitation": { "name": "Niederschlag (10 Min. Summe)" },
+      "dew_point": { "name": "Taupunkt 2 m" },
+      "pressure_qfe": { "name": "Luftdruck auf Stationsebene (QFE)" },
+      "sunshine_duration": { "name": "Sonnenscheindauer (10 Min. Summe)" },
+      "global_radiation": { "name": "Globalstrahlung (10 Min. Mittel)" },
+      "snow_depth": { "name": "Gesamtschneehöhe (Automatisch)" },
+      "wind_chill": { "name": "Gefühlte Temperatur" },
+      "pressure_qnh": { "name": "Luftdruck auf Meereshöhe (QNH)" },
+      "soil_temp_5cm": { "name": "Bodentemperatur 5 cm" },
+      "soil_temp_10cm": { "name": "Bodentemperatur 10 cm" },
+      "soil_temp_20cm": { "name": "Bodentemperatur 20 cm" },
+      "air_temp_5cm": { "name": "Lufttemperatur 5 cm" },
+      "diffuse_radiation": { "name": "Diffusstrahlung (10 Min. Mittel)" },
+      "longwave_radiation": { "name": "Atmosphärische Gegenstrahlung (10 Min. Mittel)" },
+      "temp_max_today": { "name": "Höchsttemperatur heute" },
+      "temp_min_today": { "name": "Tiefsttemperatur heute" },
+      "precipitation_today": { "name": "Niederschlag heute" }
+    }
+  },
+  "config": {
+    "step": {
+      "user": {
+        "title": "MeteoSwiss Weather",
+        "description": "Richten Sie die offizielle MeteoSwiss-Open-Data-Integration ein. Die Postleitzahl wird aus Ihrem Home-Assistant-Standort vorausgefüllt.",
+        "data": {
+          "postal_code": "Postleitzahl"
+        },
+        "data_description": {
+          "postal_code": "Schweizer Postleitzahl (PLZ) des Vorhersageorts."
+        }
+      },
+      "point": {
+        "title": "Vorhersagepunkt auswählen",
+        "description": "Für diese Postleitzahl gibt es mehrere Vorhersagepunkte. Wählen Sie den gewünschten Punkt aus.",
+        "data": {
+          "point_id": "Vorhersagepunkt"
+        }
+      },
+      "station": {
+        "title": "Wetterstation auswählen",
+        "description": "Wählen Sie die SwissMetNet-Station für aktuelle Messwerte. Die nächste Station ist vorausgewählt.{radar_hint}",
+        "data": {
+          "station_abbr": "Wetterstation"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung zum MeteoSwiss-Open-Data-Dienst nicht möglich. Überprüfen Sie Ihre Netzwerkverbindung und versuchen Sie es erneut.",
+      "unknown_postal_code": "Kein Vorhersagepunkt für diese Postleitzahl gefunden. Überprüfen Sie die Postleitzahl und versuchen Sie es erneut."
+    },
+    "abort": {
+      "already_configured": "Dieser Vorhersagepunkt ist bereits eingerichtet."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "MeteoSwiss Weather Optionen",
+        "data": {
+          "hourly_forecast": "Stundenprognose aktivieren"
+        },
+        "data_description": {
+          "hourly_forecast": "Lädt täglich rund 1,5 GB, wird höchstens alle 3 Stunden aktualisiert. Standardmässig deaktiviert, um das Traffic-Budget einzuhalten."
+        }
+      }
+    }
+  }
+}

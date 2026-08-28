@@ -1,0 +1,87 @@
+{
+  "issues": {
+    "parse_error_station": {
+      "title": "MeteoSwiss : format du fichier de station modifié",
+      "description": "Le fichier d'observations de la station SwissMetNet n'a pas pu être analysé. Le format en amont a peut-être changé. Consultez `docs/ogd.md` dans le dépôt de l'intégration pour le format actuel et ouvrez un issue de dérive si la structure ne correspond plus."
+    },
+    "parse_error_forecast": {
+      "title": "MeteoSwiss : format du fichier de prévision modifié",
+      "description": "Le fichier de prévisions locales n'a pas pu être analysé. Le format en amont a peut-être changé. Consultez `docs/ogd.md` dans le dépôt de l'intégration pour le format actuel et ouvrez un issue de dérive si la structure ne correspond plus."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": { "name": "Température de l'air 2 m" },
+      "humidity": { "name": "Humidité relative 2 m" },
+      "pressure_qff": { "name": "Pression atmosphérique au niveau de la mer (QFF)" },
+      "wind_speed": { "name": "Vitesse du vent (moyenne 10 min)" },
+      "wind_bearing": { "name": "Direction du vent (moyenne 10 min)" },
+      "gust_speed": { "name": "Rafale de vent (1 s)" },
+      "precipitation": { "name": "Précipitations (somme 10 min)" },
+      "dew_point": { "name": "Point de rosée 2 m" },
+      "pressure_qfe": { "name": "Pression atmosphérique au niveau de la station (QFE)" },
+      "sunshine_duration": { "name": "Durée d'ensoleillement (somme 10 min)" },
+      "global_radiation": { "name": "Rayonnement global (moyenne 10 min)" },
+      "snow_depth": { "name": "Hauteur totale de neige (automatique)" },
+      "wind_chill": { "name": "Température ressentie" },
+      "pressure_qnh": { "name": "Pression atmosphérique au niveau de la mer (QNH)" },
+      "soil_temp_5cm": { "name": "Température du sol 5 cm" },
+      "soil_temp_10cm": { "name": "Température du sol 10 cm" },
+      "soil_temp_20cm": { "name": "Température du sol 20 cm" },
+      "air_temp_5cm": { "name": "Température de l'air 5 cm" },
+      "diffuse_radiation": { "name": "Rayonnement diffus (moyenne 10 min)" },
+      "longwave_radiation": { "name": "Rayonnement atmosphérique entrant (moyenne 10 min)" },
+      "temp_max_today": { "name": "Température maximale aujourd'hui" },
+      "temp_min_today": { "name": "Température minimale aujourd'hui" },
+      "precipitation_today": { "name": "Précipitations aujourd'hui" }
+    }
+  },
+  "config": {
+    "step": {
+      "user": {
+        "title": "MeteoSwiss Weather",
+        "description": "Configurez l'intégration officielle MeteoSwiss des données ouvertes. Le code postal est prérempli depuis l'emplacement de votre Home Assistant.",
+        "data": {
+          "postal_code": "Code postal"
+        },
+        "data_description": {
+          "postal_code": "Code postal suisse (NPA) du lieu de prévision."
+        }
+      },
+      "point": {
+        "title": "Sélectionner un point de prévision",
+        "description": "Ce code postal correspond à plusieurs points de prévision. Sélectionnez celui que vous souhaitez.",
+        "data": {
+          "point_id": "Point de prévision"
+        }
+      },
+      "station": {
+        "title": "Sélectionner une station météorologique",
+        "description": "Choisissez la station SwissMetNet pour les conditions actuelles. La station la plus proche est présélectionnée.{radar_hint}",
+        "data": {
+          "station_abbr": "Station météorologique"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossible de se connecter au service de données ouvertes MeteoSwiss. Vérifiez votre connexion réseau et réessayez.",
+      "unknown_postal_code": "Aucun point de prévision trouvé pour ce code postal. Vérifiez le code et réessayez."
+    },
+    "abort": {
+      "already_configured": "Ce point de prévision est déjà configuré."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options MeteoSwiss Weather",
+        "data": {
+          "hourly_forecast": "Activer la prévision horaire"
+        },
+        "data_description": {
+          "hourly_forecast": "Télécharge environ 1,5 Go par jour, actualisé toutes les 3 heures au maximum. Désactivé par défaut pour respecter le budget de trafic."
+        }
+      }
+    }
+  }
+}

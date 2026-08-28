@@ -58,6 +58,40 @@ def test_strings_and_translation_agree() -> None:
     assert strings == english
 
 
+def _leaf_keys(obj: object, prefix: str = "") -> set[str]:
+    """Recursively collect dotted paths to every leaf value in a nested dict."""
+    if not isinstance(obj, dict):
+        return {prefix}
+    keys: set[str] = set()
+    for k, v in obj.items():
+        child = f"{prefix}.{k}" if prefix else k
+        keys |= _leaf_keys(v, child)
+    return keys
+
+
+def test_translation_key_parity() -> None:
+    """Every translation file must carry exactly the key set of en.json.
+
+    Catches drift when new strings are added to en.json but the other
+    languages are not updated, and vice-versa (extra keys in a translation
+    that were removed from en.json).
+    """
+    translations_dir = COMPONENT / "translations"
+    english = json.loads((translations_dir / "en.json").read_text(encoding="utf-8"))
+    en_keys = _leaf_keys(english)
+
+    for path in sorted(translations_dir.glob("*.json")):
+        if path.name == "en.json":
+            continue
+        lang = path.stem
+        other = json.loads(path.read_text(encoding="utf-8"))
+        other_keys = _leaf_keys(other)
+        missing = en_keys - other_keys
+        extra = other_keys - en_keys
+        assert not missing, f"{lang}.json is missing keys: {sorted(missing)}"
+        assert not extra, f"{lang}.json has extra keys not in en.json: {sorted(extra)}"
+
+
 def test_hacs_json_is_valid() -> None:
     hacs = json.loads((ROOT / "hacs.json").read_text(encoding="utf-8"))
     assert hacs["name"]
