@@ -172,6 +172,16 @@ def nearest_pollen_station(
     return min(stations, key=lambda s: haversine_km(lat, lon, s.lat, s.lon))
 
 
+def nearest_pollen_stations(
+    stations: list[PollenStation],
+    lat: float,
+    lon: float,
+    limit: int = 3,
+) -> list[PollenStation]:
+    """The ``limit`` pollen stations closest to ``lat``/``lon``, nearest first."""
+    return sorted(stations, key=lambda s: haversine_km(lat, lon, s.lat, s.lon))[:limit]
+
+
 async def fetch_pollen_current(
     session: aiohttp.ClientSession,
     abbr: str,

@@ -54,6 +54,12 @@ OGD_FILE_BASE = "https://data.geo.admin.ch"
 COLLECTION_STATIONS = "ch.meteoschweiz.ogd-smn"
 COLLECTION_LOCAL_FORECAST = "ch.meteoschweiz.ogd-local-forecasting"
 
+# Options-entry key for the pollen opt-in (ADR-0005).
+# The pollen station abbreviation is stored separately so the coordinator can
+# be rebuilt from the entry without a network call.
+CONF_POLLEN = "pollen"
+CONF_POLLEN_STATION = "pollen_station"
+
 # Update cadences (ADR-0002).
 # Station files carry 10-minute values, so polling faster buys nothing.
 STATION_UPDATE_INTERVAL = timedelta(minutes=10)
@@ -64,3 +70,6 @@ FORECAST_CHECK_INTERVAL = timedelta(hours=1)
 # traffic budget (~1 GB/day), so they are never fetched more often than this.
 # tests/test_const.py asserts this stays at least 3 hours.
 HOURLY_FORECAST_MIN_INTERVAL = timedelta(hours=3)
+# Pollen data is published hourly; one request per hour per station is enough
+# (ADR-0005). Conditional requests (If-None-Match) keep most polls to a 304.
+POLLEN_UPDATE_INTERVAL = timedelta(hours=1)

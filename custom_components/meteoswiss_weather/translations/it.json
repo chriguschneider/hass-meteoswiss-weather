@@ -7,6 +7,10 @@
     "parse_error_forecast": {
       "title": "MeteoSwiss: formato del file di previsione modificato",
       "description": "Il file di previsioni locali non è stato possibile analizzare. Il formato a monte potrebbe essere cambiato. Consultare `docs/ogd.md` nel repository dell'integrazione per il formato attuale e aprire un issue di deriva se il layout non corrisponde più."
+    },
+    "parse_error_pollen": {
+      "title": "MeteoSwiss: formato del file pollinico modificato",
+      "description": "Il file di osservazioni polliniche non è stato possibile analizzare. Il formato a monte potrebbe essere cambiato. Consultare `docs/ogd.md` nel repository dell'integrazione per il formato attuale e aprire un issue di deriva se il layout non corrisponde più."
     }
   },
   "entity": {
@@ -33,7 +37,14 @@
       "longwave_radiation": { "name": "Radiazione atmosferica entrante (media 10 min)" },
       "temp_max_today": { "name": "Temperatura massima oggi" },
       "temp_min_today": { "name": "Temperatura minima oggi" },
-      "precipitation_today": { "name": "Precipitazioni oggi" }
+      "precipitation_today": { "name": "Precipitazioni oggi" },
+      "pollen_grasses": { "name": "Pollini di graminacee" },
+      "pollen_birch": { "name": "Pollini di betulla" },
+      "pollen_alder": { "name": "Pollini di ontano" },
+      "pollen_hazel": { "name": "Pollini di nocciolo" },
+      "pollen_beech": { "name": "Pollini di faggio" },
+      "pollen_ash": { "name": "Pollini di frassino" },
+      "pollen_oak": { "name": "Pollini di quercia" }
     }
   },
   "config": {
@@ -147,10 +158,12 @@
       "init": {
         "title": "Opzioni MeteoSwiss Weather",
         "data": {
-          "hourly_forecast": "Abilita previsioni orarie"
+          "hourly_forecast": "Abilita previsioni orarie",
+          "pollen": "Abilita monitoraggio pollini"
         },
         "data_description": {
-          "hourly_forecast": "Le previsioni orarie vengono scaricate con richieste HTTP Range; il costo dipende dall'orizzonte scelto nel passaggio successivo. Aggiornate ogni 3 ore al massimo. Disabilitate per impostazione predefinita per rispettare il budget di traffico."
+          "hourly_forecast": "Le previsioni orarie vengono scaricate con richieste HTTP Range; il costo dipende dall'orizzonte scelto nel passaggio successivo. Aggiornate ogni 3 ore al massimo. Disabilitate per impostazione predefinita per rispettare il budget di traffico.",
+          "pollen": "Mostra le concentrazioni orarie di pollini dalla stazione di misurazione automatica più vicina (granuli/m³). Scaricato al massimo una volta all'ora. Disabilitato per impostazione predefinita."
         }
       },
       "hourly": {
@@ -161,6 +174,13 @@
         },
         "data_description": {
           "hourly_horizon_days": "Predefinito: il resto di oggi più due giorni interi (circa 7–11 MB per aggiornamento). «Ciclo completo» scarica ogni ora (circa 30 MB per aggiornamento)."
+        }
+      },
+      "pollen_station": {
+        "title": "Seleziona stazione pollinica",
+        "description": "Scegliere la stazione di monitoraggio dei pollini. Vengono mostrate le tre stazioni più vicine al punto di previsione; la più vicina è preselezionata.",
+        "data": {
+          "pollen_station": "Stazione pollinica"
         }
       }
     }

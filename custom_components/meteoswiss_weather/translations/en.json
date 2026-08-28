@@ -7,6 +7,10 @@
     "parse_error_forecast": {
       "title": "MeteoSwiss forecast file format changed",
       "description": "The local forecast file could not be parsed. The upstream format may have changed. Check `docs/ogd.md` in the integration repository for the current format and open a drift issue if the layout no longer matches."
+    },
+    "parse_error_pollen": {
+      "title": "MeteoSwiss pollen file format changed",
+      "description": "The pollen observation file could not be parsed. The upstream format may have changed. Check `docs/ogd.md` in the integration repository for the current format and open a drift issue if the layout no longer matches."
     }
   },
   "entity": {
@@ -33,7 +37,14 @@
       "longwave_radiation": { "name": "Longwave radiation" },
       "temp_max_today": { "name": "High temperature today" },
       "temp_min_today": { "name": "Low temperature today" },
-      "precipitation_today": { "name": "Precipitation today" }
+      "precipitation_today": { "name": "Precipitation today" },
+      "pollen_grasses": { "name": "Grass pollen" },
+      "pollen_birch": { "name": "Birch pollen" },
+      "pollen_alder": { "name": "Alder pollen" },
+      "pollen_hazel": { "name": "Hazel pollen" },
+      "pollen_beech": { "name": "Beech pollen" },
+      "pollen_ash": { "name": "Ash pollen" },
+      "pollen_oak": { "name": "Oak pollen" }
     }
   },
   "config": {
@@ -147,10 +158,12 @@
       "init": {
         "title": "MeteoSwiss Weather options",
         "data": {
-          "hourly_forecast": "Enable hourly forecast"
+          "hourly_forecast": "Enable hourly forecast",
+          "pollen": "Enable pollen monitoring"
         },
         "data_description": {
-          "hourly_forecast": "The hourly forecast is fetched with HTTP Range requests, so the cost depends on the horizon you pick next. Refreshed at most every 3 hours. Disabled by default to stay within the fair-use traffic budget."
+          "hourly_forecast": "The hourly forecast is fetched with HTTP Range requests, so the cost depends on the horizon you pick next. Refreshed at most every 3 hours. Disabled by default to stay within the fair-use traffic budget.",
+          "pollen": "Shows hourly pollen concentrations from the nearest automatic monitoring station (grains/m³). Fetched at most once per hour. Disabled by default."
         }
       },
       "hourly": {
@@ -161,6 +174,13 @@
         },
         "data_description": {
           "hourly_horizon_days": "Default: the rest of today plus two full days (about 7–11 MB per refresh). \"Full run\" fetches every hour (about 30 MB per refresh)."
+        }
+      },
+      "pollen_station": {
+        "title": "Select pollen station",
+        "description": "Choose the pollen monitoring station to use. The three nearest stations to your forecast point are shown; the nearest is pre-selected.",
+        "data": {
+          "pollen_station": "Pollen station"
         }
       }
     }

@@ -27,6 +27,8 @@ from custom_components.meteoswiss_weather.const import (
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
+    CONF_POLLEN,
+    CONF_POLLEN_STATION,
     CONF_POSTAL_CODE,
     CONF_STATION_ABBR,
     CONF_STATION_NAME,
@@ -37,7 +39,12 @@ from custom_components.meteoswiss_weather.const import (
     HISTORY_KEEP,
     HOURLY_HORIZON_FULL_RUN,
 )
-from custom_components.meteoswiss_weather.ogd import ForecastPoint, Station
+from custom_components.meteoswiss_weather.ogd import (
+    ForecastPoint,
+    OgdError,
+    PollenStation,
+    Station,
+)
 
 # ---------------------------------------------------------------------------
 # Reference data (mirrors the fixture CSVs)
@@ -560,6 +567,174 @@ async def test_options_flow_hourly_off_skips_horizon_step(
     # The horizon key is still written (with its default) but the hourly path
     # never uses it while the toggle is off.
     assert result["data"][CONF_HOURLY_HORIZON_DAYS] == DEFAULT_HOURLY_HORIZON_DAYS
+
+
+# ---------------------------------------------------------------------------
+# Pollen option + station step (ADR-0005, #67)
+# ---------------------------------------------------------------------------
+
+# Pollen stations near Bern: PBE (Bern) is the closest to the Köniz point.
+_POLLEN_STATIONS: list[PollenStation] = [
+    PollenStation("PBE", "Bern", "BE", 46.9481, 7.4474, 553.0),
+    PollenStation("PBS", "Basel", "BS", 47.5619, 7.5834, 277.0),
+    PollenStation("PLU", "Luzern", "LU", 47.0642, 8.3018, 454.0),
+    PollenStation("PZH", "Zürich", "ZH", 47.3781, 8.5658, 556.0),
+]
+
+
+def _koniz_entry() -> MockConfigEntry:
+    """A configured entry for the Köniz point (nearest pollen station is PBE)."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="2-309800",
+        data={
+            CONF_POINT_ID: 309800,
+            CONF_POINT_TYPE_ID: 2,
+            CONF_POSTAL_CODE: "3098",
+            CONF_POINT_NAME: "Köniz",
+            CONF_STATION_ABBR: "BER",
+            CONF_STATION_NAME: "Bern / Zollikofen",
+        },
+        title="Köniz",
+    )
+
+
+async def test_options_flow_pollen_on_shows_station_step_and_saves(
+    hass: HomeAssistant,
+) -> None:
+    """Enabling pollen leads to the station step; the nearest is pre-selected."""
+    entry = _koniz_entry()
+    entry.add_to_hass(hass)
+
+    with (
+        patch(f"{_FLOW}.async_get_clientsession", return_value=object()),
+        patch(
+            f"{_FLOW}.fetch_pollen_stations",
+            AsyncMock(return_value=_POLLEN_STATIONS),
+        ),
+        patch(f"{_FLOW}.fetch_points", AsyncMock(return_value=_POINTS)),
+    ):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            user_input={CONF_HOURLY_FORECAST: False, CONF_POLLEN: True},
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "pollen_station"
+        # The three nearest stations are offered; PBE (Bern) is nearest.
+        options = result["data_schema"].schema[CONF_POLLEN_STATION].container
+        assert set(options) == {"PBE", "PBS", "PLU"}
+        assert result["data_schema"]({})[CONF_POLLEN_STATION] == "PBE"
+
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], user_input={CONF_POLLEN_STATION: "PBE"}
+        )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_POLLEN] is True
+    assert result["data"][CONF_POLLEN_STATION] == "PBE"
+    # Hourly stays off and its horizon default is preserved alongside pollen.
+    assert result["data"][CONF_HOURLY_FORECAST] is False
+
+
+async def test_options_flow_hourly_and_pollen_both_on(
+    hass: HomeAssistant,
+) -> None:
+    """Both toggles on: hourly-horizon step then the pollen-station step."""
+    entry = _koniz_entry()
+    entry.add_to_hass(hass)
+
+    with (
+        patch(f"{_FLOW}.async_get_clientsession", return_value=object()),
+        patch(
+            f"{_FLOW}.fetch_pollen_stations",
+            AsyncMock(return_value=_POLLEN_STATIONS),
+        ),
+        patch(f"{_FLOW}.fetch_points", AsyncMock(return_value=_POINTS)),
+    ):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            user_input={CONF_HOURLY_FORECAST: True, CONF_POLLEN: True},
+        )
+        assert result["step_id"] == "hourly"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], user_input={CONF_HOURLY_HORIZON_DAYS: 4}
+        )
+        assert result["step_id"] == "pollen_station"
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], user_input={CONF_POLLEN_STATION: "PBS"}
+        )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_HOURLY_FORECAST] is True
+    assert result["data"][CONF_HOURLY_HORIZON_DAYS] == 4
+    assert result["data"][CONF_POLLEN] is True
+    assert result["data"][CONF_POLLEN_STATION] == "PBS"
+
+
+async def test_options_flow_pollen_station_cannot_connect(
+    hass: HomeAssistant,
+) -> None:
+    """A metadata fetch error shows the station step with a cannot_connect error."""
+    entry = _koniz_entry()
+    entry.add_to_hass(hass)
+
+    with (
+        patch(f"{_FLOW}.async_get_clientsession", return_value=object()),
+        patch(
+            f"{_FLOW}.fetch_pollen_stations",
+            AsyncMock(side_effect=OgdError("boom")),
+        ),
+    ):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            user_input={CONF_HOURLY_FORECAST: False, CONF_POLLEN: True},
+        )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "pollen_station"
+    assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_options_flow_pollen_station_retry_after_error(
+    hass: HomeAssistant,
+) -> None:
+    """Resubmitting the empty error form retries the fetch without crashing.
+
+    Regression guard: the empty error form carries no station field, so its
+    resubmission must re-run the fetch rather than read a missing key.
+    """
+    entry = _koniz_entry()
+    entry.add_to_hass(hass)
+
+    # First metadata fetch fails, the retry succeeds.
+    stations_mock = AsyncMock(side_effect=[OgdError("boom"), _POLLEN_STATIONS])
+
+    with (
+        patch(f"{_FLOW}.async_get_clientsession", return_value=object()),
+        patch(f"{_FLOW}.fetch_pollen_stations", stations_mock),
+        patch(f"{_FLOW}.fetch_points", AsyncMock(return_value=_POINTS)),
+    ):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            user_input={CONF_HOURLY_FORECAST: False, CONF_POLLEN: True},
+        )
+        assert result["step_id"] == "pollen_station"
+        assert result["errors"] == {"base": "cannot_connect"}
+
+        # Resubmit the empty error form: the fetch is retried and now succeeds,
+        # so the real station selector is shown (no KeyError).
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"], user_input={}
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "pollen_station"
+        assert not result["errors"]
+        options = result["data_schema"].schema[CONF_POLLEN_STATION].container
+        assert set(options) == {"PBE", "PBS", "PLU"}
 
 
 # ---------------------------------------------------------------------------
