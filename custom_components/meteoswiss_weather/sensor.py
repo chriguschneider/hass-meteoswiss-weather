@@ -41,8 +41,8 @@ from homeassistant.util import dt as dt_util
 
 from . import MeteoSwissConfigEntry
 from .const import ATTRIBUTION, DOMAIN
-from .coordinator import ForecastCoordinator, StationCoordinator
-from .ogd import DailyForecast, Observation
+from .coordinator import ForecastCoordinator, PollenCoordinator, StationCoordinator
+from .ogd import DailyForecast, Observation, PollenObservation
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,6 +322,92 @@ _FORECAST_SENSORS: tuple[ForecastSensorDescription, ...] = (
 )
 
 
+# Pollen sensors (ADR-0005): one per taxon the station measures. Taxon codes
+# match the column names in the upstream ``_h_now.csv`` file header. Grasses
+# and birch are the most relevant allergens and are enabled by default; the
+# remaining taxa are disabled so the entity registry stays uncluttered.
+@dataclass(frozen=True, slots=True)
+class PollenSensorDescription(SensorEntityDescription):
+    """SensorEntityDescription extended with the pollen taxon code."""
+
+    taxon_code: str = ""
+
+
+# Unit used by the upstream MeteoSwiss pollen dataset (docs/ogd.md §Pollen).
+_POLLEN_UNIT = "grains/m³"
+
+_POLLEN_SENSORS: tuple[PollenSensorDescription, ...] = (
+    PollenSensorDescription(
+        key="pollen_grasses",
+        translation_key="pollen_grasses",
+        taxon_code="khpoach0",
+        native_unit_of_measurement=_POLLEN_UNIT,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        icon="mdi:flower-pollen",
+    ),
+    PollenSensorDescription(
+        key="pollen_birch",
+        translation_key="pollen_birch",
+        taxon_code="kabetuh0",
+        native_unit_of_measurement=_POLLEN_UNIT,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        icon="mdi:flower-pollen",
+    ),
+    PollenSensorDescription(
+        key="pollen_alder",
+        translation_key="pollen_alder",
+        taxon_code="kaalnuh0",
+        native_unit_of_measurement=_POLLEN_UNIT,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        icon="mdi:flower-pollen",
+        entity_registry_enabled_default=False,
+    ),
+    PollenSensorDescription(
+        key="pollen_hazel",
+        translation_key="pollen_hazel",
+        taxon_code="kacoryh0",
+        native_unit_of_measurement=_POLLEN_UNIT,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        icon="mdi:flower-pollen",
+        entity_registry_enabled_default=False,
+    ),
+    PollenSensorDescription(
+        key="pollen_beech",
+        translation_key="pollen_beech",
+        taxon_code="kafaguh0",
+        native_unit_of_measurement=_POLLEN_UNIT,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        icon="mdi:flower-pollen",
+        entity_registry_enabled_default=False,
+    ),
+    PollenSensorDescription(
+        key="pollen_ash",
+        translation_key="pollen_ash",
+        taxon_code="kafraxh0",
+        native_unit_of_measurement=_POLLEN_UNIT,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        icon="mdi:flower-pollen",
+        entity_registry_enabled_default=False,
+    ),
+    PollenSensorDescription(
+        key="pollen_oak",
+        translation_key="pollen_oak",
+        taxon_code="kaquerh0",
+        native_unit_of_measurement=_POLLEN_UNIT,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        icon="mdi:flower-pollen",
+        entity_registry_enabled_default=False,
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: MeteoSwissConfigEntry,
@@ -346,13 +432,23 @@ async def async_setup_entry(
         if station_params is None or desc.parameter_code in station_params
     ]
 
+    # Determine which pollen sensors to create (only when coordinator exists).
+    pollen_params = runtime.pollen_inventory
+    supported_pollen: list[PollenSensorDescription] = []
+    if runtime.pollen_coordinator is not None:
+        supported_pollen = [
+            desc for desc in _POLLEN_SENSORS
+            if pollen_params is None or desc.taxon_code in pollen_params
+        ]
+
     # Remove entity registry entries for sensors the station no longer carries.
-    # Forecast sensor unique IDs are included in the valid set so they are never
-    # incorrectly removed by the station-inventory cleanup.
+    # Forecast and pollen sensor unique IDs are included in the valid set so
+    # they are never incorrectly removed by the station-inventory cleanup.
     if station_params is not None:
         valid_unique_ids = (
             {f"{device_unique_id}_{desc.key}" for desc in supported}
             | {f"{device_unique_id}_{desc.key}" for desc in _FORECAST_SENSORS}
+            | {f"{device_unique_id}_{desc.key}" for desc in _POLLEN_SENSORS}
         )
         sensor_uid_prefix = f"{device_unique_id}_"
         entity_reg = er.async_get(hass)
@@ -377,6 +473,16 @@ async def async_setup_entry(
         )
         for description in _FORECAST_SENSORS
     )
+    if supported_pollen:
+        async_add_entities(
+            PollenSensor(
+                runtime.pollen_coordinator,  # type: ignore[arg-type]
+                description,
+                device_unique_id,
+                device_info,
+            )
+            for description in supported_pollen
+        )
 
 
 class MeteoSwissSensor(CoordinatorEntity[StationCoordinator], SensorEntity):
@@ -467,3 +573,37 @@ class ForecastSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
         if row is None:
             return None
         return getattr(row, self._forecast_key, None)
+
+
+class PollenSensor(CoordinatorEntity[PollenCoordinator], SensorEntity):
+    """One hourly pollen concentration from the configured pollen station.
+
+    One entity per taxon the station actually measures (ADR-0005, issue #67).
+    Grasses and birch are enabled by default; the remaining taxa are disabled.
+    Shows ``unavailable`` when the coordinator's last update failed (e.g. the
+    pollen station file had no complete measurement rows).
+    """
+
+    _attr_has_entity_name = True
+    _attr_attribution = ATTRIBUTION
+
+    def __init__(
+        self,
+        coordinator: PollenCoordinator,
+        description: PollenSensorDescription,
+        device_unique_id: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._taxon_code = description.taxon_code
+        self._attr_unique_id = f"{device_unique_id}_{description.key}"
+        self._attr_device_info = device_info
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the latest hourly concentration, or ``None`` when missing."""
+        obs: PollenObservation | None = self.coordinator.data
+        if obs is None:
+            return None
+        return obs.values.get(self._taxon_code)

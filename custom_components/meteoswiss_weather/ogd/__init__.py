@@ -47,6 +47,7 @@ from .pollen import (
     fetch_pollen_parameters,
     fetch_pollen_stations,
     nearest_pollen_station,
+    nearest_pollen_stations,
 )
 from .stac import Run, latest_run
 from .stations import (
@@ -94,6 +95,7 @@ __all__ = [
     "latest_run",
     "nearest_point",
     "nearest_pollen_station",
+    "nearest_pollen_stations",
     "nearest_stations",
     "parse_daily",
     "parse_hourly",

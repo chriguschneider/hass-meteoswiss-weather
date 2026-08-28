@@ -56,6 +56,7 @@ from .const import (
     DOMAIN,
     FORECAST_CHECK_INTERVAL,
     HOURLY_FORECAST_MIN_INTERVAL,
+    POLLEN_UPDATE_INTERVAL,
     STATION_UPDATE_INTERVAL,
 )
 from .ogd import (
@@ -67,7 +68,9 @@ from .ogd import (
     Observation,
     OgdConnectionError,
     OgdParseError,
+    PollenObservation,
     fetch_current,
+    fetch_pollen_current,
     latest_run,
 )
 from .ogd.const import COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS
@@ -75,6 +78,7 @@ from .ogd.const import COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS
 # Issue IDs used in the HA repair-issue registry.
 _ISSUE_STATION_PARSE = "parse_error_station"
 _ISSUE_FORECAST_PARSE = "parse_error_forecast"
+_ISSUE_POLLEN_PARSE = "parse_error_pollen"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -352,3 +356,57 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         async_delete_issue(self.hass, DOMAIN, _ISSUE_FORECAST_PARSE)
         self.last_success = dt_util.utcnow()
         return ForecastData(daily=daily)
+
+
+class PollenCoordinator(DataUpdateCoordinator[PollenObservation]):
+    """Poll one pollen station's latest hourly observation (ADR-0005).
+
+    Fetches ``_h_now.csv`` at most once per hour, conditional on the ETag so an
+    unchanged file costs only a 304. Raises a HA repair issue on a structural
+    parse failure and clears it as soon as parsing succeeds again.
+    """
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        session: aiohttp.ClientSession,
+        station_abbr: str,
+    ) -> None:
+        super().__init__(
+            hass,
+            _LOGGER,
+            config_entry=entry,
+            name=f"{station_abbr} pollen",
+            update_interval=POLLEN_UPDATE_INTERVAL,
+        )
+        self._session = session
+        self._station_abbr = station_abbr
+        self._cache = CachedResponse(body="")
+        self.last_success: datetime | None = None
+
+    async def _async_update_data(self) -> PollenObservation:
+        try:
+            obs = await fetch_pollen_current(
+                self._session, self._station_abbr, cache=self._cache
+            )
+        except OgdParseError as err:
+            async_create_issue(
+                self.hass,
+                DOMAIN,
+                _ISSUE_POLLEN_PARSE,
+                is_fixable=False,
+                severity=IssueSeverity.WARNING,
+                translation_key="parse_error_pollen",
+            )
+            raise UpdateFailed(
+                f"pollen {self._station_abbr} parse failed: {err}"
+            ) from err
+        except OgdConnectionError as err:
+            raise UpdateFailed(
+                f"pollen {self._station_abbr} update failed: {err}"
+            ) from err
+
+        async_delete_issue(self.hass, DOMAIN, _ISSUE_POLLEN_PARSE)
+        self.last_success = dt_util.utcnow()
+        return obs

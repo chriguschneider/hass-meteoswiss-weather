@@ -7,6 +7,10 @@
     "parse_error_forecast": {
       "title": "MeteoSwiss : format du fichier de prévision modifié",
       "description": "Le fichier de prévisions locales n'a pas pu être analysé. Le format en amont a peut-être changé. Consultez `docs/ogd.md` dans le dépôt de l'intégration pour le format actuel et ouvrez un issue de dérive si la structure ne correspond plus."
+    },
+    "parse_error_pollen": {
+      "title": "MeteoSwiss : format du fichier pollen modifié",
+      "description": "Le fichier d'observations de pollen n'a pas pu être analysé. Le format en amont a peut-être changé. Consultez `docs/ogd.md` dans le dépôt de l'intégration pour le format actuel et ouvrez un issue de dérive si la structure ne correspond plus."
     }
   },
   "entity": {
@@ -33,7 +37,14 @@
       "longwave_radiation": { "name": "Rayonnement atmosphérique entrant (moyenne 10 min)" },
       "temp_max_today": { "name": "Température maximale aujourd'hui" },
       "temp_min_today": { "name": "Température minimale aujourd'hui" },
-      "precipitation_today": { "name": "Précipitations aujourd'hui" }
+      "precipitation_today": { "name": "Précipitations aujourd'hui" },
+      "pollen_grasses": { "name": "Pollen de graminées" },
+      "pollen_birch": { "name": "Pollen de bouleau" },
+      "pollen_alder": { "name": "Pollen d'aulne" },
+      "pollen_hazel": { "name": "Pollen de noisetier" },
+      "pollen_beech": { "name": "Pollen de hêtre" },
+      "pollen_ash": { "name": "Pollen de frêne" },
+      "pollen_oak": { "name": "Pollen de chêne" }
     }
   },
   "config": {
@@ -147,10 +158,12 @@
       "init": {
         "title": "Options MeteoSwiss Weather",
         "data": {
-          "hourly_forecast": "Activer la prévision horaire"
+          "hourly_forecast": "Activer la prévision horaire",
+          "pollen": "Activer la surveillance du pollen"
         },
         "data_description": {
-          "hourly_forecast": "La prévision horaire est téléchargée avec des requêtes HTTP Range ; le coût dépend de l'horizon choisi à l'étape suivante. Actualisée toutes les 3 heures au maximum. Désactivée par défaut pour respecter le budget de trafic."
+          "hourly_forecast": "La prévision horaire est téléchargée avec des requêtes HTTP Range ; le coût dépend de l'horizon choisi à l'étape suivante. Actualisée toutes les 3 heures au maximum. Désactivée par défaut pour respecter le budget de trafic.",
+          "pollen": "Affiche les concentrations horaires de pollen de la station de mesure automatique la plus proche (grains/m³). Téléchargé au maximum une fois par heure. Désactivé par défaut."
         }
       },
       "hourly": {
@@ -161,6 +174,13 @@
         },
         "data_description": {
           "hourly_horizon_days": "Par défaut : le reste d'aujourd'hui plus deux jours complets (environ 7 à 11 Mo par actualisation). « Cycle complet » télécharge chaque heure (environ 30 Mo par actualisation)."
+        }
+      },
+      "pollen_station": {
+        "title": "Sélectionner la station pollen",
+        "description": "Choisissez la station de surveillance du pollen. Les trois stations les plus proches de votre point de prévision sont affichées ; la plus proche est présélectionnée.",
+        "data": {
+          "pollen_station": "Station pollen"
         }
       }
     }

@@ -34,6 +34,8 @@ from .const import (
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
+    CONF_POLLEN,
+    CONF_POLLEN_STATION,
     CONF_POSTAL_CODE,
     CONF_STATION_ABBR,
     CONF_STATION_NAME,
@@ -50,11 +52,14 @@ from .ogd import (
     POINT_TYPE_MOUNTAIN,
     ForecastPoint,
     OgdError,
+    PollenStation,
     Station,
     fetch_points,
+    fetch_pollen_stations,
     fetch_stations,
     mountain_points,
     nearest_point,
+    nearest_pollen_stations,
     nearest_stations,
     points_for_postal_code,
 )
@@ -519,28 +524,47 @@ def _horizon_label(days: int) -> str:
 
 
 class MeteoSwissWeatherOptionsFlow(OptionsFlow):
-    """Options flow: the hourly forecast opt-in and its horizon (ADR-0002).
+    """Options flow: hourly forecast (ADR-0002) and pollen opt-in (ADR-0005).
 
-    Two steps so the horizon is only shown when the hourly forecast is on
-    (issue #50): enabling it leads to the horizon select; disabling it saves
-    straight away and leaves the stored horizon (unused) untouched.
+    Steps:
+      init       — toggle hourly forecast and pollen
+      hourly     — pick the hourly horizon (shown only when hourly is on)
+      pollen_station — pick the pollen monitoring station (shown only when
+                   pollen is on)
+
+    Intermediate choices are stored on the instance so each step can see the
+    user's earlier selections.
     """
+
+    def __init__(self) -> None:
+        self._hourly: bool = False
+        self._pollen: bool = False
+        self._hourly_horizon: int = DEFAULT_HOURLY_HORIZON_DAYS
+        # Loaded lazily in async_step_pollen_station.
+        self._pollen_stations: list[PollenStation] | None = None
+        self._pollen_ref_lat: float = 0.0
+        self._pollen_ref_lon: float = 0.0
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         current = self.config_entry.options
         if user_input is not None:
-            if user_input[CONF_HOURLY_FORECAST]:
-                # Hourly on: the horizon step finishes the flow.
+            self._hourly = bool(user_input[CONF_HOURLY_FORECAST])
+            self._pollen = bool(user_input[CONF_POLLEN])
+            self._hourly_horizon = int(
+                current.get(CONF_HOURLY_HORIZON_DAYS, DEFAULT_HOURLY_HORIZON_DAYS)
+            )
+            if self._hourly:
                 return await self.async_step_hourly()
-            # Hourly off: nothing more to ask; keep the previous horizon value.
+            if self._pollen:
+                return await self.async_step_pollen_station()
             return self.async_create_entry(
                 data={
                     CONF_HOURLY_FORECAST: False,
-                    CONF_HOURLY_HORIZON_DAYS: current.get(
-                        CONF_HOURLY_HORIZON_DAYS, DEFAULT_HOURLY_HORIZON_DAYS
-                    ),
+                    CONF_HOURLY_HORIZON_DAYS: self._hourly_horizon,
+                    CONF_POLLEN: False,
+                    CONF_POLLEN_STATION: current.get(CONF_POLLEN_STATION, ""),
                 }
             )
 
@@ -551,7 +575,11 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
                     vol.Required(
                         CONF_HOURLY_FORECAST,
                         default=current.get(CONF_HOURLY_FORECAST, False),
-                    ): bool
+                    ): bool,
+                    vol.Required(
+                        CONF_POLLEN,
+                        default=current.get(CONF_POLLEN, False),
+                    ): bool,
                 }
             ),
         )
@@ -562,12 +590,15 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
         """Second step (hourly on): pick how far ahead the hourly forecast goes."""
         current = self.config_entry.options
         if user_input is not None:
+            self._hourly_horizon = int(user_input[CONF_HOURLY_HORIZON_DAYS])
+            if self._pollen:
+                return await self.async_step_pollen_station()
             return self.async_create_entry(
                 data={
                     CONF_HOURLY_FORECAST: True,
-                    CONF_HOURLY_HORIZON_DAYS: int(
-                        user_input[CONF_HOURLY_HORIZON_DAYS]
-                    ),
+                    CONF_HOURLY_HORIZON_DAYS: self._hourly_horizon,
+                    CONF_POLLEN: False,
+                    CONF_POLLEN_STATION: current.get(CONF_POLLEN_STATION, ""),
                 }
             )
 
@@ -584,4 +615,85 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
                     ): vol.In(choices)
                 }
             ),
+        )
+
+    async def async_step_pollen_station(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Pick the pollen monitoring station (shown only when pollen is on).
+
+        Offers the three nearest pollen stations to the configured forecast
+        point (fetched once and cached on the instance), with the nearest
+        pre-selected.  The current station is pre-selected when it is among the
+        three nearest.
+        """
+        current = self.config_entry.options
+        errors: dict[str, str] = {}
+
+        if self._pollen_stations is None:
+            session = async_get_clientsession(self.hass)
+            try:
+                self._pollen_stations = await fetch_pollen_stations(session)
+                all_points = await fetch_points(session)
+                point_id = int(self.config_entry.data.get(CONF_POINT_ID, 0))
+                point_type_id = int(self.config_entry.data.get(CONF_POINT_TYPE_ID, 0))
+                ref = next(
+                    (
+                        p
+                        for p in all_points
+                        if p.point_id == point_id and p.point_type_id == point_type_id
+                    ),
+                    None,
+                )
+                self._pollen_ref_lat = (
+                    ref.lat if ref and ref.lat else self.hass.config.latitude
+                )
+                self._pollen_ref_lon = (
+                    ref.lon if ref and ref.lon else self.hass.config.longitude
+                )
+            except OgdError:
+                errors["base"] = "cannot_connect"
+
+        if user_input is not None and not errors:
+            pollen_abbr = str(user_input[CONF_POLLEN_STATION])
+            return self.async_create_entry(
+                data={
+                    CONF_HOURLY_FORECAST: self._hourly,
+                    CONF_HOURLY_HORIZON_DAYS: self._hourly_horizon,
+                    CONF_POLLEN: True,
+                    CONF_POLLEN_STATION: pollen_abbr,
+                }
+            )
+
+        if self._pollen_stations is None:
+            return self.async_show_form(
+                step_id="pollen_station",
+                data_schema=vol.Schema({}),
+                errors=errors,
+            )
+
+        nearby = nearest_pollen_stations(
+            self._pollen_stations,
+            self._pollen_ref_lat,
+            self._pollen_ref_lon,
+            limit=3,
+        )
+        options = {s.abbr: f"{s.name} ({s.canton})" for s in nearby}
+        current_abbr = current.get(CONF_POLLEN_STATION)
+        default_abbr: str | vol.Undefined = (
+            current_abbr
+            if current_abbr and current_abbr in options
+            else (nearby[0].abbr if nearby else vol.UNDEFINED)
+        )
+
+        return self.async_show_form(
+            step_id="pollen_station",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_POLLEN_STATION, default=default_abbr): vol.In(
+                        options
+                    )
+                }
+            ),
+            errors=errors,
         )

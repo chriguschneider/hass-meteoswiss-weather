@@ -29,12 +29,14 @@ from .const import (
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
+    CONF_POLLEN,
+    CONF_POLLEN_STATION,
     CONF_POSTAL_CODE,
     CONF_STATION_ABBR,
     DEFAULT_HOURLY_HORIZON_DAYS,
     DOMAIN,
 )
-from .coordinator import ForecastCoordinator, StationCoordinator
+from .coordinator import ForecastCoordinator, PollenCoordinator, StationCoordinator
 from .history import async_backfill
 from .ogd import (
     BulkCsvBackend,
@@ -42,6 +44,7 @@ from .ogd import (
     ForecastPoint,
     OgdError,
     fetch_datainventory,
+    fetch_pollen_datainventory,
 )
 
 # ``import_history`` service (B12b, ADR-0007): a one-off, user-triggered import
@@ -84,6 +87,12 @@ class MeteoSwissRuntimeData:
     # inventory (issue #46). ``None`` means the inventory was unavailable;
     # sensor.py falls back to creating all sensors in that case.
     station_parameters: frozenset[str] | None
+    # Pollen coordinator; ``None`` when the pollen option is off (ADR-0005).
+    pollen_coordinator: PollenCoordinator | None
+    # Taxon codes the pollen station actually measures (from the inventory).
+    # ``None`` means inventory was unavailable or pollen is off; sensor.py
+    # creates all known sensors as a fallback when pollen is on.
+    pollen_inventory: frozenset[str] | None
 
 
 type MeteoSwissConfigEntry = ConfigEntry[MeteoSwissRuntimeData]
@@ -146,6 +155,22 @@ async def async_setup_entry(
     except OgdError:
         pass
 
+    # Pollen coordinator (ADR-0005): only when the option is on.
+    # The first refresh is non-fatal — pollen is opt-in and an unavailable
+    # pollen station should not block the whole entry from loading.
+    pollen_coordinator: PollenCoordinator | None = None
+    pollen_inventory: frozenset[str] | None = None
+    if entry.options.get(CONF_POLLEN):
+        pollen_abbr = str(entry.options.get(CONF_POLLEN_STATION, ""))
+        if pollen_abbr:
+            pollen_coordinator = PollenCoordinator(hass, entry, session, pollen_abbr)
+            await pollen_coordinator.async_refresh()
+            try:
+                pollen_inv_all = await fetch_pollen_datainventory(session)
+                pollen_inventory = pollen_inv_all.get(pollen_abbr.upper())
+            except OgdError:
+                pass
+
     entry.runtime_data = MeteoSwissRuntimeData(
         station_coordinator=station_coordinator,
         forecast_coordinator=forecast_coordinator,
@@ -153,6 +178,8 @@ async def async_setup_entry(
         station_abbr=station_abbr,
         backend=backend,
         station_parameters=station_parameters,
+        pollen_coordinator=pollen_coordinator,
+        pollen_inventory=pollen_inventory,
     )
 
     # An options change (the hourly-forecast toggle) reloads the entry so the

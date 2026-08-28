@@ -26,7 +26,9 @@ from custom_components.meteoswiss_weather.ogd.const import (
     HOURLY_REQUIRED_PARAMS,
     META_DATAINVENTORY_URL,
     META_POINT_URL,
+    META_POLLEN_DATAINVENTORY_URL,
     META_STATIONS_URL,
+    pollen_now_url,
     stac_items_url,
     station_now_url,
 )
@@ -54,15 +56,23 @@ def auto_enable_custom_integrations(enable_custom_integrations):
     """
 
 
+_POLLEN_STATION_ABBR = "pbe"  # lowercase for URL; PBE is closest to Bern in fixture
+
+
 def _register_mock_ogd(
     aioclient_mock,
     *,
     datainventory_content: bytes | None = None,
+    pollen_station: str | None = None,
+    pollen_now_content: bytes | None = None,
 ) -> None:
     """Register upstream URL mocks on ``aioclient_mock``.
 
-    ``datainventory_content`` overrides the default fixture bytes for the data
-    inventory, enabling tests that need a reduced parameter set for the station.
+    ``datainventory_content`` overrides the default fixture bytes for the SMN
+    data inventory, enabling tests that need a reduced parameter set.
+    ``pollen_station`` (lowercase abbr, e.g. "pbe") activates pollen mocks:
+    registers the pollen datainventory and the station's ``_h_now.csv``.
+    ``pollen_now_content`` overrides the pollen fixture (e.g. all-empty rows).
     """
     # Station metadata — downloaded once, cached.
     aioclient_mock.get(
@@ -123,6 +133,22 @@ def _register_mock_ogd(
             content=_fixture_bytes(f"vnut12.lssw.{_RUN_TS}.{param}.csv"),
         )
 
+    # Pollen mocks (opt-in): only registered when a pollen station is given.
+    if pollen_station is not None:
+        aioclient_mock.get(
+            META_POLLEN_DATAINVENTORY_URL,
+            content=_fixture_bytes("ogd-pollen_meta_datainventory.csv"),
+        )
+        now_bytes = (
+            pollen_now_content
+            if pollen_now_content is not None
+            else _fixture_bytes(f"ogd-pollen_{pollen_station}_h_now.csv")
+        )
+        aioclient_mock.get(
+            pollen_now_url(pollen_station),
+            content=now_bytes,
+        )
+
 
 # A minimal datainventory that gives BER only its precipitation parameter.
 # Used by mock_ogd_reduced to exercise the sensor-filtering path (issue #46).
@@ -154,5 +180,37 @@ def mock_ogd_reduced(aioclient_mock):
     _register_mock_ogd(
         aioclient_mock,
         datainventory_content=_BER_PRECIPITATION_ONLY_INVENTORY,
+    )
+    return aioclient_mock
+
+
+@pytest.fixture
+def mock_ogd_pollen(aioclient_mock):
+    """Like ``mock_ogd`` but also mocks the PBE pollen station (ADR-0005).
+
+    Registers the pollen datainventory and the PBE ``_h_now.csv`` fixture in
+    addition to the full weather station + forecast mocks.
+    """
+    _register_mock_ogd(aioclient_mock, pollen_station=_POLLEN_STATION_ABBR)
+    return aioclient_mock
+
+
+@pytest.fixture
+def mock_ogd_pollen_empty(aioclient_mock):
+    """Like ``mock_ogd_pollen`` but PBE's ``_h_now.csv`` has only empty rows.
+
+    Used to test that pollen sensors become unavailable when the file carries
+    no complete measurement rows.
+    """
+    empty_body = (
+        b"station_abbr;reference_timestamp;kabetuh0;khpoach0;"
+        b"kaalnuh0;kacoryh0;kafaguh0;kafraxh0;kaquerh0\n"
+        b"PBE;28.08.2026 06:00;;;;;;;\n"
+        b"PBE;28.08.2026 07:00;;;;;;;\n"
+    )
+    _register_mock_ogd(
+        aioclient_mock,
+        pollen_station=_POLLEN_STATION_ABBR,
+        pollen_now_content=empty_body,
     )
     return aioclient_mock

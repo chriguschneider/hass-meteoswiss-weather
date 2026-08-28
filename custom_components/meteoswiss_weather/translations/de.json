@@ -7,6 +7,10 @@
     "parse_error_forecast": {
       "title": "MeteoSwiss: Format der Prognosedatei geändert",
       "description": "Die lokale Prognosedatei konnte nicht eingelesen werden. Das Upstream-Format hat sich möglicherweise geändert. Prüfen Sie `docs/ogd.md` im Integration-Repository für das aktuelle Format und eröffnen Sie ein Drift-Issue, wenn das Layout nicht mehr übereinstimmt."
+    },
+    "parse_error_pollen": {
+      "title": "MeteoSwiss: Format der Pollendatei geändert",
+      "description": "Die Pollenbeobachtungsdatei konnte nicht eingelesen werden. Das Upstream-Format hat sich möglicherweise geändert. Prüfen Sie `docs/ogd.md` im Integration-Repository für das aktuelle Format und eröffnen Sie ein Drift-Issue, wenn das Layout nicht mehr übereinstimmt."
     }
   },
   "entity": {
@@ -33,7 +37,14 @@
       "longwave_radiation": { "name": "Atmosphärische Gegenstrahlung (10 Min. Mittel)" },
       "temp_max_today": { "name": "Höchsttemperatur heute" },
       "temp_min_today": { "name": "Tiefsttemperatur heute" },
-      "precipitation_today": { "name": "Niederschlag heute" }
+      "precipitation_today": { "name": "Niederschlag heute" },
+      "pollen_grasses": { "name": "Graspollen" },
+      "pollen_birch": { "name": "Birkenpollen" },
+      "pollen_alder": { "name": "Erlenpollen" },
+      "pollen_hazel": { "name": "Haselnusspollen" },
+      "pollen_beech": { "name": "Buchenpollen" },
+      "pollen_ash": { "name": "Eschenpollen" },
+      "pollen_oak": { "name": "Eichenpollen" }
     }
   },
   "config": {
@@ -147,10 +158,12 @@
       "init": {
         "title": "MeteoSwiss Weather Optionen",
         "data": {
-          "hourly_forecast": "Stundenprognose aktivieren"
+          "hourly_forecast": "Stundenprognose aktivieren",
+          "pollen": "Pollenmessung aktivieren"
         },
         "data_description": {
-          "hourly_forecast": "Die Stundenprognose wird mit HTTP-Range-Anfragen geladen; die Datenmenge hängt vom Horizont ab, den Sie als Nächstes wählen. Wird höchstens alle 3 Stunden aktualisiert. Standardmässig deaktiviert, um das Traffic-Budget einzuhalten."
+          "hourly_forecast": "Die Stundenprognose wird mit HTTP-Range-Anfragen geladen; die Datenmenge hängt vom Horizont ab, den Sie als Nächstes wählen. Wird höchstens alle 3 Stunden aktualisiert. Standardmässig deaktiviert, um das Traffic-Budget einzuhalten.",
+          "pollen": "Zeigt stündliche Pollenkonzentrationen der nächsten automatischen Messstation (Körner/m³). Wird höchstens einmal pro Stunde abgerufen. Standardmässig deaktiviert."
         }
       },
       "hourly": {
@@ -161,6 +174,13 @@
         },
         "data_description": {
           "hourly_horizon_days": "Standard: der Rest von heute plus zwei volle Tage (rund 7–11 MB pro Aktualisierung). «Voller Lauf» lädt jede Stunde (rund 30 MB pro Aktualisierung)."
+        }
+      },
+      "pollen_station": {
+        "title": "Pollenstation auswählen",
+        "description": "Wählen Sie die Pollenüberwachungsstation. Die drei nächstgelegenen Stationen zu Ihrem Vorhersagepunkt werden angezeigt; die nächste ist vorausgewählt.",
+        "data": {
+          "pollen_station": "Pollenstation"
         }
       }
     }
