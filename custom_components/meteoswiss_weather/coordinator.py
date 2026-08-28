@@ -75,6 +75,7 @@ from .ogd import (
     PollenObservation,
     fetch_current,
     fetch_pollen_current,
+    fetch_precip_current,
     latest_run,
 )
 from .ogd.const import (
@@ -86,6 +87,7 @@ from .ogd.const import (
 
 # Issue IDs used in the HA repair-issue registry.
 _ISSUE_STATION_PARSE = "parse_error_station"
+_ISSUE_PRECIP_PARSE = "parse_error_precip"
 _ISSUE_FORECAST_PARSE = "parse_error_forecast"
 _ISSUE_POLLEN_PARSE = "parse_error_pollen"
 
@@ -363,7 +365,18 @@ class HourlyForecastProvider:
 
 
 class StationCoordinator(DataUpdateCoordinator[Observation]):
-    """Poll one station's latest 10-minute observation."""
+    """Poll one station's latest 10-minute observation.
+
+    :class:`PrecipStationCoordinator` reuses this by overriding
+    :meth:`_fetch`, the repair-issue key and the log label (ADR-0006); the
+    conditional-request cache and the parse/connection handling are shared.
+    """
+
+    # Repair-issue key posted on a structural parse failure and the label used
+    # in the coordinator name; overridden by the precipitation subclass.
+    _issue_id = _ISSUE_STATION_PARSE
+    _translation_key = "parse_error_station"
+    _label = "observations"
 
     def __init__(
         self,
@@ -376,7 +389,7 @@ class StationCoordinator(DataUpdateCoordinator[Observation]):
             hass,
             _LOGGER,
             config_entry=entry,
-            name=f"{station_abbr} observations",
+            name=f"{station_abbr} {self._label}",
             update_interval=STATION_UPDATE_INTERVAL,
         )
         self._session = session
@@ -387,19 +400,23 @@ class StationCoordinator(DataUpdateCoordinator[Observation]):
         # Timestamp of the last successful update; exposed for diagnostics.
         self.last_success: datetime | None = None
 
+    async def _fetch(self) -> Observation:
+        """Fetch the latest observation for the configured station."""
+        return await fetch_current(
+            self._session, self._station_abbr, cache=self._cache
+        )
+
     async def _async_update_data(self) -> Observation:
         try:
-            obs = await fetch_current(
-                self._session, self._station_abbr, cache=self._cache
-            )
+            obs = await self._fetch()
         except OgdParseError as err:
             async_create_issue(
                 self.hass,
                 DOMAIN,
-                _ISSUE_STATION_PARSE,
+                self._issue_id,
                 is_fixable=False,
                 severity=IssueSeverity.WARNING,
-                translation_key="parse_error_station",
+                translation_key=self._translation_key,
             )
             raise UpdateFailed(
                 f"station {self._station_abbr} parse failed: {err}"
@@ -409,9 +426,30 @@ class StationCoordinator(DataUpdateCoordinator[Observation]):
                 f"station {self._station_abbr} update failed: {err}"
             ) from err
 
-        async_delete_issue(self.hass, DOMAIN, _ISSUE_STATION_PARSE)
+        async_delete_issue(self.hass, DOMAIN, self._issue_id)
         self.last_success = dt_util.utcnow()
         return obs
+
+
+class PrecipStationCoordinator(StationCoordinator):
+    """Poll a precipitation-only station's latest 10-minute value (ADR-0006, #70).
+
+    Only created when the user picks a second station from
+    ``ch.meteoschweiz.ogd-smn-precip``. Same 10-minute conditional cadence as
+    :class:`StationCoordinator`; the returned :class:`~ogd.Observation` carries
+    only ``precipitation_10min`` (the collection's ``_t_now.csv`` has just
+    ``rre150z0``), which is all the precipitation sensor and weather entity read
+    from it.
+    """
+
+    _issue_id = _ISSUE_PRECIP_PARSE
+    _translation_key = "parse_error_precip"
+    _label = "precipitation"
+
+    async def _fetch(self) -> Observation:
+        return await fetch_precip_current(
+            self._session, self._station_abbr, cache=self._cache
+        )
 
 
 class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):

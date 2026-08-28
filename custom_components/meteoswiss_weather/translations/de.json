@@ -11,6 +11,10 @@
     "parse_error_pollen": {
       "title": "MeteoSwiss: Format der Pollendatei geändert",
       "description": "Die Pollenbeobachtungsdatei konnte nicht eingelesen werden. Das Upstream-Format hat sich möglicherweise geändert. Prüfen Sie `docs/ogd.md` im Integration-Repository für das aktuelle Format und eröffnen Sie ein Drift-Issue, wenn das Layout nicht mehr übereinstimmt."
+    },
+    "parse_error_precip": {
+      "title": "MeteoSwiss-Niederschlagsstationsdatei-Format geändert",
+      "description": "Die Beobachtungsdatei der Niederschlagsstation konnte nicht verarbeitet werden. Das Format der Quelldaten hat sich möglicherweise geändert. Prüfen Sie `docs/ogd.md` im Repository der Integration auf das aktuelle Format und öffnen Sie ein Drift-Issue, wenn die Struktur nicht mehr passt."
     }
   },
   "entity": {
@@ -88,7 +92,11 @@
         "title": "Wetterstation auswählen",
         "description": "Wählen Sie die SwissMetNet-Station für aktuelle Messwerte. Die nächste Station ist vorausgewählt.{radar_hint}",
         "data": {
-          "station_abbr": "Wetterstation"
+          "station_abbr": "Wetterstation",
+          "precip_station_abbr": "Niederschlagsstation (optional)"
+        },
+        "data_description": {
+          "precip_station_abbr": "Niederschlag ist sehr lokal und SwissMetNet ist dünn. Wählen Sie optional eine nähere Station aus dem automatischen Niederschlagsmessnetz; wenn gesetzt, wird nur der aktuelle Niederschlag von ihr gelesen. Belassen Sie \"None\", um die Hauptstation zu verwenden."
         }
       },
       "reconfigure": {

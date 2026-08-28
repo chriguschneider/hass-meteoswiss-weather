@@ -39,6 +39,8 @@ from .const import (
     CONF_POLLEN,
     CONF_POLLEN_STATION,
     CONF_POSTAL_CODE,
+    CONF_PRECIP_STATION_ABBR,
+    CONF_PRECIP_STATION_NAME,
     CONF_STATION_ABBR,
     CONF_STATION_NAME,
     DEFAULT_HOURLY_HORIZON_DAYS,
@@ -58,6 +60,7 @@ from .ogd import (
     Station,
     fetch_points,
     fetch_pollen_stations,
+    fetch_precip_stations,
     fetch_stations,
     mountain_points,
     nearest_point,
@@ -70,6 +73,11 @@ from .ogd import (
 _CONF_MODE = "forecast_mode"
 _MODE_POSTAL_CODE = "postal_code"
 _MODE_MOUNTAIN = "mountain"
+
+# Sentinel option for "no precipitation station" in the station step's optional
+# precipitation pick (ADR-0006). An empty string is never a valid abbreviation,
+# so it cleanly marks the opt-out; the feature is off by default.
+_PRECIP_NONE = ""
 
 
 def _mode_schema(default: str = _MODE_POSTAL_CODE) -> vol.Schema:
@@ -111,6 +119,9 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._all_points: list[ForecastPoint] | None = None
         self._all_stations: list[Station] | None = None
+        # Precipitation-only network for the optional station pick (ADR-0006).
+        # ``None`` means its metadata was unavailable; the pick is then dropped.
+        self._all_precip_stations: list[Station] | None = None
         self._point_choices: list[ForecastPoint] = []
         self._point: ForecastPoint | None = None
         # Set while the reconfigure flow (A9, #52) resolves a station change and
@@ -138,6 +149,13 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
             self._all_points = None
             self._all_stations = None
             return False
+        # The precipitation-station list powers the optional pick in the station
+        # step (ADR-0006). It is opt-in, so a failure here only drops the pick —
+        # it never fails the whole flow.
+        try:
+            self._all_precip_stations = await fetch_precip_stations(session)
+        except OgdError:
+            self._all_precip_stations = None
         return True
 
     async def async_step_user(
@@ -317,19 +335,27 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_station(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step: choose a SwissMetNet station (3 nearest, nearest pre-selected)."""
+        """Step: choose a SwissMetNet station and, optionally, a precip station.
+
+        The main station (3 nearest, nearest pre-selected) supplies every
+        current value. A second field offers the three nearest precipitation-only
+        stations (ADR-0006), **none selected by default**; when set, only the
+        precipitation reading is sourced from it.
+        """
         assert self._point is not None
         assert self._all_stations is not None
 
         nearby = nearest_stations(
             self._all_stations, self._point.lat, self._point.lon, limit=3
         )
+        precip_nearby = self._nearest_precip_stations()
 
         if user_input is not None:
             abbr = user_input[CONF_STATION_ABBR]
             station = next(s for s in nearby if s.abbr == abbr)
+            precip_data = self._resolve_precip(user_input, precip_nearby)
             if self.source == SOURCE_RECONFIGURE:
-                return await self._async_reconfigure_station(station)
+                return await self._async_reconfigure_station(station, precip_data)
             return self.async_create_entry(
                 title=self._point.name,
                 data={
@@ -339,6 +365,7 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_POINT_NAME: self._point.name,
                     CONF_STATION_ABBR: station.abbr,
                     CONF_STATION_NAME: station.name,
+                    **precip_data,
                 },
             )
 
@@ -350,6 +377,29 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
             current_abbr = self._get_reconfigure_entry().data.get(CONF_STATION_ABBR)
             if any(s.abbr == current_abbr for s in nearby):
                 default_abbr = current_abbr
+
+        schema: dict[Any, Any] = {
+            vol.Required(CONF_STATION_ABBR, default=default_abbr): vol.In(options)
+        }
+        # Optional precipitation station: only offered when the network's
+        # metadata loaded. Defaults to "none" — the feature is opt-in (ADR-0006).
+        if precip_nearby:
+            precip_options = {_PRECIP_NONE: "None (use the main station)"}
+            precip_options.update(
+                {s.abbr: f"{s.name} ({s.canton})" for s in precip_nearby}
+            )
+            precip_default = _PRECIP_NONE
+            if self.source == SOURCE_RECONFIGURE:
+                current_precip = self._get_reconfigure_entry().data.get(
+                    CONF_PRECIP_STATION_ABBR, ""
+                )
+                if current_precip and any(
+                    s.abbr == current_precip for s in precip_nearby
+                ):
+                    precip_default = current_precip
+            schema[
+                vol.Required(CONF_PRECIP_STATION_ABBR, default=precip_default)
+            ] = vol.In(precip_options)
 
         # The description always references {radar_hint}; supply it in both
         # cases (empty when the radar integration is already installed) so the
@@ -364,15 +414,38 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="station",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_STATION_ABBR, default=default_abbr): vol.In(
-                        options
-                    )
-                }
-            ),
+            data_schema=vol.Schema(schema),
             description_placeholders=description_placeholders,
         )
+
+    def _nearest_precip_stations(self) -> list[Station]:
+        """The three nearest precipitation stations to the point, or empty.
+
+        Empty when the precipitation metadata was unavailable (the pick is then
+        dropped) — the feature is opt-in and must never block the station step.
+        """
+        assert self._point is not None
+        if not self._all_precip_stations:
+            return []
+        return nearest_stations(
+            self._all_precip_stations, self._point.lat, self._point.lon, limit=3
+        )
+
+    @staticmethod
+    def _resolve_precip(
+        user_input: dict[str, Any], precip_nearby: list[Station]
+    ) -> dict[str, str]:
+        """Map the station step's precip pick to the entry keys (ADR-0006).
+
+        Returns empty abbreviation/name when the "none" sentinel was chosen or
+        the field was absent, so the feature stays off.
+        """
+        chosen = str(user_input.get(CONF_PRECIP_STATION_ABBR, _PRECIP_NONE) or "")
+        precip = next((s for s in precip_nearby if s.abbr == chosen), None)
+        return {
+            CONF_PRECIP_STATION_ABBR: precip.abbr if precip else "",
+            CONF_PRECIP_STATION_NAME: precip.name if precip else "",
+        }
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -413,13 +486,15 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def _async_reconfigure_station(
-        self, station: Station
+        self, station: Station, precip_data: dict[str, str]
     ) -> ConfigFlowResult:
         """Resolve the station pick on reconfigure and route the history choice.
 
         Rejects a point that already belongs to another entry. When the station
         actually changed, defers to the history-choice step; otherwise finishes
-        immediately (a point-only change never touches history).
+        immediately (a point-only change never touches history). The optional
+        precipitation pick (ADR-0006) is carried on the new data either way — it
+        never triggers the history step, which is about the main station only.
         """
         assert self._point is not None
         entry = self._get_reconfigure_entry()
@@ -437,6 +512,7 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_POINT_NAME: self._point.name,
             CONF_STATION_ABBR: station.abbr,
             CONF_STATION_NAME: station.name,
+            **precip_data,
         }
 
         if station.abbr == entry.data.get(CONF_STATION_ABBR):

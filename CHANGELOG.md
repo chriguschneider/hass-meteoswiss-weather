@@ -11,6 +11,16 @@ using the matching section below as release notes.
 
 ### Added
 
+- **Optional separate precipitation station** (#70, ADR-0006). The station
+  step of setup and reconfigure now offers an optional second station from
+  the automatic precipitation-only network (`ch.meteoschweiz.ogd-smn-precip`,
+  ~141 gauges), with the three nearest offered and **none selected by
+  default**. When set, the `precipitation` sensor and the weather entity's
+  `current_precipitation` attribute read from it — its attribution and a
+  `station` attribute name the station — while every other value stays with
+  the main station. It is polled every 10 minutes, conditionally, only while
+  the option is set (~1.2 KB per poll, inside the ADR-0002 station budget);
+  unset means zero requests to the precipitation collection.
 - **Service `import_history`: backfill long-term statistics from the
   official station history** (#66, ADR-0007). A one-off, user-triggered
   service imports a station's hourly history (`_h_recent` plus the decade

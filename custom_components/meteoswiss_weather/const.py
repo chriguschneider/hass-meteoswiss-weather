@@ -18,6 +18,13 @@ CONF_POINT_NAME = "point_name"
 CONF_STATION_ABBR = "station_abbr"
 CONF_STATION_NAME = "station_name"
 
+# Optional second station from the precipitation-only network (ADR-0006, #70).
+# Empty/absent means the feature is off — precipitation then comes from the main
+# station. When set, a second 10-minute conditional poll runs and the
+# precipitation sensor reads from this station instead.
+CONF_PRECIP_STATION_ABBR = "precip_station_abbr"
+CONF_PRECIP_STATION_NAME = "precip_station_name"
+
 # Reconfigure flow (A9, #52): what to do with the recorded station history when
 # the station changes. ``keep`` leaves values and statistics untouched and logs
 # the switch; ``discard`` purges the station sensors' states and clears their

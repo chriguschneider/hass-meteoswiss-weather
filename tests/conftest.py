@@ -29,8 +29,10 @@ from custom_components.meteoswiss_weather.ogd.const import (
     META_DATAINVENTORY_URL,
     META_POINT_URL,
     META_POLLEN_DATAINVENTORY_URL,
+    META_PRECIP_STATIONS_URL,
     META_STATIONS_URL,
     pollen_now_url,
+    precip_station_now_url,
     stac_items_url,
     station_now_url,
 )
@@ -67,6 +69,7 @@ def _register_mock_ogd(
     datainventory_content: bytes | None = None,
     pollen_station: str | None = None,
     pollen_now_content: bytes | None = None,
+    precip_station: str | None = None,
 ) -> None:
     """Register upstream URL mocks on ``aioclient_mock``.
 
@@ -75,6 +78,9 @@ def _register_mock_ogd(
     ``pollen_station`` (lowercase abbr, e.g. "pbe") activates pollen mocks:
     registers the pollen datainventory and the station's ``_h_now.csv``.
     ``pollen_now_content`` overrides the pollen fixture (e.g. all-empty rows).
+    ``precip_station`` (lowercase abbr, e.g. "bel") activates the optional
+    precipitation-station mocks (ADR-0006): the precip meta stations list and
+    the station's ``_t_now.csv``.
     """
     # Station metadata — downloaded once, cached.
     aioclient_mock.get(
@@ -142,6 +148,19 @@ def _register_mock_ogd(
             content=_fixture_bytes(f"vnut12.lssw.{_RUN_TS}.{param}.csv"),
         )
 
+    # Precipitation-station mocks (opt-in, ADR-0006): only registered when a
+    # precip station is given. The meta list lets the config flow offer the
+    # pick; the ``_t_now.csv`` backs the second 10-minute poll.
+    if precip_station is not None:
+        aioclient_mock.get(
+            META_PRECIP_STATIONS_URL,
+            content=_fixture_bytes("ogd-smn-precip_meta_stations.csv"),
+        )
+        aioclient_mock.get(
+            precip_station_now_url(precip_station),
+            content=_fixture_bytes(f"ogd-smn-precip_{precip_station}_t_now.csv"),
+        )
+
     # Pollen mocks (opt-in): only registered when a pollen station is given.
     if pollen_station is not None:
         aioclient_mock.get(
@@ -190,6 +209,18 @@ def mock_ogd_reduced(aioclient_mock):
         aioclient_mock,
         datainventory_content=_BER_PRECIPITATION_ONLY_INVENTORY,
     )
+    return aioclient_mock
+
+
+@pytest.fixture
+def mock_ogd_precip(aioclient_mock):
+    """Like ``mock_ogd`` but also mocks the BEL precipitation station (ADR-0006).
+
+    Registers the precip meta-stations list and the BEL ``_t_now.csv`` fixture
+    in addition to the full weather station + forecast mocks. BEL (Belp) is the
+    nearest precipitation station to the Köniz forecast point.
+    """
+    _register_mock_ogd(aioclient_mock, precip_station="bel")
     return aioclient_mock
 
 

@@ -39,7 +39,7 @@ a thousand posts. That is the risk being traded away here — see
 | Breakage mode | announced change | silent API change | silent API change |
 | Daily forecast | 9 days, official symbols | yes | 8 days |
 | Hourly forecast | opt-in, ≥ 3 h apart, ~1 GB/day | yes, no traffic cost | yes, no traffic cost |
-| Current conditions | SwissMetNet, 10 min, 11 sensors | yes, interval configurable, separate precipitation station | yes, station code entered by hand |
+| Current conditions | SwissMetNet, 10 min, 11 sensors, optional separate precipitation station | yes, interval configurable, separate precipitation station | yes, station code entered by hand |
 | Warnings | no — use core `meteoalarm` | not documented | yes, several warning entities |
 | Pollen | no | no | yes |
 | Radar | separate sibling integration (ADR-0003) | no | no |
@@ -93,9 +93,10 @@ a thousand posts. That is the risk being traded away here — see
 - **Point queries.** The app API returns one location in a few kilobytes.
   No traffic dilemma, no throttle.
 - **They are proven.** Rudd-O carries `quality_scale: silver` and years
-  of bug reports, allows a separate precipitation station, and lets the
-  measurement interval be configured. Its symbol table is good enough
-  that [`symbols.md`](symbols.md) credits it as the source of ours.
+  of bug reports, and lets the measurement interval be configured. Its
+  symbol table is good enough that [`symbols.md`](symbols.md) credits it
+  as the source of ours. (The separate precipitation station it offered is
+  now matched here — [ADR-0006](adr/0006-optional-precipitation-station.md).)
 
 And what they carry with that:
 

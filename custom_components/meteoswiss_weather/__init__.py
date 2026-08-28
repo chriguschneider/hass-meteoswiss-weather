@@ -34,11 +34,18 @@ from .const import (
     CONF_POLLEN,
     CONF_POLLEN_STATION,
     CONF_POSTAL_CODE,
+    CONF_PRECIP_STATION_ABBR,
+    CONF_PRECIP_STATION_NAME,
     CONF_STATION_ABBR,
     DEFAULT_HOURLY_HORIZON_DAYS,
     DOMAIN,
 )
-from .coordinator import ForecastCoordinator, PollenCoordinator, StationCoordinator
+from .coordinator import (
+    ForecastCoordinator,
+    PollenCoordinator,
+    PrecipStationCoordinator,
+    StationCoordinator,
+)
 from .history import async_backfill
 from .ogd import (
     BulkCsvBackend,
@@ -95,6 +102,11 @@ class MeteoSwissRuntimeData:
     # ``None`` means inventory was unavailable or pollen is off; sensor.py
     # creates all known sensors as a fallback when pollen is on.
     pollen_inventory: frozenset[str] | None
+    # Optional precipitation-only station (ADR-0006, #70): ``None`` unless the
+    # user picked one. When set, the precipitation sensor and the weather
+    # entity's current precipitation read from it instead of the main station.
+    precip_coordinator: PrecipStationCoordinator | None
+    precip_station_name: str
 
 
 type MeteoSwissConfigEntry = ConfigEntry[MeteoSwissRuntimeData]
@@ -183,6 +195,18 @@ async def async_setup_entry(
             except OgdError:
                 pass
 
+    # Optional precipitation-only station (ADR-0006, #70): a second 10-minute
+    # conditional poll, only when the user picked one. Non-fatal like pollen —
+    # an unavailable opt-in station must not block the whole entry from loading.
+    precip_coordinator: PrecipStationCoordinator | None = None
+    precip_abbr = str(entry.data.get(CONF_PRECIP_STATION_ABBR, ""))
+    precip_name = str(entry.data.get(CONF_PRECIP_STATION_NAME, ""))
+    if precip_abbr:
+        precip_coordinator = PrecipStationCoordinator(
+            hass, entry, session, precip_abbr
+        )
+        await precip_coordinator.async_refresh()
+
     entry.runtime_data = MeteoSwissRuntimeData(
         station_coordinator=station_coordinator,
         forecast_coordinator=forecast_coordinator,
@@ -192,6 +216,8 @@ async def async_setup_entry(
         station_parameters=station_parameters,
         pollen_coordinator=pollen_coordinator,
         pollen_inventory=pollen_inventory,
+        precip_coordinator=precip_coordinator,
+        precip_station_name=precip_name or precip_abbr,
     )
 
     # An options change (the hourly-forecast toggle) reloads the entry so the
