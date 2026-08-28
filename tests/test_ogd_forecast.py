@@ -627,6 +627,31 @@ async def test_bulk_backend_fetch_daily_wind_not_point_major_returns_none(
     assert daily[0].temp_max == 29.3
 
 
+async def test_get_wind_texts_missing_wind_assets_returns_none(session) -> None:
+    """A daily-complete run whose wind files have not published yet degrades to
+    None, never a KeyError (issue #60).
+
+    The daily run is chosen on DAILY_REQUIRED_PARAMS alone; during a run's
+    publish window the small daily files land before the ~30 MB wind files, so
+    ``run.assets`` can lack the wind params. That must not crash the default
+    daily refresh — no request is even attempted for the absent files.
+    """
+    from custom_components.meteoswiss_weather.ogd.stac import Run
+
+    run = Run(
+        timestamp=datetime(2026, 8, 27, 3, 0, tzinfo=UTC),
+        assets={param: _asset_url(param) for param in DAILY_REQUIRED_PARAMS},
+    )
+    backend = BulkCsvBackend(session)
+
+    # No aioresponses mock registered: any HTTP attempt would raise, proving the
+    # guardrail returns before touching the network.
+    assert await backend._get_wind_texts(_koeniz_point(), run) is None
+    # Sentinel cached so a repeat call for the same run short-circuits.
+    assert backend._wind_run == run.timestamp
+    assert backend._wind_texts == {}
+
+
 async def test_bulk_backend_fetch_hourly_reuses_daily_wind_cache(session) -> None:
     """When fetch_daily() has cached point-major wind for the same run,
     fetch_hourly() does not download the wind files a second time.

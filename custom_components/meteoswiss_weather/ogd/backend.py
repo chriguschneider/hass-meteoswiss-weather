@@ -82,6 +82,21 @@ class BulkCsvBackend:
         if self._wind_run == run.timestamp:
             return self._wind_texts or None
 
+        # The daily run is selected on DAILY_REQUIRED_PARAMS alone, so it can be
+        # complete for the small daily files while the ~30 MB wind files of the
+        # same run have not landed yet (they publish last). A missing wind asset
+        # must degrade to None like the point-major guardrail, never crash the
+        # default daily refresh with a KeyError from asset_url() (issue #60).
+        if any(param not in run.assets for param in DAILY_WIND_PARAMS):
+            _LOGGER.warning(
+                "daily wind skipped for run %s: one or more wind files are not "
+                "published yet; wind fields will be None for all days",
+                run.timestamp.isoformat(),
+            )
+            self._wind_texts = {}
+            self._wind_run = run.timestamp
+            return None
+
         results = await asyncio.gather(
             *(
                 fetch_wind_block(
