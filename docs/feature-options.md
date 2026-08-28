@@ -191,6 +191,15 @@ numbers (up to 8 more files; ~7–11 MB each at the A5 default horizon,
   stays in the region of A5 alone, but the near-term forecast is at
   most one run old instead of up to three. Effort S–M on top of A5;
   folded into the same ADR-0002 revision.
+- [x] **B15 — Mountain forecast points selectable** (added and
+  selected 2026-08-28). The point list carries 631 mountain points of
+  interest (type 3: summits, passes, resorts) with name and height, and
+  every forecast file has their rows — but the config flow is
+  postal-code only. A mode choice in the first step plus a searchable
+  dropdown of mountain points makes a ski-area entry possible: forecast
+  for the summit, current conditions and snow depth (B1) from the
+  nearest mountain station. Effort S–M; config surface change, no ADR
+  expected.
 
 ## Deliberate non-goals
 
@@ -218,6 +227,7 @@ it until the upstream beta exists.
 | B14 | #54 | P2 | opus |
 | B7–B11 | #55 | P3 | opus |
 | A11 | #56 | P3 | opus |
+| B15 | #59 | P2 | sonnet |
 | A4 | #57 | — (tracking) | — |
 
 ## Suggested sequencing (opinion, not binding)
@@ -232,6 +242,7 @@ it until the upstream beta exists.
    B13 — small and independent, any time. B7–B11 — behind the hourly
    opt-in with per-entity gating, one ADR-0002 revision for the set,
    after A5; nearly free once A4 ships. B14 — tiered refresh, on top
-   of A5, same ADR-0002 revision.
+   of A5, same ADR-0002 revision. B15 — mountain points in the config
+   flow, after the P1 basics.
 2. **Still open:** A1, A2, A14.
 3. **Alongside (human):** A12, A13, A15.
