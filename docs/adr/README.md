@@ -35,3 +35,6 @@ added test coverage, and prose/style tweaks.
 - [0002 — Traffic budget for the bulk local-forecast files](0002-traffic-budget-bulk-local-forecast.md)
 - [0003 — A sibling of the radar integration, not a merge](0003-sibling-of-the-radar-integration.md)
 - [0004 — Quality gates and release process inherited from the radar repo](0004-quality-gates-inherited-from-radar.md)
+- [0005 — The pollen dataset is in scope, as an opt-in on the existing entry](0005-pollen-dataset-in-scope.md)
+- [0006 — An optional second station from the precipitation-only network](0006-optional-precipitation-station.md)
+- [0007 — Station history is imported into long-term statistics on request only](0007-station-history-backfill.md)
