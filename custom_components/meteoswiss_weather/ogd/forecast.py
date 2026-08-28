@@ -217,15 +217,22 @@ def _parse_datetime(value: str | None) -> datetime | None:
 
 
 def parse_hourly(
-    text_by_param: dict[str, str], point: ForecastPoint
+    text_by_param: dict[str, str],
+    point: ForecastPoint,
+    horizon_end: datetime | None = None,
 ) -> list[HourlyForecast]:
     """Merge the hourly parameter files into one forecast for ``point``.
 
     A **plain function** so the backend can hand it to an executor (ADR-0002).
-    Each file is ~30 MB and holds every point's ~220 rows spread across the
-    whole file; only the rows matching ``point`` are kept while iterating, so
-    the ~1.2 M rows are never materialised as a list. Order-independent: rows
-    are keyed by timestamp, then sorted at the end.
+    Each file holds every point's ~220 rows; only the rows matching ``point``
+    are kept while iterating, so the file is never materialised as a list of
+    rows. Order-independent: rows are keyed by timestamp, then sorted.
+
+    ``horizon_end`` (an aware UTC datetime) trims the forecast to hours **before**
+    it, giving one consistent horizon across all files (issue #50): the
+    date-major files are already Range-limited to it, and the point-major files
+    — always fetched as the point's whole run — are trimmed here. ``None`` keeps
+    every hour (the "full run" option).
     """
     by_time: dict[datetime, dict[str, float | int | None]] = {}
 
@@ -241,6 +248,8 @@ def parse_hourly(
                 continue
             when = _parse_datetime(row.get(_DATA_DATE))
             if when is None:
+                continue
+            if horizon_end is not None and when >= horizon_end:
                 continue
             by_time.setdefault(when, {})[field] = cast(row.get(param))
 

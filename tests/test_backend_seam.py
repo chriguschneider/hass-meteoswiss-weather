@@ -111,7 +111,9 @@ class FakeBackend:
     async def fetch_daily(self, point: ForecastPoint) -> list[DailyForecast]:
         return self.DAILY
 
-    async def fetch_hourly(self, point: ForecastPoint) -> list[HourlyForecast]:
+    async def fetch_hourly(
+        self, point: ForecastPoint, *, horizon_days: int = -1
+    ) -> list[HourlyForecast]:
         return self.HOURLY
 
 

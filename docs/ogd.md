@@ -175,21 +175,44 @@ on 2026-08-27: `tre200px=29.1`, `tre200pn=16.7`, `rka150p0=0.1`, `jp2000d0=2`.
 
 - Download of a 32 MB file: 0.3 s on a fibre connection; naive Python
   split-parse: 1.8 s on a Pi 5. Parse in the executor.
-- **Rows are sorted by `Date`, then point** — the 220 rows of point
-  `309800` start at byte ~70 KB and end at byte ~32.4 MB. There is no way
-  to download only one point: no early exit, and `Range` requests (which
-  the server does honour, HTTP 206) cannot help.
-- **Correction, measured 2026-08-28 (run `202608280400`):** the bullet
-  above holds for `tre200h0` — and for `treq10h0`, `treq90h0` and the
-  three `npro*` cloud files — only. The other ten hourly files
-  (`jww003i0`, `rre150h0`, `rre003i0`, `rp0003i0`, `fu3010h0`,
-  `fu3010h1`, `dkl010h0`, `zprfr0hs`, `gre000h0`, `sre000h0`) are
-  **point-major**: one point's ~220 rows are contiguous (~5 KB) and a
-  single `Range` request fetches them. `If-None-Match` works together
-  with `Range` (304 on unchanged). Full table, method and consequences:
-  issue #50, which rewrites this section.
 - 220 hourly timestamps per point = 9 days + a few hours.
 - Daily files are cheap; hourly files are the whole budget. See ADR-0002.
+
+#### Row order — two layouts (measured 2026-08-28, run `202608280400`)
+
+An earlier note here claimed rows are always sorted by `Date`, so a `Range`
+request "cannot help". That is true for only **6 of the 16** hourly files.
+Sampling rows at fixed byte offsets across each file shows two layouts:
+
+| layout | sort key | files |
+|---|---|---|
+| **date-major** (all points per hour block, ~150 KB/h) | `Date`, then point | `tre200h0`, `treq10h0`, `treq90h0`, `nprohihs`, `npromths`, `nprolohs` |
+| **point-major** (one point's ~220 rows contiguous, ~5 KB) | `(point_type_id, point_id, Date)` — ends with type-3 rows | `rre150h0`, `rre003i0`, `rp0003i0`, `fu3010h0`, `fu3010h1`, `dkl010h0`, `zprfr0hs`, `gre000h0`, `sre000h0` |
+| **point-major, id-sorted** (types mixed) | `(point_id, Date)` | `jww003i0` (`834;3` at 3 MB, `5025;1` at 6 MB) |
+
+- The origin is **CloudFront over S3**. `Range` is answered with 206 and
+  `Accept-Ranges: bytes`; `If-None-Match` **plus** `Range` answers 304 when
+  unchanged; `If-Range` with a matching ETag answers 206, a mismatch 200 with
+  the full body. **No gzip** on the 30 MB files (small files like `meta_point`
+  do arrive gzip-encoded). `Cache-Control: max-age=7200`. S3 does not serve
+  multi-range requests.
+- Date-major files of one UTC day all start at **21:00 UTC of the previous
+  day** (they carry past hours), so byte offsets are stable across a day's
+  runs.
+
+**How the integration uses this (issue #50, `ogd/hourly.py`):** it classifies
+each file's layout at runtime from offset probes, then
+
+- **point-major →** binary-searches the point's contiguous block by byte
+  offset and fetches it with one `Range` GET (~5 KB); the block offset is
+  cached per file and re-verified with a single probe on the next run;
+- **date-major →** fetches a `Range: bytes=0-<budget>` prefix sized from the
+  chosen horizon (`hourly_horizon_days`), extending it if a probe shows the
+  horizon was not reached;
+- **anything unrecognised →** downloads the whole file and logs a warning.
+
+For the minimum set at the default horizon this is **~7–11 MB per refresh**
+instead of ~125 MB. See ADR-0002 (revised) for the budget and the option.
 
 ### Parameter codes (from the docs; confirm against the meta CSV)
 

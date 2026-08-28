@@ -39,10 +39,14 @@ Two honest consequences:
   integration for them (regional, official).
 - **The hourly forecast is published as whole-of-Switzerland files, about
   30 MB per parameter per hour.** Daily forecasts are tiny and are the
-  default; the hourly option is refreshed at most every three hours and
-  costs roughly 1 GB per day. MeteoSwiss has announced a per-point API for
-  the end of 2026, after which this limitation goes away
-  ([ADR-0002](docs/adr/0002-traffic-budget-bulk-local-forecast.md)).
+  default. The hourly option is opt-in, refreshed at most every three hours,
+  and fetched with HTTP Range requests so only the configured point's block
+  (and, for the one file that needs it, a prefix covering your horizon) is
+  downloaded — roughly **7–11 MB per refresh at the default 2-day horizon**
+  (~60–90 MB/day) instead of the ~1 GB/day a full download would cost. A
+  `hourly_horizon_days` option trades horizon for traffic. MeteoSwiss has
+  announced a per-point API for the end of 2026, after which even this goes
+  away ([ADR-0002](docs/adr/0002-traffic-budget-bulk-local-forecast.md)).
 
 [**docs/comparison.md**](docs/comparison.md) puts this side by side with
 `Rudd-O/homeassistant-meteoswiss` and `izacus/hass-swissweather`, feature

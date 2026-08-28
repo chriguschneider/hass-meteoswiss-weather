@@ -19,11 +19,13 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CONF_HOURLY_FORECAST,
+    CONF_HOURLY_HORIZON_DAYS,
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
     CONF_POSTAL_CODE,
     CONF_STATION_ABBR,
+    DEFAULT_HOURLY_HORIZON_DAYS,
 )
 from .coordinator import ForecastCoordinator, StationCoordinator
 from .ogd import (
@@ -89,10 +91,19 @@ async def async_setup_entry(
     station_abbr = str(entry.data[CONF_STATION_ABBR])
     backend: ForecastBackend = _backend_factory(session)
     hourly_enabled = bool(entry.options.get(CONF_HOURLY_FORECAST, False))
+    hourly_horizon_days = int(
+        entry.options.get(CONF_HOURLY_HORIZON_DAYS, DEFAULT_HOURLY_HORIZON_DAYS)
+    )
 
     station_coordinator = StationCoordinator(hass, entry, session, station_abbr)
     forecast_coordinator = ForecastCoordinator(
-        hass, entry, session, backend, point, hourly_enabled=hourly_enabled
+        hass,
+        entry,
+        session,
+        backend,
+        point,
+        hourly_enabled=hourly_enabled,
+        hourly_horizon_days=hourly_horizon_days,
     )
 
     # A first-refresh failure raises ConfigEntryNotReady so HA retries setup.

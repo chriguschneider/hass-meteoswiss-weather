@@ -72,6 +72,20 @@ DAILY_PARAMS = set(_OGD_CONST.DAILY_REQUIRED_PARAMS)
 # Hourly params the integration fetches for the opt-in hourly forecast.
 HOURLY_PARAMS = set(_OGD_CONST.HOURLY_REQUIRED_PARAMS)
 
+# Expected byte-order layout of each hourly file the integration reads (issue
+# #50). The Range strategy in ogd/hourly.py detects this at runtime, but the
+# smoke test pins it so an upstream re-sort is caught before it degrades the
+# integration to full downloads. "date" = sorted by Date (horizon prefix works);
+# "point" = one point's rows contiguous (block Range works).
+HOURLY_EXPECTED_LAYOUT = {
+    "tre200h0": "date",
+    "rre150h0": "point",
+    "jww003i0": "point",
+    "fu3010h0": "point",
+    "fu3010h1": "point",
+    "dkl010h0": "point",
+}
+
 # Forecast point checked in the data files (postal code 3098 Köniz, n=00).
 FORECAST_POINT_ID = "309800"
 FORECAST_POINT_TYPE_ID = "2"
@@ -137,6 +151,71 @@ _failures: list[str] = []
 def _get(url: str) -> bytes:
     with urllib.request.urlopen(url, timeout=30) as resp:  # noqa: S310
         return resp.read()
+
+
+def _range_get(url: str, start: int, end: int) -> tuple[bytes, int | None]:
+    """Fetch bytes [start, end] (inclusive); return (body, total_size)."""
+    req = urllib.request.Request(url, headers={"Range": f"bytes={start}-{end}"})
+    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+        body = resp.read()
+        cr = resp.headers.get("Content-Range")
+    total = None
+    if cr and "/" in cr:
+        tail = cr.rsplit("/", 1)[1].strip()
+        total = int(tail) if tail.isdigit() else None
+    return body, total
+
+
+def _row_after(url: str, offset: int, total: int) -> tuple[int, int, str] | None:
+    """First complete data row after the newline at/after ``offset``.
+
+    Returns (point_id, point_type_id, Date) or None. Rows are short, so a 2 KB
+    window always spans a whole row and its bounding newlines.
+    """
+    if offset >= total:
+        return None
+    end = min(offset + 2048, total) - 1
+    body, _ = _range_get(url, offset, end)
+    nl = body.find(b"\n")
+    if nl == -1:
+        return None
+    nl2 = body.find(b"\n", nl + 1)
+    line = body[nl + 1 : nl2] if nl2 != -1 else body[nl + 1 :]
+    parts = line.split(b";", 3)
+    if len(parts) < 3:
+        return None
+    try:
+        return int(parts[0]), int(parts[1]), parts[2].decode("ascii", "ignore")
+    except ValueError:
+        return None
+
+
+def _classify_layout_live(url: str) -> str:
+    """Classify an hourly file as "date", "point" or "other" via offset probes."""
+    _, total = _range_get(url, 0, 1023)
+    if not total:
+        return "other"
+    rows = []
+    for i in range(9):
+        row = _row_after(url, total * i // 9, total)
+        if row is not None and (not rows or row != rows[-1]):
+            rows.append(row)
+    if len(rows) < 3:
+        return "other"
+    dates = [r[2] for r in rows]
+    type_keys = [(r[1], r[0]) for r in rows]
+    ids = [r[0] for r in rows]
+
+    def nondec(seq):
+        return all(a <= b for a, b in zip(seq, seq[1:], strict=False))
+
+    if nondec(dates) and len(set(dates)) > 1:
+        return "date"
+    if (nondec(type_keys) and len(set(type_keys)) > 1) or (
+        nondec(ids) and len(set(ids)) > 1
+    ):
+        return "point"
+    return "other"
 
 
 def _report(label: str, ok: bool, detail: str = "") -> None:
@@ -245,6 +324,30 @@ def check_daily_files(hrefs: dict[str, str]) -> None:
     _report(label, not problems, "; ".join(problems))
 
 
+def check_hourly_layouts(hrefs: dict[str, str]) -> None:
+    """Check: every hourly file the integration reads has its expected layout.
+
+    The Range strategy (issue #50) depends on `tre200h0` being date-major and
+    the symbol/precip/wind files being point-major; a re-sort upstream would
+    silently degrade the integration to full downloads. Probing a few byte
+    offsets per file is cheap (a handful of KB total).
+    """
+    label = "Hourly files have their expected Range layout (issue #50)"
+    problems: list[str] = []
+    for param, expected in sorted(HOURLY_EXPECTED_LAYOUT.items()):
+        href = hrefs.get(param)
+        if not href:
+            problems.append(f"{param}: no href in run")
+            continue
+        try:
+            got = _classify_layout_live(href)
+        except Exception as exc:  # noqa: BLE001 - report, keep checking others
+            got = f"error: {exc}"
+        if got != expected:
+            problems.append(f"{param}: expected {expected}, got {got}")
+    _report(label, not problems, "; ".join(problems))
+
+
 def check_point_meta() -> None:
     """Check 3: Point meta header matches docs/ogd.md and contains 309800."""
     label = f"Point meta header matches + contains {FORECAST_POINT_ID}"
@@ -331,6 +434,7 @@ def main() -> None:
     _run_ts, hrefs = check_stac()
     if hrefs:
         check_daily_files(hrefs)
+        check_hourly_layouts(hrefs)
     else:
         _report(_DAILY_LABEL, False, "skipped — STAC check failed")
 

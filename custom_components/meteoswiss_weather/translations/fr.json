@@ -79,7 +79,17 @@
           "hourly_forecast": "Activer la prévision horaire"
         },
         "data_description": {
-          "hourly_forecast": "Télécharge environ 1,5 Go par jour, actualisé toutes les 3 heures au maximum. Désactivé par défaut pour respecter le budget de trafic."
+          "hourly_forecast": "La prévision horaire est téléchargée avec des requêtes HTTP Range ; le coût dépend de l'horizon choisi à l'étape suivante. Actualisée toutes les 3 heures au maximum. Désactivée par défaut pour respecter le budget de trafic."
+        }
+      },
+      "hourly": {
+        "title": "Horizon de la prévision horaire",
+        "description": "Jusqu'où télécharger la prévision horaire, en jours calendaires locaux complets. Un horizon plus court télécharge moins. « Cycle complet » télécharge les ~220 heures (environ 9 jours).",
+        "data": {
+          "hourly_horizon_days": "Horizon de prévision"
+        },
+        "data_description": {
+          "hourly_horizon_days": "Par défaut : le reste d'aujourd'hui plus deux jours complets (environ 7 à 11 Mo par actualisation). « Cycle complet » télécharge chaque heure (environ 30 Mo par actualisation)."
         }
       }
     }

@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-26
+- **Revised:** 2026-08-28 (issue #50) — see [Revision](#revision-2026-08-28-issue-50)
 
 ## Context
 
@@ -18,7 +19,8 @@ forecast points** in Switzerland. Measured on 2026-08-26 (`docs/ogd.md`):
   (issue #34); the daily symbol `jp2000d0` is 1.2 MB;
 - rows are sorted by **time, not by point** — the ~220 rows of one point
   are spread across the whole file, so neither a streaming early exit nor
-  an HTTP Range request can shorten the download;
+  an HTTP Range request can shorten the download (**corrected 2026-08-28:
+  this holds for only 6 of the 16 hourly files; see the Revision below**);
 - `ETag` / `Last-Modified` are served, but the files change every hour.
 
 A weather entity with an hourly forecast needs at least four hourly
@@ -67,3 +69,45 @@ which removes the problem — but not before.
   temperatures or precipitation from them (issue #34). This raised the daily
   refresh from ~2 MB to ~5 MB — still three orders of magnitude below the
   hourly opt-in, so the decision above is unchanged.
+
+## Revision (2026-08-28, issue #50)
+
+The original Context said an HTTP `Range` request "cannot help" because the
+files are sorted by time. Measuring the run `202608280400` at fixed byte
+offsets corrected that premise: **the hourly files come in two layouts.**
+
+| layout | files |
+|---|---|
+| **date-major** (all points per hour, ~150 KB/h) | `tre200h0`, `treq10h0`, `treq90h0`, `nprohihs`, `npromths`, `nprolohs` |
+| **point-major** (one point's ~220 rows contiguous, ~5 KB) | `jww003i0`, `rre150h0`, `rre003i0`, `rp0003i0`, `fu3010h0`, `fu3010h1`, `dkl010h0`, `zprfr0hs`, `gre000h0`, `sre000h0` |
+
+The origin (CloudFront over S3) answers `Range` with 206 and honours
+`If-None-Match` **together with** `Range` (304 when unchanged). So each file
+can be fetched with a strategy matched to its layout:
+
+- **point-major → the point's block only.** A binary search over byte offsets
+  with tiny `Range` probes locates the contiguous block, then one `Range` GET
+  (~5 KB) fetches it. Three of the four minimum-set files become kilobytes.
+- **date-major → a horizon prefix.** The earliest hours of all points sit at
+  the file start, so `Range: bytes=0-<budget>` covers a chosen horizon.
+  `tre200h0` is the only minimum-set file that stays in the megabytes.
+- **The layout is detected at runtime** (offset probes classify the order),
+  never hard-coded; an unrecognised order falls back to the full download and
+  logs a warning. The weekly smoke test asserts the layout of every file.
+
+**New option `hourly_horizon_days`** (options flow, only shown with the hourly
+opt-in): how far ahead the hourly forecast is fetched, in **full local calendar
+days** (Europe/Zurich — the boundary the daily `p`-variants and the app use).
+Default **2** = the rest of today plus two full days (49–72 h). Choices 0–8 plus
+"full run" (all ~220 h). It scales the date-major prefix; point-major files
+always deliver the point's full run (they are cheap) and the entity trims to
+the horizon so the forecast is consistent across files.
+
+**Revised budget** (hourly opt-in, minimum set, default horizon): **~7–11 MB
+per refresh** instead of ~125 MB — roughly **60–90 MB/day** instead of ~1 GB.
+This does **not** change the decisions above: daily stays the default, hourly
+stays opt-in and throttled to at most every 3 h, every request stays
+conditional, and parsing stays in the executor keeping only the point's rows.
+The seam and the announced per-point OGC Features API are unaffected. The
+constants (`hourly_horizon_days`, the Range budget) live in `const.py`; raising
+the traffic still means revisiting this ADR, not just editing a constant.

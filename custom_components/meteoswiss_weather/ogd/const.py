@@ -87,6 +87,34 @@ HOURLY_REQUIRED_PARAMS: tuple[str, ...] = (
     HOURLY_WIND_DIRECTION,
 )
 
+# Per-file HTTP-Range strategy for the hourly bulk files (issue #50, ADR-0002
+# revision). The 30 MB files have two layouts, detected at runtime:
+#   - "date-major": rows sorted by Date, so the earliest hours of every point
+#     sit at the file start and a prefix Range covers the wanted horizon;
+#   - "point-major": one point's ~220 rows are contiguous (~5 KB) and a single
+#     Range request fetches them after a binary search over byte offsets.
+# On anything the classifier does not recognise, fall back to the full file.
+
+# The forecast day boundary the app and the daily p-variants use; the hourly
+# horizon is counted in full local calendar days against it (docs/ogd.md §E4).
+FORECAST_TIMEZONE = "Europe/Zurich"
+
+# "Full run" sentinel for the horizon option: fetch and keep every hour
+# (~220 h, today's behaviour) instead of trimming to a day horizon.
+HOURLY_HORIZON_FULL_RUN = -1
+
+# Date-major prefix budget. A date-major hour block is ~150 KB (all ~5,600
+# points for one hour); size the prefix from the number of hours to the horizon
+# with headroom, and extend it if a probe shows the horizon was not reached.
+HOURLY_BYTES_PER_HOUR = 200_000
+HOURLY_RANGE_SAFETY = 1.5
+
+# A single data row is short (`id;type;YYYYMMDDHHMM;value`); this window is wide
+# enough to always contain a complete row plus its neighbouring boundaries.
+HOURLY_ROW_PROBE_BYTES = 1024
+# Chunk size for reading a point-major block forward until the key changes.
+HOURLY_BLOCK_CHUNK_BYTES = 16_384
+
 
 def station_now_url(abbr: str) -> str:
     """URL of a station's 10-minute ``now`` file (the one to poll)."""

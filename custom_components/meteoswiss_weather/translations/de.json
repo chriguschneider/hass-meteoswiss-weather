@@ -79,7 +79,17 @@
           "hourly_forecast": "Stundenprognose aktivieren"
         },
         "data_description": {
-          "hourly_forecast": "Lädt täglich rund 1,5 GB, wird höchstens alle 3 Stunden aktualisiert. Standardmässig deaktiviert, um das Traffic-Budget einzuhalten."
+          "hourly_forecast": "Die Stundenprognose wird mit HTTP-Range-Anfragen geladen; die Datenmenge hängt vom Horizont ab, den Sie als Nächstes wählen. Wird höchstens alle 3 Stunden aktualisiert. Standardmässig deaktiviert, um das Traffic-Budget einzuhalten."
+        }
+      },
+      "hourly": {
+        "title": "Horizont der Stundenprognose",
+        "description": "Wie weit die Stundenprognose vorausgeladen wird, in vollen lokalen Kalendertagen. Ein kürzerer Horizont lädt weniger. «Voller Lauf» lädt alle ~220 Stunden (rund 9 Tage).",
+        "data": {
+          "hourly_horizon_days": "Prognosehorizont"
+        },
+        "data_description": {
+          "hourly_horizon_days": "Standard: der Rest von heute plus zwei volle Tage (rund 7–11 MB pro Aktualisierung). «Voller Lauf» lädt jede Stunde (rund 30 MB pro Aktualisierung)."
         }
       }
     }

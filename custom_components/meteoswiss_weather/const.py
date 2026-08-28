@@ -20,6 +20,17 @@ CONF_STATION_NAME = "station_name"
 
 # Options-entry keys (ADR-0002: hourly is off by default; ~1 GB/day when on).
 CONF_HOURLY_FORECAST = "hourly_forecast"
+# How far ahead the hourly forecast is fetched, in full local calendar days
+# beyond today (issue #50). Only shown/used when the hourly option is on. The
+# HTTP-Range prefix on the date-major file scales with this, so a smaller
+# horizon means less traffic. ``HOURLY_HORIZON_FULL_RUN`` (-1) fetches all
+# ~220 h. Default 2 = the rest of today plus two full days (49–72 h).
+CONF_HOURLY_HORIZON_DAYS = "hourly_horizon_days"
+HOURLY_HORIZON_FULL_RUN = -1
+DEFAULT_HOURLY_HORIZON_DAYS = 2
+# The choices offered in the options flow: 0–8 days ahead plus the full run.
+HOURLY_HORIZON_CHOICES: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6, 7, 8,
+                                           HOURLY_HORIZON_FULL_RUN)
 
 # Official MeteoSwiss open data (ADR-0001). The STAC catalogue lists the
 # files; the files themselves are plain HTTPS downloads under OGD_FILE_BASE.

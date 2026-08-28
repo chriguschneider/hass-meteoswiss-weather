@@ -79,7 +79,17 @@
           "hourly_forecast": "Abilita previsioni orarie"
         },
         "data_description": {
-          "hourly_forecast": "Scarica circa 1,5 GB al giorno, aggiornato ogni 3 ore al massimo. Disabilitato per impostazione predefinita per rispettare il budget di traffico."
+          "hourly_forecast": "Le previsioni orarie vengono scaricate con richieste HTTP Range; il costo dipende dall'orizzonte scelto nel passaggio successivo. Aggiornate ogni 3 ore al massimo. Disabilitate per impostazione predefinita per rispettare il budget di traffico."
+        }
+      },
+      "hourly": {
+        "title": "Orizzonte delle previsioni orarie",
+        "description": "Quanto in avanti scaricare le previsioni orarie, in giorni di calendario locali interi. Un orizzonte più breve scarica meno. «Ciclo completo» scarica tutte le ~220 ore (circa 9 giorni).",
+        "data": {
+          "hourly_horizon_days": "Orizzonte di previsione"
+        },
+        "data_description": {
+          "hourly_horizon_days": "Predefinito: il resto di oggi più due giorni interi (circa 7–11 MB per aggiornamento). «Ciclo completo» scarica ogni ora (circa 30 MB per aggiornamento)."
         }
       }
     }

@@ -79,7 +79,17 @@
           "hourly_forecast": "Enable hourly forecast"
         },
         "data_description": {
-          "hourly_forecast": "Downloads roughly 1.5 GB per day, refreshed at most every 3 hours. Disabled by default to stay within the fair-use traffic budget."
+          "hourly_forecast": "The hourly forecast is fetched with HTTP Range requests, so the cost depends on the horizon you pick next. Refreshed at most every 3 hours. Disabled by default to stay within the fair-use traffic budget."
+        }
+      },
+      "hourly": {
+        "title": "Hourly forecast horizon",
+        "description": "How far ahead to fetch the hourly forecast, counted in full local calendar days. A shorter horizon downloads less. \"Full run\" fetches all ~220 hours (about 9 days).",
+        "data": {
+          "hourly_horizon_days": "Forecast horizon"
+        },
+        "data_description": {
+          "hourly_horizon_days": "Default: the rest of today plus two full days (about 7–11 MB per refresh). \"Full run\" fetches every hour (about 30 MB per refresh)."
         }
       }
     }
