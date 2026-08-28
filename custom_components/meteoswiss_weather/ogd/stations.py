@@ -25,8 +25,12 @@ from .http import CachedResponse, get_text
 from .models import Observation, OgdParseError, Station
 
 # Header columns of ogd-smn_meta_datainventory.csv the client depends on.
+# The upstream file names the parameter column ``parameter_shortname`` and marks
+# a retired measurement with a non-empty ``data_till`` (verified 2026-08-28:
+# header ``station_abbr;parameter_shortname;meas_cat_nr;data_since;data_till;owner``).
 _INV_ABBR = "station_abbr"
-_INV_PARAM = "parameter"
+_INV_PARAM = "parameter_shortname"
+_INV_TILL = "data_till"
 
 # Header columns of ogd-smn_meta_stations.csv the client depends on.
 _ABBR = "station_abbr"
@@ -124,7 +128,12 @@ async def fetch_datainventory(
     for row in reader:
         abbr = (row.get(_INV_ABBR) or "").strip().upper()
         param = (row.get(_INV_PARAM) or "").strip()
-        if abbr and param:
+        # A non-empty ``data_till`` marks a measurement that has ended; the
+        # station no longer carries that parameter, so exclude it. A parameter
+        # with several rows (different ``meas_cat_nr``) counts as carried if any
+        # row is still open. (issue #46)
+        ended = (row.get(_INV_TILL) or "").strip()
+        if abbr and param and not ended:
             inventory.setdefault(abbr, set()).add(param)
 
     return {abbr: frozenset(params) for abbr, params in inventory.items()}

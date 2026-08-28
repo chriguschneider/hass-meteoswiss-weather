@@ -117,8 +117,8 @@ def _register_mock_ogd(
 # A minimal datainventory that gives BER only its precipitation parameter.
 # Used by mock_ogd_reduced to exercise the sensor-filtering path (issue #46).
 _BER_PRECIPITATION_ONLY_INVENTORY = (
-    b"station_abbr;parameter;measurement_since\n"
-    b"BER;rre150z0;1981-10-01\n"
+    b"station_abbr;parameter_shortname;meas_cat_nr;data_since;data_till;owner\n"
+    b"BER;rre150z0;1;01.02.2004 00:00;;MeteoSchweiz\n"
 )
 
 

@@ -240,6 +240,24 @@ async def test_fetch_datainventory_reduced_station(session) -> None:
     assert inventory["RAG"] == frozenset({"rre150z0"})
 
 
+async def test_fetch_datainventory_excludes_ended_measurements(session) -> None:
+    """A parameter with a non-empty ``data_till`` is no longer carried."""
+    with aioresponses() as mock:
+        mock.get(
+            META_DATAINVENTORY_URL,
+            status=200,
+            body=(
+                b"station_abbr;parameter_shortname;meas_cat_nr;data_since;data_till;owner\n"
+                b"BER;tre200s0;1;01.02.2004 00:00;;MeteoSchweiz\n"
+                b"BER;rre150z0;1;01.02.2004 00:00;01.01.2020 00:00;MeteoSchweiz\n"
+            ),
+        )
+        inventory = await fetch_datainventory(session)
+
+    # rre150z0 has ended (data_till set) and must be excluded; tre200s0 is open.
+    assert inventory["BER"] == frozenset({"tre200s0"})
+
+
 async def test_fetch_datainventory_missing_header_raises_parse_error(session) -> None:
     with aioresponses() as mock:
         mock.get(META_DATAINVENTORY_URL, status=200, body=b"bad;header\n1;2\n")
@@ -253,7 +271,10 @@ async def test_fetch_datainventory_station_not_in_inventory_absent(session) -> N
         mock.get(
             META_DATAINVENTORY_URL,
             status=200,
-            body=b"station_abbr;parameter;measurement_since\nBER;tre200s0;1981-10-01\n",
+            body=(
+                b"station_abbr;parameter_shortname;meas_cat_nr;data_since;data_till;owner\n"
+                b"BER;tre200s0;1;01.02.2004 00:00;;MeteoSchweiz\n"
+            ),
         )
         inventory = await fetch_datainventory(session)
 

@@ -1,13 +1,13 @@
-station_abbr;parameter;measurement_since
-BER;tre200s0;1981-10-01
-BER;ure200s0;1981-10-01
-BER;tde200s0;2007-01-01
-BER;pp0qffs0;1981-10-01
-BER;prestas0;1981-10-01
-BER;fu3010z0;1981-10-01
-BER;dkl010z0;1981-10-01
-BER;fu3010z1;1981-10-01
-BER;rre150z0;1981-10-01
-BER;sre000z0;1981-10-01
-BER;gre000z0;1981-10-01
-RAG;rre150z0;1990-01-01
+station_abbr;parameter_shortname;meas_cat_nr;data_since;data_till;owner
+BER;tre200s0;1;01.02.2004 00:00;;MeteoSchweiz
+BER;ure200s0;1;01.02.2004 00:00;;MeteoSchweiz
+BER;tde200s0;1;01.02.2004 00:00;;MeteoSchweiz
+BER;pp0qffs0;1;01.02.2004 00:00;;MeteoSchweiz
+BER;prestas0;1;01.02.2004 00:00;;MeteoSchweiz
+BER;fu3010z0;1;01.02.2004 00:00;;MeteoSchweiz
+BER;dkl010z0;1;01.02.2004 00:00;;MeteoSchweiz
+BER;fu3010z1;1;01.02.2004 00:00;;MeteoSchweiz
+BER;rre150z0;1;01.02.2004 00:00;;MeteoSchweiz
+BER;sre000z0;1;01.02.2004 00:00;;MeteoSchweiz
+BER;gre000z0;1;01.02.2004 00:00;;MeteoSchweiz
+RAG;rre150z0;1;01.01.1990 00:00;;MeteoSchweiz
