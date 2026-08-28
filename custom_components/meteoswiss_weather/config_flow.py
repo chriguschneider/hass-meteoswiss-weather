@@ -654,7 +654,10 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
             except OgdError:
                 errors["base"] = "cannot_connect"
 
-        if user_input is not None and not errors:
+        # Only treat this as a real submission when the station field is
+        # present: a transient fetch error shows an empty form (no fields), and
+        # resubmitting it must retry the fetch, not read a missing key.
+        if user_input is not None and CONF_POLLEN_STATION in user_input and not errors:
             pollen_abbr = str(user_input[CONF_POLLEN_STATION])
             return self.async_create_entry(
                 data={
