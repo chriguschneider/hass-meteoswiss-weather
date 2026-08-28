@@ -38,7 +38,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -55,7 +55,11 @@ from .const import (
     DEFAULT_HOURLY_HORIZON_DAYS,
     DOMAIN,
     FORECAST_CHECK_INTERVAL,
-    HOURLY_FORECAST_MIN_INTERVAL,
+    HOURLY_FAR_MAX_AGE,
+    HOURLY_FAR_RUN_HOURS,
+    HOURLY_NEAR_HORIZON_DAYS,
+    HOURLY_NEAR_MAX_AGE,
+    HOURLY_NEAR_RUN_HOURS,
     POLLEN_UPDATE_INTERVAL,
     STATION_UPDATE_INTERVAL,
 )
@@ -73,7 +77,12 @@ from .ogd import (
     fetch_pollen_current,
     latest_run,
 )
-from .ogd.const import COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS
+from .ogd.const import (
+    COLLECTION_FORECAST,
+    DAILY_REQUIRED_PARAMS,
+    HOURLY_DATE_MAJOR_PARAMS,
+    HOURLY_POINT_MAJOR_PARAMS,
+)
 
 # Issue IDs used in the HA repair-issue registry.
 _ISSUE_STATION_PARSE = "parse_error_station"
@@ -94,6 +103,30 @@ class ForecastData:
     daily: list[DailyForecast]
 
 
+def _tier_due(
+    *,
+    run: datetime,
+    landing_hours: frozenset[int],
+    max_age: timedelta,
+    last_run: datetime | None,
+    last_fetch: datetime | None,
+    now: datetime,
+) -> bool:
+    """Whether a tier is due to refresh (ADR-0002 revision 2, issue #68).
+
+    A pure decision so it can be exhaustively unit-tested without a fetch. A
+    tier is due when it has never been fetched, when its cached data is older
+    than the tier's staleness fallback (``max_age``), or when a **new** run has
+    landed and that run's UTC hour is one of the tier's model-cycle hours. A
+    non-landing run, or an unchanged run within the fallback, is not due.
+    """
+    if last_fetch is None or last_run is None:
+        return True
+    if now - last_fetch >= max_age:
+        return True
+    return run != last_run and run.hour in landing_hours
+
+
 class HourlyForecastProvider:
     """Lazily fetches and caches the bulk hourly forecast (ADR-0002 revision 2).
 
@@ -103,12 +136,21 @@ class HourlyForecastProvider:
     Home Assistant calls while a card or automation subscribes or on a
     ``weather.get_forecasts`` service call. No caller means no download.
 
-    The result is cached and keyed by the forecast run stamp: a fetch happens
-    only when the run changed *and* the cached data is older than
-    :data:`HOURLY_FORECAST_MIN_INTERVAL` (the staleness floor B14a keeps; B14b
-    replaces it with the measured model tiers). A :class:`asyncio.Lock`
-    serialises concurrent callers so a card and a service call arriving together
-    still download the set once.
+    The set is fetched in three independently scheduled groups tied to the
+    measured model run rhythm (docs/ogd.md, "Change rhythm across runs";
+    issue #68), instead of the flat 3 h floor B14a used:
+
+    - the **near tier** — the date-major temperature prefix up to the end of
+      tomorrow — refreshes at the ICON-CH1 landing hours or after 3 h;
+    - the **far tier** — the temperature out to the configured horizon —
+      refreshes at the ICON-CH2 landing hours or after 6 h; a far fetch spans
+      the near window too, so it doubles as a near refresh;
+    - the **point-major group** (precipitation, symbol, wind, gust, direction)
+      refreshes with every new run — each file's point block is ~5 KB.
+
+    The three groups are merged by hour into one forecast, cached until the next
+    tier is due. A :class:`asyncio.Lock` serialises concurrent callers so a card
+    and a service call arriving together still download the set once.
 
     Errors never propagate out of the forecast method: a structural
     :class:`~ogd.OgdParseError` posts the shared forecast repair issue and a
@@ -131,10 +173,19 @@ class HourlyForecastProvider:
         self._enabled = enabled
         self._horizon_days = horizon_days
         self._lock = asyncio.Lock()
-        # Cached forecast, the run it came from, and when it was downloaded.
+        # The merged forecast last built from the three groups below.
         self._hourly: list[HourlyForecast] | None = None
-        self._cached_run: datetime | None = None
-        self._last_fetch: datetime | None = None
+        # Temperature by hour from the date-major near/far fetches, and the
+        # point-major fields (precip, symbol, wind, gust, bearing) by hour.
+        self._temp: dict[datetime, float | None] = {}
+        self._point_major: dict[datetime, HourlyForecast] = {}
+        # Per-group bookkeeping: the run each was last fetched at and when.
+        self._near_run: datetime | None = None
+        self._near_fetch: datetime | None = None
+        self._far_run: datetime | None = None
+        self._far_fetch: datetime | None = None
+        self._point_major_run: datetime | None = None
+        self._point_major_fetch: datetime | None = None
 
     @property
     def enabled(self) -> bool:
@@ -143,8 +194,13 @@ class HourlyForecastProvider:
 
     @property
     def last_fetch(self) -> datetime | None:
-        """When the last hourly download completed; exposed for diagnostics."""
-        return self._last_fetch
+        """When the most recent tier download completed; for diagnostics."""
+        stamps = [
+            stamp
+            for stamp in (self._near_fetch, self._far_fetch, self._point_major_fetch)
+            if stamp is not None
+        ]
+        return max(stamps) if stamps else None
 
     @property
     def cached_hourly(self) -> list[HourlyForecast] | None:
@@ -156,34 +212,27 @@ class HourlyForecastProvider:
         """
         return self._hourly
 
-    def _is_stale(self) -> bool:
-        """Whether the cached hourly data is older than the staleness floor."""
-        if self._last_fetch is None:
-            return True
-        return dt_util.utcnow() - self._last_fetch >= HOURLY_FORECAST_MIN_INTERVAL
-
     async def async_get_hourly(
         self, run: datetime | None
     ) -> list[HourlyForecast] | None:
-        """Return the hourly forecast for ``run``, fetching only if needed.
+        """Return the hourly forecast for ``run``, fetching only if due.
 
-        ``run`` is the newest run stamp the coordinator tracked. A fetch happens
-        only when it differs from the cached run and the cache is stale; an
-        unchanged run or a fetch within the floor serves the cache untouched.
+        ``run`` is the newest run stamp the coordinator tracked. Each tier is
+        refreshed only when :func:`_tier_due` says so; a run that no tier is due
+        for serves the cache untouched.
         """
         if not self._enabled or run is None:
             return None
         async with self._lock:
-            if run != self._cached_run and self._is_stale():
-                await self._fetch(run)
+            await self._refresh(run)
             return self._hourly
 
-    async def _fetch(self, run: datetime) -> None:
-        """Download and cache the hourly set; swallow errors keeping last-good."""
+    async def _refresh(self, run: datetime) -> None:
+        """Refresh whichever tiers are due for ``run``; keep last-good on error."""
+        now = dt_util.utcnow()
         try:
-            hourly = await self._backend.fetch_hourly(
-                self._point, horizon_days=self._horizon_days
-            )
+            changed = await self._refresh_temperature(run, now)
+            changed = await self._refresh_point_major(run, now) or changed
         except OgdParseError as err:
             async_create_issue(
                 self._hass,
@@ -200,14 +249,88 @@ class HourlyForecastProvider:
             return
 
         async_delete_issue(self._hass, DOMAIN, _ISSUE_FORECAST_PARSE)
-        self._hourly = hourly
-        self._cached_run = run
-        self._last_fetch = dt_util.utcnow()
-        _LOGGER.debug(
-            "hourly forecast fetched for run %s (%d hours cached)",
-            run.isoformat(),
-            len(hourly),
+        if changed:
+            self._hourly = self._merge()
+
+    async def _refresh_temperature(self, run: datetime, now: datetime) -> bool:
+        """Refresh the date-major temperature via the far then near tiers.
+
+        The far tier spans the near window, so a due far fetch supersedes and
+        also satisfies the near tier; only when far is not due but near is does
+        the cheaper near prefix run.
+        """
+        if _tier_due(
+            run=run,
+            landing_hours=HOURLY_FAR_RUN_HOURS,
+            max_age=HOURLY_FAR_MAX_AGE,
+            last_run=self._far_run,
+            last_fetch=self._far_fetch,
+            now=now,
+        ):
+            far = await self._backend.fetch_hourly(
+                self._point,
+                horizon_days=self._horizon_days,
+                params=HOURLY_DATE_MAJOR_PARAMS,
+            )
+            self._temp = {hour.time: hour.temperature for hour in far}
+            self._far_run = self._near_run = run
+            self._far_fetch = self._near_fetch = now
+            return True
+
+        if _tier_due(
+            run=run,
+            landing_hours=HOURLY_NEAR_RUN_HOURS,
+            max_age=HOURLY_NEAR_MAX_AGE,
+            last_run=self._near_run,
+            last_fetch=self._near_fetch,
+            now=now,
+        ):
+            near = await self._backend.fetch_hourly(
+                self._point,
+                horizon_days=HOURLY_NEAR_HORIZON_DAYS,
+                params=HOURLY_DATE_MAJOR_PARAMS,
+            )
+            # Overwrite only the near-window hours; keep the far-window
+            # temperatures from the last far fetch (that tier refreshes slower).
+            for hour in near:
+                self._temp[hour.time] = hour.temperature
+            self._near_run = run
+            self._near_fetch = now
+            return True
+
+        return False
+
+    async def _refresh_point_major(self, run: datetime, now: datetime) -> bool:
+        """Refresh the point-major group whenever a new run has landed."""
+        if run == self._point_major_run:
+            return False
+        point_major = await self._backend.fetch_hourly(
+            self._point,
+            horizon_days=self._horizon_days,
+            params=HOURLY_POINT_MAJOR_PARAMS,
         )
+        self._point_major = {hour.time: hour for hour in point_major}
+        self._point_major_run = run
+        self._point_major_fetch = now
+        return True
+
+    def _merge(self) -> list[HourlyForecast]:
+        """Combine the temperature and point-major groups by hour, sorted."""
+        result: list[HourlyForecast] = []
+        for when in sorted(set(self._temp) | set(self._point_major)):
+            block = self._point_major.get(when)
+            result.append(
+                HourlyForecast(
+                    time=when,
+                    temperature=self._temp.get(when),
+                    precipitation=block.precipitation if block else None,
+                    symbol=block.symbol if block else None,
+                    wind_speed_kmh=block.wind_speed_kmh if block else None,
+                    gust_kmh=block.gust_kmh if block else None,
+                    wind_bearing=block.wind_bearing if block else None,
+                )
+            )
+        return result
 
 
 class StationCoordinator(DataUpdateCoordinator[Observation]):

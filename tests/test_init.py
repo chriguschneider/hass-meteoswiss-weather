@@ -25,7 +25,7 @@ from custom_components.meteoswiss_weather.const import (
     CONF_STATION_ABBR,
     CONF_STATION_NAME,
     DOMAIN,
-    HOURLY_FORECAST_MIN_INTERVAL,
+    HOURLY_FAR_MAX_AGE,
 )
 from custom_components.meteoswiss_weather.ogd.const import (
     DAILY_REQUIRED_PARAMS,
@@ -266,25 +266,30 @@ async def test_hourly_is_lazy_not_fetched_at_setup(
         assert _hourly_calls(mock_ogd) == 0
 
 
-async def test_hourly_provider_fetches_once_and_caches(
+def _tre_calls(aioclient_mock: AiohttpClientMocker) -> int:
+    """Downloads of the date-major temperature file (near/far tier, issue #68)."""
+    suffix = f"{_RUN_TS}.tre200h0.csv"
+    return sum(
+        1
+        for _method, url, *_ in aioclient_mock.mock_calls
+        if url.path.endswith(suffix)
+    )
+
+
+async def test_hourly_provider_tiers_fetch_and_cache(
     hass: HomeAssistant,
     hourly_config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """One request fetches the set once; a second within the floor hits cache.
+    """The near/far tiers refresh on their schedule; the cache serves the rest.
 
-    A run change past the 3 h floor (the staleness rule B14a keeps) fetches
-    again. The provider is driven directly here, standing in for the
-    ``weather.get_forecasts`` call that reaches it in production.
+    Drives the provider directly (standing in for the ``weather.get_forecasts``
+    call that reaches it in production) and asserts the date-major temperature
+    file is refetched only when a tier is genuinely due (issue #68, ADR-0002
+    revision 2). The point-major group refreshes with every new run.
     """
     start = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
-    run = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
-    # Wind files (fu3010h0/fu3010h1/dkl010h0) are now fetched on every daily
-    # refresh (issue #60). With the fixture's date-major layout the guardrail
-    # fires, so fetch_hourly() falls back to fetching all HOURLY_REQUIRED_PARAMS.
-    # _hourly_calls() excludes wind files (counted by _wind_calls()); only the
-    # three non-wind params (tre200h0, rre150h0, jww003i0) appear in the count.
-    n_params = len(_HOURLY_ONLY_PARAMS)
+    run = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)  # hour 2: a near landing hour
 
     with freeze_time(start) as frozen:
         hourly_config_entry.add_to_hass(hass)
@@ -293,28 +298,31 @@ async def test_hourly_provider_fetches_once_and_caches(
 
         provider = hourly_config_entry.runtime_data.forecast_coordinator.hourly_provider
 
-        # First request downloads the full hourly set exactly once.
+        # First request: the far tier is stale (never fetched) so it downloads
+        # the temperature file once, and the point-major group fetches too.
         hourly = await provider.async_get_hourly(run)
         assert hourly is not None
         assert len(hourly) == 24
-        assert _hourly_calls(mock_ogd) == n_params
+        assert _tre_calls(mock_ogd) == 1
 
-        # A second request one hour later on the same run hits the cache.
+        # A second request an hour later on the same run hits the cache entirely.
         frozen.move_to(start + timedelta(hours=1))
         hourly = await provider.async_get_hourly(run)
         assert len(hourly) == 24
-        assert _hourly_calls(mock_ogd) == n_params
+        assert _tre_calls(mock_ogd) == 1
 
-        # A new run within the floor is still throttled: the cache is served.
-        newer_run = run + timedelta(hours=3)
-        hourly = await provider.async_get_hourly(newer_run)
-        assert _hourly_calls(mock_ogd) == n_params
+        # A new run at a non-landing hour (03 UTC), still inside both fallbacks:
+        # no tier is due, so the temperature file is not refetched.
+        non_landing = datetime(2026, 8, 27, 3, 0, tzinfo=UTC)
+        frozen.move_to(start + timedelta(hours=1, minutes=5))
+        await provider.async_get_hourly(non_landing)
+        assert _tre_calls(mock_ogd) == 1
 
-        # A new run past the floor fetches the set again.
-        frozen.move_to(start + HOURLY_FORECAST_MIN_INTERVAL + timedelta(seconds=1))
-        hourly = await provider.async_get_hourly(newer_run)
+        # Past the far fallback (6 h): the far tier goes stale and refetches.
+        frozen.move_to(start + HOURLY_FAR_MAX_AGE + timedelta(seconds=1))
+        hourly = await provider.async_get_hourly(non_landing)
         assert len(hourly) == 24
-        assert _hourly_calls(mock_ogd) == 2 * n_params
+        assert _tre_calls(mock_ogd) == 2
 
 
 async def test_run_change_fetches_hourly_only_with_subscriber(
