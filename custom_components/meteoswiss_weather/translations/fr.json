@@ -61,6 +61,23 @@
         "data": {
           "station_abbr": "Station météorologique"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigurer MeteoSwiss Weather",
+        "description": "Modifiez le point de prévision et la station météorologique sans supprimer l'entrée. Le code postal actuel est prérempli.",
+        "data": {
+          "postal_code": "Code postal"
+        },
+        "data_description": {
+          "postal_code": "Code postal suisse (NPA) du lieu à prévoir."
+        }
+      },
+      "history": {
+        "title": "Station météorologique modifiée",
+        "description": "Vous avez changé la station météorologique de {old_station} à {new_station}. Choisissez ce qu'il advient de l'historique enregistré jusqu'ici. Le remplissage rétroactif ne concerne que les statistiques à long terme, pas les états bruts à court terme.",
+        "data": {
+          "history_action": "Historique enregistré"
+        }
       }
     },
     "error": {
@@ -68,7 +85,17 @@
       "unknown_postal_code": "Aucun point de prévision trouvé pour ce code postal. Vérifiez le code et réessayez."
     },
     "abort": {
-      "already_configured": "Ce point de prévision est déjà configuré."
+      "already_configured": "Ce point de prévision est déjà configuré.",
+      "reconfigure_successful": "L'entrée MeteoSwiss Weather a été mise à jour."
+    }
+  },
+  "selector": {
+    "history_action": {
+      "options": {
+        "keep": "Conserver : les valeurs enregistrées jusqu'ici proviennent de la station précédente ; le changement est journalisé",
+        "discard": "Supprimer : purger les états des capteurs de la station et effacer leurs statistiques à long terme pour repartir à zéro",
+        "backfill": "Remplissage rétroactif : réécrire les statistiques à long terme à partir de l'historique officiel de la nouvelle station"
+      }
     }
   },
   "options": {

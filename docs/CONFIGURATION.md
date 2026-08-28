@@ -156,7 +156,7 @@ The integration uses the haversine formula to calculate distances from your fore
 
 The forecast point is determined by your postal code. If your postal code has multiple forecast points, you choose one during setup; otherwise the setup flow skips to station selection.
 
-**Note:** Not every station measures every parameter. If your chosen station does not measure a parameter (e.g., some precipitation-only sites lack pressure), that sensor will show as unknown. To pick a station with more complete measurements, delete the config entry and re-add it, choosing a different station in the setup flow (see below).
+**Note:** Not every station measures every parameter. If your chosen station does not measure a parameter (e.g., some precipitation-only sites lack pressure), that sensor will show as unknown. To pick a station with more complete measurements, use **Reconfigure** on the integration entry and choose a different station (see [Can I change the station after setup?](#can-i-change-the-station-after-setup) below).
 
 ### What does the weather condition mean?
 
@@ -166,7 +166,15 @@ The daily forecast uses the daytime symbol variant for consistency. The hourly c
 
 ### Can I change the station after setup?
 
-No, not yet. The integration currently uses the station you chose during setup. If you want to switch stations, you'll need to delete the config entry and re-add it with a different choice. This is tracked as a future improvement.
+Yes. Open **Settings → Devices & Services → MeteoSwiss Weather**, then the entry's three-dot menu → **Reconfigure**. The flow re-offers the postal code, forecast point and weather station with your current choices pre-selected, and updates the entry in place — the same entities and their history are kept, and no automations break.
+
+When you change the **weather station** (but not when you only change the forecast point), the flow asks what to do with the history recorded so far, because those values came from the previous station:
+
+- **Keep** (default): the entities and their history stay as they are. The values recorded before the switch came from the old station; a logbook entry records the moment of the switch so the seam is findable later.
+- **Discard**: the station sensors' recorded states are purged and their long-term statistics are cleared — a clean start at the new station.
+- **Backfill** *(when available)*: the long-term statistics are cleared and then rewritten from the new station's official historical files. Backfill affects **long-term statistics only**, not the raw short-term states. This choice appears once the statistics-import machinery ([ADR-0007](adr/0007-station-history-backfill.md)) ships; keep and discard are available now.
+
+Changing only the **forecast point** never touches history — forecast entities carry no meaningful measurement history.
 
 ### How often does the data update?
 

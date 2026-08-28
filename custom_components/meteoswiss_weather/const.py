@@ -18,6 +18,21 @@ CONF_POINT_NAME = "point_name"
 CONF_STATION_ABBR = "station_abbr"
 CONF_STATION_NAME = "station_name"
 
+# Reconfigure flow (A9, #52): what to do with the recorded station history when
+# the station changes. ``keep`` leaves values and statistics untouched and logs
+# the switch; ``discard`` purges the station sensors' states and clears their
+# long-term statistics; ``backfill`` rewrites the statistics from the new
+# station's official history (ADR-0007) — gated behind ``BACKFILL_AVAILABLE``.
+CONF_HISTORY_ACTION = "history_action"
+HISTORY_KEEP = "keep"
+HISTORY_DISCARD = "discard"
+HISTORY_BACKFILL = "backfill"
+# The backfill choice needs the recorder-import layer that follows ADR-0007's
+# parser (issue #51 shipped the parser only; the import layer is its follow-up).
+# Keep/discard ship now; flip this to ``True`` when the import layer lands so the
+# backfill option lights up in the reconfigure flow — no other flow change needed.
+BACKFILL_AVAILABLE = False
+
 # Options-entry keys (ADR-0002: hourly is off by default; ~1 GB/day when on).
 CONF_HOURLY_FORECAST = "hourly_forecast"
 # How far ahead the hourly forecast is fetched, in full local calendar days

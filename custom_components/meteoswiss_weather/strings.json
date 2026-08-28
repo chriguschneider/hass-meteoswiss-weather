@@ -61,6 +61,23 @@
         "data": {
           "station_abbr": "Weather station"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure MeteoSwiss Weather",
+        "description": "Change the forecast point and weather station without deleting the entry. The current postal code is pre-filled.",
+        "data": {
+          "postal_code": "Postal code"
+        },
+        "data_description": {
+          "postal_code": "Swiss postal code (PLZ) of the place to forecast."
+        }
+      },
+      "history": {
+        "title": "Weather station changed",
+        "description": "You changed the weather station from {old_station} to {new_station}. Choose what to do with the history recorded so far. Backfill affects long-term statistics only, not the raw short-term states.",
+        "data": {
+          "history_action": "Recorded history"
+        }
       }
     },
     "error": {
@@ -68,7 +85,17 @@
       "unknown_postal_code": "No forecast point found for this postal code. Check the code and try again."
     },
     "abort": {
-      "already_configured": "This forecast point is already configured."
+      "already_configured": "This forecast point is already configured.",
+      "reconfigure_successful": "The MeteoSwiss Weather entry was updated."
+    }
+  },
+  "selector": {
+    "history_action": {
+      "options": {
+        "keep": "Keep the recorded history (values so far came from the previous station; the switch is logged)",
+        "discard": "Discard: purge the station sensors' states and clear their long-term statistics for a clean start",
+        "backfill": "Backfill: rewrite the long-term statistics from the new station's official history"
+      }
     }
   },
   "options": {
