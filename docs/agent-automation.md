@@ -44,6 +44,12 @@ issues also carry an explicit `agent:*` label to pick the model on merit.
 - The prompts tell the agent to stay on the official open data (ADR-0001)
   and inside the traffic budget (ADR-0002), and to stop rather than guess.
 - Ambiguous issue → draft with a "Blocked / needs decision" note.
+- Implementation runs (autopilot and label flow) are capped at **150
+  turns**. A run that hits the cap leaves nothing behind — no branch, no
+  PR, no comment — and the autopilot retries the same issue every 30
+  minutes. So the cap is not a budget to fill: an issue that needs
+  upstream measurement, an ADR and code is three issues (measure and
+  decide by hand, then implementation slices), not one.
 
 ## Automated review + auto-merge
 
