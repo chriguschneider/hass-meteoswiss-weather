@@ -15,6 +15,7 @@ import aiohttp
 
 from .const import (
     CSV_SEPARATOR,
+    META_DATAINVENTORY_URL,
     META_STATIONS_URL,
     STATION_ENCODING,
     station_now_url,
@@ -22,6 +23,14 @@ from .const import (
 from .geo import haversine_km
 from .http import CachedResponse, get_text
 from .models import Observation, OgdParseError, Station
+
+# Header columns of ogd-smn_meta_datainventory.csv the client depends on.
+# The upstream file names the parameter column ``parameter_shortname`` and marks
+# a retired measurement with a non-empty ``data_till`` (verified 2026-08-28:
+# header ``station_abbr;parameter_shortname;meas_cat_nr;data_since;data_till;owner``).
+_INV_ABBR = "station_abbr"
+_INV_PARAM = "parameter_shortname"
+_INV_TILL = "data_till"
 
 # Header columns of ogd-smn_meta_stations.csv the client depends on.
 _ABBR = "station_abbr"
@@ -92,6 +101,42 @@ async def fetch_stations(session: aiohttp.ClientSession) -> list[Station]:
     if not stations:
         raise OgdParseError("station metadata contained no usable stations")
     return stations
+
+
+async def fetch_datainventory(
+    session: aiohttp.ClientSession,
+) -> dict[str, frozenset[str]]:
+    """Fetch and parse the data inventory.
+
+    Returns a mapping ``STATION_ABBR → frozenset[parameter_code]`` for every
+    station that appears in the file. A station absent from the inventory is not
+    in the returned dict; callers should treat that as "unknown" and fall back to
+    the full sensor set.
+    """
+    response = await get_text(
+        session, META_DATAINVENTORY_URL, encoding=STATION_ENCODING
+    )
+    reader = _reader(response.body)
+    if (
+        reader.fieldnames is None
+        or _INV_ABBR not in reader.fieldnames
+        or _INV_PARAM not in reader.fieldnames
+    ):
+        raise OgdParseError("data inventory is missing its header")
+
+    inventory: dict[str, set[str]] = {}
+    for row in reader:
+        abbr = (row.get(_INV_ABBR) or "").strip().upper()
+        param = (row.get(_INV_PARAM) or "").strip()
+        # A non-empty ``data_till`` marks a measurement that has ended; the
+        # station no longer carries that parameter, so exclude it. A parameter
+        # with several rows (different ``meas_cat_nr``) counts as carried if any
+        # row is still open. (issue #46)
+        ended = (row.get(_INV_TILL) or "").strip()
+        if abbr and param and not ended:
+            inventory.setdefault(abbr, set()).add(param)
+
+    return {abbr: frozenset(params) for abbr, params in inventory.items()}
 
 
 def nearest_stations(

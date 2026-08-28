@@ -26,7 +26,13 @@ from .const import (
     CONF_STATION_ABBR,
 )
 from .coordinator import ForecastCoordinator, StationCoordinator
-from .ogd import BulkCsvBackend, ForecastBackend, ForecastPoint
+from .ogd import (
+    BulkCsvBackend,
+    ForecastBackend,
+    ForecastPoint,
+    OgdError,
+    fetch_datainventory,
+)
 
 # Seam for tests: replace with a FakeBackend to run without network I/O.
 # A future OGC Features backend (announced by MeteoSwiss for end-2026) will
@@ -45,6 +51,10 @@ class MeteoSwissRuntimeData:
     point: ForecastPoint
     station_abbr: str
     backend: ForecastBackend
+    # Parameter codes the chosen station actually measures, from the data
+    # inventory (issue #46). ``None`` means the inventory was unavailable;
+    # sensor.py falls back to creating all sensors in that case.
+    station_parameters: frozenset[str] | None
 
 
 type MeteoSwissConfigEntry = ConfigEntry[MeteoSwissRuntimeData]
@@ -89,12 +99,22 @@ async def async_setup_entry(
     await station_coordinator.async_config_entry_first_refresh()
     await forecast_coordinator.async_config_entry_first_refresh()
 
+    # Fetch the data inventory to know which parameters the station measures.
+    # Non-fatal: if unavailable, sensor.py creates all sensors as a safe fallback.
+    station_parameters: frozenset[str] | None = None
+    try:
+        inventory = await fetch_datainventory(session)
+        station_parameters = inventory.get(station_abbr.upper())
+    except OgdError:
+        pass
+
     entry.runtime_data = MeteoSwissRuntimeData(
         station_coordinator=station_coordinator,
         forecast_coordinator=forecast_coordinator,
         point=point,
         station_abbr=station_abbr,
         backend=backend,
+        station_parameters=station_parameters,
     )
 
     # An options change (the hourly-forecast toggle) reloads the entry so the

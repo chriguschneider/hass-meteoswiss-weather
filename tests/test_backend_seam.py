@@ -45,6 +45,7 @@ from custom_components.meteoswiss_weather.ogd.const import (
     COLLECTION_FORECAST,
     DAILY_REQUIRED_PARAMS,
     HOURLY_REQUIRED_PARAMS,
+    META_DATAINVENTORY_URL,
     stac_items_url,
     station_now_url,
 )
@@ -159,7 +160,7 @@ def hourly_config_entry() -> MockConfigEntry:
 
 @pytest.fixture
 def mock_station_and_stac(aioclient_mock: AiohttpClientMocker) -> AiohttpClientMocker:
-    """Minimal mock: only the station observation and the STAC run-stamp.
+    """Minimal mock: only the station observation, data inventory, and STAC run-stamp.
 
     Forecast CSV file URLs are intentionally *not* registered here. If the
     coordinator tried to call BulkCsvBackend.fetch_daily it would hit an
@@ -169,6 +170,10 @@ def mock_station_and_stac(aioclient_mock: AiohttpClientMocker) -> AiohttpClientM
     aioclient_mock.get(
         station_now_url(_STATION_ABBR),
         content=(_FIXTURES / "ogd-smn_ber_t_now.csv").read_bytes(),
+    )
+    aioclient_mock.get(
+        META_DATAINVENTORY_URL,
+        content=(_FIXTURES / "ogd-smn_meta_datainventory.csv").read_bytes(),
     )
     aioclient_mock.get(
         stac_items_url(COLLECTION_FORECAST),
