@@ -328,6 +328,11 @@ class HourlyForecastProvider:
                     wind_speed_kmh=block.wind_speed_kmh if block else None,
                     gust_kmh=block.gust_kmh if block else None,
                     wind_bearing=block.wind_bearing if block else None,
+                    precipitation_probability=(
+                        block.precipitation_probability if block else None
+                    ),
+                    zero_degree_level=block.zero_degree_level if block else None,
+                    radiation=block.radiation if block else None,
                 )
             )
         return result

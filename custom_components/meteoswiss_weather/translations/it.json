@@ -38,6 +38,7 @@
       "temp_max_today": { "name": "Temperatura massima oggi" },
       "temp_min_today": { "name": "Temperatura minima oggi" },
       "precipitation_today": { "name": "Precipitazioni oggi" },
+      "zero_degree_level": { "name": "Limite dello zero gradi" },
       "pollen_grasses": { "name": "Pollini di graminacee" },
       "pollen_birch": { "name": "Pollini di betulla" },
       "pollen_alder": { "name": "Pollini di ontano" },

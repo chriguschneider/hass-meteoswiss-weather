@@ -139,7 +139,9 @@ class HourlyForecast:
     field is optional: a parameter file that omitted the hour, or left the
     cell empty, yields ``None`` rather than an invented value. The fields
     mirror the opt-in hourly parameter set (ADR-0002): temperature,
-    precipitation, symbol, wind speed, gust and bearing.
+    precipitation, symbol, wind speed, gust and bearing, plus the B7/B8/B10
+    additions (issue #55): precipitation probability, zero-degree level and
+    global radiation.
     """
 
     time: datetime
@@ -149,6 +151,12 @@ class HourlyForecast:
     wind_speed_kmh: float | None = None
     gust_kmh: float | None = None
     wind_bearing: float | None = None
+    # B7: 3-hour precipitation probability (rolling window ending at ``time``).
+    precipitation_probability: float | None = None
+    # B8: zero-degree level (m), snow-line material.
+    zero_degree_level: float | None = None
+    # B10: global radiation (W/m²).
+    radiation: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

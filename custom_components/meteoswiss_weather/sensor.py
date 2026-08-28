@@ -42,7 +42,7 @@ from homeassistant.util import dt as dt_util
 from . import MeteoSwissConfigEntry
 from .const import ATTRIBUTION, DOMAIN
 from .coordinator import ForecastCoordinator, PollenCoordinator, StationCoordinator
-from .ogd import DailyForecast, Observation, PollenObservation
+from .ogd import DailyForecast, HourlyForecast, Observation, PollenObservation
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,6 +321,19 @@ _FORECAST_SENSORS: tuple[ForecastSensorDescription, ...] = (
     ),
 )
 
+# B8 — zero-degree level sensor (issue #55): the current hour's zero-degree
+# level from the hourly forecast cache. Requires hourly opt-in; shows
+# ``unknown`` when hourly data has not yet been fetched.
+_ZERO_DEGREE_DESCRIPTION = SensorEntityDescription(
+    key="zero_degree_level",
+    translation_key="zero_degree_level",
+    native_unit_of_measurement=UnitOfLength.METERS,
+    state_class=SensorStateClass.MEASUREMENT,
+    suggested_display_precision=0,
+    icon="mdi:snowflake-thermometer",
+    entity_registry_enabled_default=False,
+)
+
 
 # Pollen sensors (ADR-0005): one per taxon the station measures. Taxon codes
 # match the column names in the upstream ``_h_now.csv`` file header. Grasses
@@ -448,6 +461,7 @@ async def async_setup_entry(
         valid_unique_ids = (
             {f"{device_unique_id}_{desc.key}" for desc in supported}
             | {f"{device_unique_id}_{desc.key}" for desc in _FORECAST_SENSORS}
+            | {f"{device_unique_id}_{_ZERO_DEGREE_DESCRIPTION.key}"}
             | {f"{device_unique_id}_{desc.key}" for desc in _POLLEN_SENSORS}
         )
         sensor_uid_prefix = f"{device_unique_id}_"
@@ -473,6 +487,12 @@ async def async_setup_entry(
         )
         for description in _FORECAST_SENSORS
     )
+    async_add_entities([
+        ZeroDegreeSensor(
+            runtime.forecast_coordinator, _ZERO_DEGREE_DESCRIPTION,
+            device_unique_id, device_info,
+        )
+    ])
     if supported_pollen:
         async_add_entities(
             PollenSensor(
@@ -607,3 +627,43 @@ class PollenSensor(CoordinatorEntity[PollenCoordinator], SensorEntity):
         if obs is None:
             return None
         return obs.values.get(self._taxon_code)
+
+
+class ZeroDegreeSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
+    """Current hour's zero-degree level from the hourly forecast cache (B8, issue #55).
+
+    Requires the hourly opt-in: shows ``unknown`` (``None``) until the first
+    hourly fetch completes. Once populated the value is the zero-degree level
+    (m) for the current UTC hour from the ``zprfr0hs`` point-major block.
+    Updates when the forecast coordinator fires (every hour), at which point
+    the hourly provider may have refreshed the cache from a new run.
+    """
+
+    _attr_has_entity_name = True
+    _attr_attribution = ATTRIBUTION
+
+    def __init__(
+        self,
+        coordinator: ForecastCoordinator,
+        description: SensorEntityDescription,
+        device_unique_id: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{device_unique_id}_{description.key}"
+        self._attr_device_info = device_info
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the current hour's zero-degree level, or ``None`` when absent."""
+        hourly: list[HourlyForecast] | None = (
+            self.coordinator.hourly_provider.cached_hourly
+        )
+        if not hourly:
+            return None
+        this_hour = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
+        for hour in hourly:
+            if hour.time == this_hour:
+                return hour.zero_degree_level
+        return None

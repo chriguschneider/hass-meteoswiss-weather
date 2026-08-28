@@ -24,11 +24,14 @@ from .const import (
     FORECAST_ENCODING,
     FORECAST_TIMEZONE,
     HOURLY_GUST,
+    HOURLY_PRECIP_PROBABILITY,
     HOURLY_PRECIPITATION,
+    HOURLY_RADIATION,
     HOURLY_SYMBOL,
     HOURLY_TEMPERATURE,
     HOURLY_WIND_DIRECTION,
     HOURLY_WIND_SPEED,
+    HOURLY_ZERO_DEGREE,
     META_POINT_URL,
     POINT_TYPE_MOUNTAIN,
     POINT_TYPE_POSTAL_CODE,
@@ -63,8 +66,8 @@ _DAILY_FIELDS: dict[str, str] = {
 }
 
 # Hourly parameter code -> HourlyForecast field (ADR-0002 minimum set plus the
-# gust and wind-direction files the entity exposes). ``symbol`` is the integer
-# icon code; the rest are floats.
+# gust and wind-direction files the entity exposes, and the B7/B8/B10 additions
+# of issue #55). ``symbol`` is the integer icon code; the rest are floats.
 _HOURLY_FIELDS: dict[str, str] = {
     HOURLY_TEMPERATURE: "temperature",
     HOURLY_PRECIPITATION: "precipitation",
@@ -72,6 +75,9 @@ _HOURLY_FIELDS: dict[str, str] = {
     HOURLY_WIND_SPEED: "wind_speed_kmh",
     HOURLY_GUST: "gust_kmh",
     HOURLY_WIND_DIRECTION: "wind_bearing",
+    HOURLY_PRECIP_PROBABILITY: "precipitation_probability",
+    HOURLY_ZERO_DEGREE: "zero_degree_level",
+    HOURLY_RADIATION: "radiation",
 }
 
 
