@@ -5,7 +5,7 @@ from datetime import timedelta
 DOMAIN = "meteoswiss_weather"
 
 # Keep in sync with manifest.json (tests/test_metadata.py enforces it).
-VERSION = "0.1.1"
+VERSION = "0.2.0"
 
 # Required by the CC BY 4.0 terms of the MeteoSwiss open data.
 ATTRIBUTION = "Source: MeteoSwiss"

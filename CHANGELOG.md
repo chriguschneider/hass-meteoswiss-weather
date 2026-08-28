@@ -9,8 +9,55 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+## [v0.2.0] — 2026-08-28
+
 ### Added
 
+- **Pollen sensors** (#53, #67, ADR-0005). An opt-in pollen option in the
+  options flow picks the nearest station of the `ch.meteoschweiz.ogd-pollen`
+  network (the three nearest offered) and creates one sensor per taxon that
+  station actually measures — grasses and birch enabled by default, alder,
+  hazel, beech, ash and oak shipped but disabled. Concentrations in
+  grains/m³, refreshed at most once an hour with conditional requests. The
+  taxon codes come from the file header and their names from the parameter
+  metadata, so nothing about the taxon list is hard-coded. Pollen setup is
+  non-fatal: a failure there never blocks the entry.
+- **Reconfigure instead of delete-and-re-add** (#52). The forecast point and
+  the weather station can now be changed through Home Assistant's standard
+  reconfigure step, which re-offers both with the current choices
+  pre-selected and updates the entry in place — history and automations
+  survive a change that previously meant deleting the entry. When the
+  station really changes, a history step asks what to do with the values
+  recorded so far: **keep** them (the default; the switch is written to the
+  logbook so the seam stays findable), **discard** them (purges the station
+  sensors' recorded states and clears their long-term statistics), or
+  **backfill** them from the official station history. A point-only change
+  never touches history.
+- **Mountain forecast points** (#59). Setup and reconfigure now open with a
+  mode step: a postal-code point as before, or one of the 631 mountain
+  points of interest, offered in a dropdown with altitude labels and
+  pre-selected to the one nearest the Home Assistant location.
+- **Wind on the daily forecast, on by default** (#60, ADR-0002 revision 3).
+  Daily entries now carry wind speed, gust speed and bearing. The three
+  point-major wind files are fetched as ~5 KB per-point blocks alongside
+  every daily refresh and aggregated per local calendar day. Wind stays
+  best-effort: a file that is not point-major, has not been published yet
+  for the run, or fails to fetch degrades wind to `None` instead of failing
+  the daily refresh — the ~30 MB full file is never downloaded for a
+  default feature.
+- **Hourly precipitation probability, zero-degree level and radiation**
+  (#55, ADR-0002 revision 4). Three more point-major files join the hourly
+  set at roughly 5 KB each: precipitation probability is exposed on the
+  hourly forecast under Home Assistant's standard key, the zero-degree
+  level as its own sensor (disabled by default), and global radiation on
+  the hourly data.
+- **Cloud layers and temperature percentiles, per-entity gated** (#69).
+  Hourly cloud cover in three layers (high, medium, low) and the p10/p90
+  temperature percentiles, both off by default. These are date-major files
+  — the expensive path, one horizon prefix each — so they are fetched only
+  while their option is on, the per-entity gating of ADR-0002. With neither
+  enabled the fetch set is byte-for-byte the one before. `cloud_coverage`,
+  Home Assistant's single number, is the maximum of the three layers.
 - **Optional separate precipitation station** (#70, ADR-0006). The station
   step of setup and reconfigure now offers an optional second station from
   the automatic precipitation-only network (`ch.meteoschweiz.ogd-smn-precip`,
@@ -33,6 +80,9 @@ using the matching section below as release notes.
   this stays outside the recurring ADR-0002 budget. The shared
   `async_backfill` layer also powers the reconfigure flow's backfill choice
   (#52).
+
+### Changed
+
 - **Hourly forecast now fetched with HTTP Range, plus a horizon option**
   (#50). The bulk hourly files come in two layouts: point-major files are
   fetched as the configured point's contiguous ~5 KB block (located by a
@@ -44,6 +94,20 @@ using the matching section below as release notes.
   default 2 (the rest of today plus two full days), plus a "full run" choice.
   The hourly opt-in now costs roughly 7–11 MB per refresh at the default
   horizon instead of ~125 MB. Revises ADR-0002.
+- **The hourly forecast is only downloaded when something asks for it**
+  (#54, ADR-0002 revision 2). The bulk hourly fetch moved out of the
+  coordinator's polling path into `async_forecast_hourly`, so it happens
+  only while a card, an automation or a `weather.get_forecasts` call is
+  actually subscribed. An instance nobody looks at pays nothing, even with
+  the hourly option on.
+- **Hourly refresh follows the measured model-run rhythm** (#68, ADR-0002
+  revision 2). The flat 3 h staleness floor gave way to three independently
+  scheduled groups: a **near tier** (temperature to the end of tomorrow) at
+  the ICON-CH1 landing hours or after 3 h, a **far tier** (temperature out
+  to the configured horizon) at the ICON-CH2 hours or after 6 h, and the
+  **point-major group** (precipitation, symbol, wind, gust, direction) with
+  every new run. The three merge by hour into one forecast. At the default
+  horizon a permanently subscribed instance settles around 70 MB/day.
 
 ## [v0.1.1] — 2026-08-27
 
@@ -141,7 +205,8 @@ integration produces a weather entity (see the tracking issue in the README).
   tag-triggered release gate with a zip asset, and the opt-in Claude agent
   workflows (label, mention, autopilot, reviewer)
 
-[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.2.0...HEAD
+[v0.2.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.1.1...v0.2.0
 [v0.1.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.1.0...v0.1.1
 [v0.1.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.0.1...v0.1.0
 [v0.0.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/releases/tag/v0.0.1
