@@ -40,12 +40,29 @@
     "step": {
       "user": {
         "title": "MeteoSwiss Weather",
-        "description": "Configura l'integrazione ufficiale MeteoSwiss Open Data. Il codice postale è precompilato dalla posizione di Home Assistant.",
+        "description": "Configura l'integrazione ufficiale MeteoSwiss Open Data. Scegli il tipo di punto di previsione.",
+        "data": {
+          "forecast_mode": "Tipo di localizzazione"
+        },
+        "data_description": {
+          "forecast_mode": "Codice postale per una città o paese; punto di montagna per una vetta, un passo o una stazione sciistica."
+        }
+      },
+      "postal_code": {
+        "title": "Codice postale",
+        "description": "Inserisci il codice postale svizzero. Il valore è precompilato dalla posizione di Home Assistant.",
         "data": {
           "postal_code": "Codice postale"
         },
         "data_description": {
           "postal_code": "Codice postale svizzero (CAP) del luogo di previsione."
+        }
+      },
+      "mountain": {
+        "title": "Seleziona il punto di montagna",
+        "description": "Scegli la vetta, il passo o la stazione sciistica per la previsione. Il punto più vicino alla posizione di Home Assistant è preselezionato.",
+        "data": {
+          "point_id": "Punto di montagna"
         }
       },
       "point": {
@@ -64,12 +81,12 @@
       },
       "reconfigure": {
         "title": "Riconfigura MeteoSwiss Weather",
-        "description": "Modifica il punto di previsione e la stazione meteorologica senza eliminare la voce. Il codice postale attuale è precompilato.",
+        "description": "Modifica il tipo di localizzazione e la stazione meteorologica senza eliminare la voce. Il tipo attuale è preselezionato.",
         "data": {
-          "postal_code": "Codice postale"
+          "forecast_mode": "Tipo di localizzazione"
         },
         "data_description": {
-          "postal_code": "Codice postale svizzero (NPA) della località da prevedere."
+          "forecast_mode": "Codice postale per una città o paese; punto di montagna per una vetta, un passo o una stazione sciistica."
         }
       },
       "history": {
@@ -86,10 +103,17 @@
     },
     "abort": {
       "already_configured": "Questo punto di previsione è già configurato.",
+      "no_mountain_points": "Nessun punto di previsione di montagna disponibile nei metadati.",
       "reconfigure_successful": "La voce MeteoSwiss Weather è stata aggiornata."
     }
   },
   "selector": {
+    "forecast_mode": {
+      "options": {
+        "postal_code": "Codice postale (città o paese)",
+        "mountain": "Punto di montagna (vetta, passo o stazione sciistica)"
+      }
+    },
     "history_action": {
       "options": {
         "keep": "Mantieni: i valori registrati finora provengono dalla stazione precedente; il cambio viene registrato nel logbook",

@@ -40,12 +40,29 @@
     "step": {
       "user": {
         "title": "MeteoSwiss Weather",
-        "description": "Set up the official MeteoSwiss open data integration. The postal code is pre-filled from your Home Assistant location.",
+        "description": "Set up the official MeteoSwiss open data integration. Choose the type of forecast location.",
+        "data": {
+          "forecast_mode": "Location type"
+        },
+        "data_description": {
+          "forecast_mode": "Postal code for a town or city; mountain point for a summit, pass, or resort."
+        }
+      },
+      "postal_code": {
+        "title": "Postal code",
+        "description": "Enter your Swiss postal code. The value is pre-filled from your Home Assistant location.",
         "data": {
           "postal_code": "Postal code"
         },
         "data_description": {
           "postal_code": "Swiss postal code (PLZ) of the place to forecast."
+        }
+      },
+      "mountain": {
+        "title": "Select mountain point",
+        "description": "Choose the mountain summit, pass, or resort to forecast. The nearest point to your Home Assistant location is pre-selected.",
+        "data": {
+          "point_id": "Mountain point"
         }
       },
       "point": {
@@ -64,12 +81,12 @@
       },
       "reconfigure": {
         "title": "Reconfigure MeteoSwiss Weather",
-        "description": "Change the forecast point and weather station without deleting the entry. The current postal code is pre-filled.",
+        "description": "Change the forecast location type and weather station without deleting the entry. The current type is pre-selected.",
         "data": {
-          "postal_code": "Postal code"
+          "forecast_mode": "Location type"
         },
         "data_description": {
-          "postal_code": "Swiss postal code (PLZ) of the place to forecast."
+          "forecast_mode": "Postal code for a town or city; mountain point for a summit, pass, or resort."
         }
       },
       "history": {
@@ -86,10 +103,17 @@
     },
     "abort": {
       "already_configured": "This forecast point is already configured.",
+      "no_mountain_points": "No mountain forecast points are available in the metadata.",
       "reconfigure_successful": "The MeteoSwiss Weather entry was updated."
     }
   },
   "selector": {
+    "forecast_mode": {
+      "options": {
+        "postal_code": "Postal code (town or city)",
+        "mountain": "Mountain point (summit, pass, or resort)"
+      }
+    },
     "history_action": {
       "options": {
         "keep": "Keep the recorded history (values so far came from the previous station; the switch is logged)",

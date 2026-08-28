@@ -2,15 +2,32 @@
 
 ## Setup
 
-The integration uses a simple three-step setup flow, with no YAML required. Go to **Settings → Devices & Services → Add Integration** and search for *MeteoSwiss Weather*.
+The integration uses a simple setup flow, with no YAML required. Go to **Settings → Devices & Services → Add Integration** and search for *MeteoSwiss Weather*.
 
-### Step 1: Postal Code
+### Step 1: Location Type
+
+Choose the type of forecast point:
+
+- **Postal code** (default) — forecast for a Swiss town or city, identified by its 4-digit PLZ.
+- **Mountain point** — forecast for a summit, mountain pass, or ski resort from the MeteoSwiss alpine point list (631 points).
+
+### Postal-Code Path
+
+#### Step 2a: Postal Code
 
 Enter your Swiss postal code (4 digits). The setup flow pre-fills this with the postal code of your Home Assistant location, but you can override it.
 
-### Step 2: Forecast Point (if needed)
+#### Step 3a: Forecast Point (if needed)
 
 If your postal code has multiple forecast points, you'll be asked to choose one. This is typical for larger cities where the weather can differ by neighbourhood. The default is the first point; most users never see this screen.
+
+### Mountain-Point Path
+
+#### Step 2b: Mountain Point
+
+Choose a mountain point from the dropdown list. All 631 alpine forecast points are listed alphabetically, labelled `"<name> (<altitude> m)"`. The nearest point to your Home Assistant location is pre-selected.
+
+**Example (ski-area use case):** Add a second config entry for the mountain above your ski area. Pick the nearest summit or glacier point — you'll get a 9-day forecast for that exact altitude, including temperature, snow, wind, and the MeteoSwiss weather symbol. Pair it with the nearest mountain SwissMetNet station for current conditions; once snow-depth support lands (#47) you'll have live snow depth too.
 
 ### Step 3: Weather Station
 

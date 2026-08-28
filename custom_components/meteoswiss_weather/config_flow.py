@@ -1,9 +1,9 @@
 """Config flow for the MeteoSwiss Weather integration.
 
-Three-step setup: the user confirms a postal code (pre-filled from the HA
-location), optionally picks among multiple forecast points for that postal
-code, then picks a SwissMetNet station. All choices are derived from the
-official open data (ADR-0001); no app API is involved.
+Setup: the user chooses between a postal-code forecast point (default) or a
+mountain point of interest, then picks a SwissMetNet station. Reconfigure
+re-offers the same choice, pre-filled from the current entry. All choices are
+derived from the official open data (ADR-0001); no app API is involved.
 """
 
 from __future__ import annotations
@@ -47,18 +47,39 @@ from .const import (
 )
 from .history import async_discard_station_history, async_log_station_switch
 from .ogd import (
+    POINT_TYPE_MOUNTAIN,
     ForecastPoint,
     OgdError,
     Station,
     fetch_points,
     fetch_stations,
+    mountain_points,
     nearest_point,
     nearest_stations,
     points_for_postal_code,
 )
 
+# Flow-internal mode constants; never stored in the config entry.
+_CONF_MODE = "forecast_mode"
+_MODE_POSTAL_CODE = "postal_code"
+_MODE_MOUNTAIN = "mountain"
 
-def _user_schema(default_plz: int | None) -> vol.Schema:
+
+def _mode_schema(default: str = _MODE_POSTAL_CODE) -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Required(_CONF_MODE, default=default): SelectSelector(
+                SelectSelectorConfig(
+                    options=[_MODE_POSTAL_CODE, _MODE_MOUNTAIN],
+                    translation_key="forecast_mode",
+                    mode=SelectSelectorMode.LIST,
+                )
+            )
+        }
+    )
+
+
+def _postal_code_schema(default_plz: int | None) -> vol.Schema:
     return vol.Schema(
         {
             vol.Required(
@@ -67,6 +88,12 @@ def _user_schema(default_plz: int | None) -> vol.Schema:
             ): vol.All(vol.Coerce(int), vol.Range(min=1000, max=9999))
         }
     )
+
+
+def _mountain_label(point: ForecastPoint) -> str:
+    if point.height_masl is not None:
+        return f"{point.name} ({int(point.height_masl)} m)"
+    return point.name
 
 
 class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -109,16 +136,36 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 1: postal code, pre-filled from the HA location."""
+        """Step 1: choose postal-code or mountain-point mode."""
         errors: dict[str, str] = {}
 
         if not await self._load_metadata():
             errors["base"] = "cannot_connect"
             return self.async_show_form(
                 step_id="user",
-                data_schema=_user_schema(None),
+                data_schema=_mode_schema(),
                 errors=errors,
             )
+
+        if user_input is not None:
+            mode = user_input[_CONF_MODE]
+            if mode == _MODE_MOUNTAIN:
+                return await self.async_step_mountain()
+            return await self.async_step_postal_code()
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=_mode_schema(),
+            errors=errors,
+        )
+
+    async def async_step_postal_code(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Postal-code entry: pre-filled from the HA location (setup) or
+        current entry (reconfigure)."""
+        assert self._all_points is not None
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             postal_code = int(user_input[CONF_POSTAL_CODE])
@@ -129,36 +176,109 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._point_choices = candidates
                 if len(candidates) == 1:
                     self._point = candidates[0]
-                    await self.async_set_unique_id(
-                        f"{self._point.point_type_id}-{self._point.point_id}"
-                    )
-                    self._abort_if_unique_id_configured()
+                    if self.source != SOURCE_RECONFIGURE:
+                        await self.async_set_unique_id(
+                            f"{self._point.point_type_id}-{self._point.point_id}"
+                        )
+                        self._abort_if_unique_id_configured()
                     return await self.async_step_station()
                 return await self.async_step_point()
 
-        # Suggest the postal code of the nearest forecast point to the HA location.
+        # Pre-fill: the current entry's postal code on reconfigure, or the
+        # nearest type-2 point to the HA location on initial setup.
         suggested_plz: int | None = None
-        try:
-            near = nearest_point(
-                self._all_points,
-                self.hass.config.latitude,
-                self.hass.config.longitude,
-            )
-            if near.postal_code:
-                suggested_plz = int(near.postal_code)
-        except Exception:  # noqa: BLE001
-            pass
+        if self.source == SOURCE_RECONFIGURE:
+            entry_plz = self._get_reconfigure_entry().data.get(CONF_POSTAL_CODE, "")
+            try:
+                suggested_plz = int(entry_plz) if entry_plz else None
+            except (ValueError, TypeError):
+                pass
+        else:
+            try:
+                near = nearest_point(
+                    self._all_points,
+                    self.hass.config.latitude,
+                    self.hass.config.longitude,
+                )
+                if near.postal_code:
+                    suggested_plz = int(near.postal_code)
+            except Exception:  # noqa: BLE001
+                pass
 
         return self.async_show_form(
-            step_id="user",
-            data_schema=_user_schema(suggested_plz),
+            step_id="postal_code",
+            data_schema=_postal_code_schema(suggested_plz),
             errors=errors,
+        )
+
+    async def async_step_mountain(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Mountain-point selection: dropdown over all type-3 points, sorted by name.
+
+        The nearest mountain point to the HA location is pre-selected. On
+        reconfigure the current mountain point is pre-selected.
+        """
+        assert self._all_points is not None
+        all_mountain = mountain_points(self._all_points)
+        if not all_mountain:
+            return self.async_abort(reason="no_mountain_points")
+
+        if user_input is not None:
+            point_id = int(user_input[CONF_POINT_ID])
+            self._point = next(p for p in all_mountain if p.point_id == point_id)
+            if self.source != SOURCE_RECONFIGURE:
+                await self.async_set_unique_id(
+                    f"{self._point.point_type_id}-{self._point.point_id}"
+                )
+                self._abort_if_unique_id_configured()
+            return await self.async_step_station()
+
+        # Build the dropdown options dict keyed by point_id (as str for the selector).
+        options = [
+            {"value": str(p.point_id), "label": _mountain_label(p)}
+            for p in all_mountain
+        ]
+
+        # Pre-select: on reconfigure use the current entry's point; on setup
+        # use the nearest mountain point to the HA location.
+        default_id: str | vol.Undefined = vol.UNDEFINED
+        if self.source == SOURCE_RECONFIGURE:
+            entry = self._get_reconfigure_entry()
+            if int(entry.data.get(CONF_POINT_TYPE_ID, 0)) == POINT_TYPE_MOUNTAIN:
+                default_id = str(entry.data[CONF_POINT_ID])
+        if default_id is vol.UNDEFINED:
+            try:
+                near = nearest_point(
+                    self._all_points,
+                    self.hass.config.latitude,
+                    self.hass.config.longitude,
+                    point_type=POINT_TYPE_MOUNTAIN,
+                )
+                default_id = str(near.point_id)
+            except Exception:  # noqa: BLE001
+                pass
+
+        point_key = vol.Required(CONF_POINT_ID, default=default_id)
+
+        return self.async_show_form(
+            step_id="mountain",
+            data_schema=vol.Schema(
+                {
+                    point_key: SelectSelector(
+                        SelectSelectorConfig(
+                            options=options,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    )
+                }
+            ),
         )
 
     async def async_step_point(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 2: choose among multiple forecast points for the postal code.
+        """Step: choose among multiple forecast points for the postal code.
 
         Skipped when there is exactly one point for the given postal code.
         """
@@ -190,7 +310,7 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_station(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 3: choose a SwissMetNet station (3 nearest, nearest pre-selected)."""
+        """Step: choose a SwissMetNet station (3 nearest, nearest pre-selected)."""
         assert self._point is not None
         assert self._all_stations is not None
 
@@ -250,39 +370,38 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Reconfigure entry point (A9, #52): re-run the point/station picks.
+        """Reconfigure entry point (A9, #52): choose mode, then re-run point/station.
 
-        Mirrors ``async_step_user`` but pre-fills the current postal code and
-        finishes by updating the existing entry in place rather than creating a
-        new one. The forecast point and station steps are shared.
+        Pre-fills the mode from the current entry's point type. Routes to
+        ``async_step_postal_code`` or ``async_step_mountain``, both shared
+        with the setup flow.
         """
         entry = self._get_reconfigure_entry()
         errors: dict[str, str] = {}
-        current_plz = int(entry.data[CONF_POSTAL_CODE])
 
         if not await self._load_metadata():
             errors["base"] = "cannot_connect"
+            current_type = int(entry.data.get(CONF_POINT_TYPE_ID, 2))
+            is_mountain = current_type == POINT_TYPE_MOUNTAIN
+            default_mode = _MODE_MOUNTAIN if is_mountain else _MODE_POSTAL_CODE
             return self.async_show_form(
                 step_id="reconfigure",
-                data_schema=_user_schema(current_plz),
+                data_schema=_mode_schema(default_mode),
                 errors=errors,
             )
 
         if user_input is not None:
-            postal_code = int(user_input[CONF_POSTAL_CODE])
-            candidates = points_for_postal_code(self._all_points, postal_code)
-            if not candidates:
-                errors["base"] = "unknown_postal_code"
-            else:
-                self._point_choices = candidates
-                if len(candidates) == 1:
-                    self._point = candidates[0]
-                    return await self.async_step_station()
-                return await self.async_step_point()
+            mode = user_input[_CONF_MODE]
+            if mode == _MODE_MOUNTAIN:
+                return await self.async_step_mountain()
+            return await self.async_step_postal_code()
 
+        current_type = int(entry.data.get(CONF_POINT_TYPE_ID, 2))
+        is_mountain = current_type == POINT_TYPE_MOUNTAIN
+        default_mode = _MODE_MOUNTAIN if is_mountain else _MODE_POSTAL_CODE
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=_user_schema(current_plz),
+            data_schema=_mode_schema(default_mode),
             errors=errors,
         )
 

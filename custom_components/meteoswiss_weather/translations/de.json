@@ -40,12 +40,29 @@
     "step": {
       "user": {
         "title": "MeteoSwiss Weather",
-        "description": "Richten Sie die offizielle MeteoSwiss-Open-Data-Integration ein. Die Postleitzahl wird aus Ihrem Home-Assistant-Standort vorausgefüllt.",
+        "description": "Richten Sie die offizielle MeteoSwiss-Open-Data-Integration ein. Wählen Sie den Typ des Vorhersageorts.",
+        "data": {
+          "forecast_mode": "Standorttyp"
+        },
+        "data_description": {
+          "forecast_mode": "Postleitzahl für Orte und Städte; Bergpunkt für Gipfel, Pässe oder Skigebiete."
+        }
+      },
+      "postal_code": {
+        "title": "Postleitzahl",
+        "description": "Geben Sie Ihre Schweizer Postleitzahl ein. Der Wert wird aus Ihrem Home-Assistant-Standort vorausgefüllt.",
         "data": {
           "postal_code": "Postleitzahl"
         },
         "data_description": {
           "postal_code": "Schweizer Postleitzahl (PLZ) des Vorhersageorts."
+        }
+      },
+      "mountain": {
+        "title": "Bergpunkt auswählen",
+        "description": "Wählen Sie den Berggipfel, Pass oder das Skigebiet für die Prognose. Der nächste Punkt zu Ihrem Home-Assistant-Standort ist vorausgewählt.",
+        "data": {
+          "point_id": "Bergpunkt"
         }
       },
       "point": {
@@ -64,12 +81,12 @@
       },
       "reconfigure": {
         "title": "MeteoSwiss Weather neu konfigurieren",
-        "description": "Ändern Sie den Vorhersagepunkt und die Wetterstation, ohne den Eintrag zu löschen. Die aktuelle Postleitzahl ist vorausgefüllt.",
+        "description": "Ändern Sie den Standorttyp und die Wetterstation, ohne den Eintrag zu löschen. Der aktuelle Typ ist vorausgewählt.",
         "data": {
-          "postal_code": "Postleitzahl"
+          "forecast_mode": "Standorttyp"
         },
         "data_description": {
-          "postal_code": "Schweizer Postleitzahl (PLZ) des Vorhersageorts."
+          "forecast_mode": "Postleitzahl für Orte und Städte; Bergpunkt für Gipfel, Pässe oder Skigebiete."
         }
       },
       "history": {
@@ -86,10 +103,17 @@
     },
     "abort": {
       "already_configured": "Dieser Vorhersagepunkt ist bereits eingerichtet.",
+      "no_mountain_points": "In den Metadaten sind keine Bergvorhersagepunkte verfügbar.",
       "reconfigure_successful": "Der MeteoSwiss-Weather-Eintrag wurde aktualisiert."
     }
   },
   "selector": {
+    "forecast_mode": {
+      "options": {
+        "postal_code": "Postleitzahl (Ort oder Stadt)",
+        "mountain": "Bergpunkt (Gipfel, Pass oder Skigebiet)"
+      }
+    },
     "history_action": {
       "options": {
         "keep": "Behalten: Die bisherigen Werte stammen von der vorherigen Station; der Wechsel wird protokolliert",
