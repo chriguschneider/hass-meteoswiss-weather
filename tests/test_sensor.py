@@ -1,15 +1,19 @@
-"""Tests for the sensor platform (issue #13).
+"""Tests for the sensor platform (issue #13, issue #48).
 
 Spins up an in-process Home Assistant with the ``mock_ogd`` fixture so the
 entities are built from the trimmed real fixtures; no test hits the network.
 Covers: entity values from the BER station fixture, ``None`` field → state
 ``unknown``, device shared with the weather entity, disabled-by-default flags,
-and entity_category for the QFE sensor.
+entity_category for the QFE sensor, and today's forecast sensors with midnight
+rollover.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
+from freezegun import freeze_time
 from homeassistant.const import STATE_UNKNOWN, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -448,3 +452,146 @@ async def test_orphan_registry_entries_removed_on_setup(
 
     # The stale temperature entry must have been removed.
     assert entity_reg.async_get("sensor.koniz_temperature") is None
+
+
+# ---------------------------------------------------------------------------
+# B6 — today's forecast sensors (issue #48)
+# ---------------------------------------------------------------------------
+
+# Fixed UTC timestamps that unambiguously map to day-0 / day-1 in the HA test
+# timezone (US/Pacific, UTC-7 in summer).  Noon UTC = 5 AM Pacific, so both
+# timestamps land squarely in their respective local calendar days.
+_DAY0 = datetime(2026, 8, 27, 12, 0, tzinfo=UTC)   # day 0: 2026-08-27 local
+_DAY1 = datetime(2026, 8, 28, 12, 0, 0, tzinfo=UTC) # day 1: 2026-08-28 local
+
+
+async def test_temp_max_today_value(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Today's high temperature matches day 0 of the fixture."""
+    with freeze_time(_DAY0):
+        await _setup(hass, config_entry)
+        assert _state(hass, "high_temperature_today") == "29.3"
+
+
+async def test_temp_min_today_value(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Today's low temperature matches day 0 of the fixture."""
+    with freeze_time(_DAY0):
+        await _setup(hass, config_entry)
+        assert _state(hass, "low_temperature_today") == "16.9"
+
+
+async def test_precipitation_today_value(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Today's precipitation matches day 0 of the fixture."""
+    with freeze_time(_DAY0):
+        await _setup(hass, config_entry)
+        assert _state(hass, "precipitation_today") == "0.0"
+
+
+async def test_midnight_rollover_flips_to_next_day(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """After local midnight the sensor reads day 1 values without a new fetch.
+
+    The time-change listener calls ``async_write_ha_state()``; this test
+    replays that effect by pushing the same forecast data through the
+    coordinator at day-1 frozen time, verifying that ``_today_row()`` picks
+    the new date without any upstream fetch.
+    """
+    with freeze_time(_DAY0):
+        await _setup(hass, config_entry)
+        assert _state(hass, "high_temperature_today") == "29.3"
+
+    # Freeze at local midnight; push the same (unmodified) forecast data
+    # through the coordinator as the time-change listener would do.
+    with freeze_time(_DAY1):
+        coordinator = config_entry.runtime_data.forecast_coordinator
+        coordinator.async_set_updated_data(coordinator.data)
+        await hass.async_block_till_done()
+        assert _state(hass, "high_temperature_today") == "21.9"
+        assert _state(hass, "low_temperature_today") == "15.6"
+        assert _state(hass, "precipitation_today") == "7.9"
+
+
+async def test_today_sensor_unknown_when_no_matching_row(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """State is ``unknown`` when the forecast has no entry for today."""
+    # 2026-09-10 noon UTC is past the 9-day fixture window (ends 2026-09-04)
+    # and unambiguously local day 2026-09-10 in any timezone.
+    with freeze_time(datetime(2026, 9, 10, 12, 0, tzinfo=UTC)):
+        await _setup(hass, config_entry)
+        assert _state(hass, "high_temperature_today") == STATE_UNKNOWN
+        assert _state(hass, "low_temperature_today") == STATE_UNKNOWN
+        assert _state(hass, "precipitation_today") == STATE_UNKNOWN
+
+
+async def test_today_sensors_share_device_with_weather(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Forecast sensors share the device created by the weather entity."""
+    from homeassistant.helpers import device_registry as dr
+
+    with freeze_time(_DAY0):
+        await _setup(hass, config_entry)
+
+    entity_reg = er.async_get(hass)
+    device_reg = dr.async_get(hass)
+
+    weather_entry = entity_reg.async_get("weather.koniz")
+    assert weather_entry is not None
+
+    sensor_entry = entity_reg.async_get("sensor.koniz_high_temperature_today")
+    assert sensor_entry is not None
+    assert sensor_entry.device_id == weather_entry.device_id
+
+    device = device_reg.async_get(weather_entry.device_id)
+    assert device is not None
+    assert (DOMAIN, "2-309800") in device.identifiers
+
+
+async def test_today_sensor_attribution(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Every forecast sensor carries the required MeteoSwiss attribution."""
+    with freeze_time(_DAY0):
+        await _setup(hass, config_entry)
+    assert _attr(hass, "high_temperature_today", "attribution") == "Source: MeteoSwiss"
+
+
+async def test_forecast_sensors_not_removed_by_reduced_inventory(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd_reduced: AiohttpClientMocker,
+) -> None:
+    """Forecast sensors survive the station-inventory cleanup (issue #48)."""
+    with freeze_time(_DAY0):
+        await _setup(hass, config_entry)
+
+    entity_reg = er.async_get(hass)
+    for entity_id in (
+        "sensor.koniz_high_temperature_today",
+        "sensor.koniz_low_temperature_today",
+        "sensor.koniz_precipitation_today",
+    ):
+        assert entity_reg.async_get(entity_id) is not None, (
+            f"{entity_id!r} was incorrectly removed by inventory cleanup"
+        )

@@ -1,14 +1,17 @@
-"""Sensor platform: SwissMetNet station observations (issue #13).
+"""Sensor platform: SwissMetNet station observations (issue #13) and
+today's forecast aggregates from the daily forecast (issue #48).
 
-One SensorEntity per measured field from the latest 10-minute observation,
-all backed by the StationCoordinator from runtime_data. Every entity shares
-the same device as the weather entity (same identifier keyed on the forecast
-point, not the station abbreviation).
+Station sensors are backed by StationCoordinator; forecast sensors are backed
+by ForecastCoordinator and also recompute at local midnight so the "today"
+values flip to the new day without waiting for the next forecast fetch.
+Every entity shares the same device as the weather entity (same identifier
+keyed on the forecast point, not the station abbreviation).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -28,16 +31,18 @@ from homeassistant.const import (
     UnitOfTemperature,
     UnitOfTime,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from . import MeteoSwissConfigEntry
 from .const import ATTRIBUTION, DOMAIN
-from .coordinator import StationCoordinator
-from .ogd import Observation
+from .coordinator import ForecastCoordinator, StationCoordinator
+from .ogd import DailyForecast, Observation
 
 
 @dataclass(frozen=True, slots=True)
@@ -276,6 +281,47 @@ _SENSORS: tuple[MeteoSwissSensorDescription, ...] = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class ForecastSensorDescription(SensorEntityDescription):
+    """SensorEntityDescription for a sensor derived from today's daily forecast row."""
+
+    forecast_key: str = ""
+    # Attribute name on :class:`~ogd.DailyForecast` that carries this value.
+
+
+_FORECAST_SENSORS: tuple[ForecastSensorDescription, ...] = (
+    # B6 — today's aggregates from the daily forecast (issue #48).
+    # Enabled by default: they are the primary automation/dashboard value.
+    ForecastSensorDescription(
+        key="temp_max_today",
+        translation_key="temp_max_today",
+        forecast_key="temp_max",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    ForecastSensorDescription(
+        key="temp_min_today",
+        translation_key="temp_min_today",
+        forecast_key="temp_min",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    ForecastSensorDescription(
+        key="precipitation_today",
+        translation_key="precipitation_today",
+        forecast_key="precipitation",
+        device_class=SensorDeviceClass.PRECIPITATION,
+        native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: MeteoSwissConfigEntry,
@@ -301,8 +347,13 @@ async def async_setup_entry(
     ]
 
     # Remove entity registry entries for sensors the station no longer carries.
+    # Forecast sensor unique IDs are included in the valid set so they are never
+    # incorrectly removed by the station-inventory cleanup.
     if station_params is not None:
-        valid_unique_ids = {f"{device_unique_id}_{desc.key}" for desc in supported}
+        valid_unique_ids = (
+            {f"{device_unique_id}_{desc.key}" for desc in supported}
+            | {f"{device_unique_id}_{desc.key}" for desc in _FORECAST_SENSORS}
+        )
         sensor_uid_prefix = f"{device_unique_id}_"
         entity_reg = er.async_get(hass)
         for entity_entry in er.async_entries_for_config_entry(
@@ -319,6 +370,12 @@ async def async_setup_entry(
             runtime.station_coordinator, description, device_unique_id, device_info
         )
         for description in supported
+    )
+    async_add_entities(
+        ForecastSensor(
+            runtime.forecast_coordinator, description, device_unique_id, device_info
+        )
+        for description in _FORECAST_SENSORS
     )
 
 
@@ -348,3 +405,65 @@ class MeteoSwissSensor(CoordinatorEntity[StationCoordinator], SensorEntity):
         if obs is None:
             return None
         return getattr(obs, self._observation_key, None)
+
+
+class ForecastSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
+    """A sensor whose value comes from today's row of the daily forecast.
+
+    Updates on every forecast coordinator refresh and also at local midnight
+    so the "today" values flip to the new day without waiting for the next
+    fetch (issue #48).
+    """
+
+    _attr_has_entity_name = True
+    _attr_attribution = ATTRIBUTION
+
+    def __init__(
+        self,
+        coordinator: ForecastCoordinator,
+        description: ForecastSensorDescription,
+        device_unique_id: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._forecast_key: str = description.forecast_key
+        self._attr_unique_id = f"{device_unique_id}_{description.key}"
+        self._attr_device_info = device_info
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to local midnight so today's date rolls over promptly."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_time_change(
+                self.hass,
+                self._handle_day_rollover,
+                hour=0,
+                minute=0,
+                second=0,
+            )
+        )
+
+    @callback
+    def _handle_day_rollover(self, _now: date) -> None:
+        """Re-write state when local midnight flips the calendar date."""
+        self.async_write_ha_state()
+
+    def _today_row(self) -> DailyForecast | None:
+        """Return the daily forecast entry whose date matches today, or ``None``."""
+        data = self.coordinator.data
+        if data is None or not data.daily:
+            return None
+        today = dt_util.now().date()
+        for day in data.daily:
+            if day.date == today:
+                return day
+        return None
+
+    @property
+    def native_value(self) -> float | None:
+        """Return today's value, or ``None`` (→ ``unknown``) when absent."""
+        row = self._today_row()
+        if row is None:
+            return None
+        return getattr(row, self._forecast_key, None)
