@@ -44,6 +44,10 @@ Two honest consequences:
   the end of 2026, after which this limitation goes away
   ([ADR-0002](docs/adr/0002-traffic-budget-bulk-local-forecast.md)).
 
+[**docs/comparison.md**](docs/comparison.md) puts this side by side with
+`Rudd-O/homeassistant-meteoswiss` and `izacus/hass-swissweather`, feature
+by feature, including the things they do better.
+
 ## Install
 
 Install via [HACS](https://hacs.xyz/) as a **custom repository**:
