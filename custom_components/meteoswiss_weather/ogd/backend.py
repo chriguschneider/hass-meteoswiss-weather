@@ -225,7 +225,9 @@ class BulkCsvBackend:
         # daily call, or a different run), the requested params are fetched the
         # normal way — the same as before issue #60.
         run = await latest_run(self._session, COLLECTION_FORECAST, params)
-        horizon_end = horizon_end_utc(horizon_days, datetime.now(UTC))
+        now = datetime.now(UTC)
+        horizon_end = horizon_end_utc(horizon_days, now)
+        horizon_start = now.replace(minute=0, second=0, microsecond=0)
 
         # Direct cache check (no re-probe): only hit if daily already ran.
         wind_cache = (
@@ -279,5 +281,5 @@ class BulkCsvBackend:
         # Parsing keeps only the point's rows; keep it off the event loop.
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None, parse_hourly, text_by_param, point, horizon_end
+            None, parse_hourly, text_by_param, point, horizon_end, horizon_start
         )

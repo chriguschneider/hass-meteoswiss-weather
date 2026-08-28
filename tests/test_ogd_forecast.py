@@ -16,6 +16,7 @@ import aiohttp
 import aiohttp.resolver
 import pytest
 from aioresponses import aioresponses
+from freezegun import freeze_time
 
 from custom_components.meteoswiss_weather.ogd import (
     BulkCsvBackend,
@@ -423,7 +424,9 @@ def _hourly_asset_url(param: str) -> str:
     return f"{ASSET_BASE}/vnut12.lssw.{RUN_TS}.{param}.csv"
 
 
+@freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC))
 async def test_bulk_backend_fetch_hourly(session) -> None:
+    # Frozen at 00:00 UTC so horizon_start == first fixture hour; all 24 survive.
     with aioresponses() as mock:
         mock.get(ITEMS_URL, status=200,
                  body=_fixture_bytes("ogd-local-forecasting_items.json"))
@@ -844,12 +847,14 @@ async def test_bulk_backend_fetch_daily_wind_fetch_error_degrades_to_none(
     assert backend._wind_texts == {}
 
 
+@freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC))
 async def test_bulk_backend_fetch_hourly_reuses_daily_wind_cache(session) -> None:
     """When fetch_daily() has cached point-major wind for the same run,
     fetch_hourly() does not download the wind files a second time.
 
     Each wind URL is registered once (aioresponses fails on a second call
     to an unregistered URL); the test proves exactly one fetch per file.
+    Frozen at 00:00 UTC so horizon_start == first fixture hour (issue #92).
     """
     with aioresponses() as mock:
         # STAC endpoint queried twice (once by fetch_daily, once by fetch_hourly).

@@ -251,6 +251,7 @@ def parse_hourly(
     text_by_param: dict[str, str],
     point: ForecastPoint,
     horizon_end: datetime | None = None,
+    horizon_start: datetime | None = None,
 ) -> list[HourlyForecast]:
     """Merge the hourly parameter files into one forecast for ``point``.
 
@@ -264,6 +265,11 @@ def parse_hourly(
     date-major files are already Range-limited to it, and the point-major files
     — always fetched as the point's whole run — are trimmed here. ``None`` keeps
     every hour (the "full run" option).
+
+    ``horizon_start`` (an aware UTC datetime, floored to the current hour) drops
+    hours **before** it — the lower-bound twin of ``horizon_end`` (issue #92).
+    Passing the start of the current hour keeps the running hour and discards
+    everything earlier, symmetric to how ``horizon_end`` caps the tail.
     """
     by_time: dict[datetime, dict[str, float | int | None]] = {}
 
@@ -279,6 +285,8 @@ def parse_hourly(
                 continue
             when = _parse_datetime(row.get(_DATA_DATE))
             if when is None:
+                continue
+            if horizon_start is not None and when < horizon_start:
                 continue
             if horizon_end is not None and when >= horizon_end:
                 continue

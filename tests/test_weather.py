@@ -242,7 +242,9 @@ async def test_hourly_feature_and_forecast_when_option_on(
     mock_ogd: AiohttpClientMocker,
 ) -> None:
     """With the option on, FORECAST_HOURLY is advertised and returns 24 hours."""
-    with freeze_time(datetime(2026, 8, 27, 2, 0, tzinfo=UTC)):
+    # Freeze at 00:00 UTC so horizon_start equals the first fixture hour and
+    # no past-hour trimming occurs (issue #92).
+    with freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC)):
         await _setup(hass, hourly_config_entry)
 
         features = hass.states.get(_ENTITY_ID).attributes["supported_features"]
@@ -280,7 +282,8 @@ async def test_hourly_cloud_and_percentile_attributes(
     fixture for hour 0, the layers are high=20, mid=40, low=10, so the single
     number is 40; the three layers and the p10/p90 band ride along as extras.
     """
-    with freeze_time(datetime(2026, 8, 27, 2, 0, tzinfo=UTC)):
+    # Freeze at 00:00 UTC so horizon_start equals the first fixture hour (issue #92).
+    with freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC)):
         await _setup(hass, hourly_gated_config_entry)
 
         response = await hass.services.async_call(
