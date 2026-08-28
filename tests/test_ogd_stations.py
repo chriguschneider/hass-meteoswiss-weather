@@ -20,13 +20,19 @@ from custom_components.meteoswiss_weather.ogd import (
     OgdParseError,
     fetch_current,
     fetch_datainventory,
+    fetch_precip_current,
+    fetch_precip_datainventory,
+    fetch_precip_stations,
     fetch_stations,
     get_text,
     nearest_stations,
 )
 from custom_components.meteoswiss_weather.ogd.const import (
     META_DATAINVENTORY_URL,
+    META_PRECIP_DATAINVENTORY_URL,
+    META_PRECIP_STATIONS_URL,
     META_STATIONS_URL,
+    precip_station_now_url,
     station_now_url,
 )
 
@@ -283,3 +289,143 @@ async def test_fetch_datainventory_station_not_in_inventory_absent(session) -> N
         inventory = await fetch_datainventory(session)
 
     assert "ZZZ" not in inventory
+
+
+# ---------------------------------------------------------------------------
+# Precipitation-station collection (ADR-0006, issue #56)
+# ---------------------------------------------------------------------------
+
+# Köniz reference point; the fixture stations are ordered BEL < LAU < KIE < ABE.
+KOENIZ_LAT, KOENIZ_LON = 46.924, 7.424
+BEL_URL = precip_station_now_url("bel")
+
+
+async def test_fetch_precip_stations_parses_fixture(session) -> None:
+    with aioresponses() as mock:
+        mock.get(
+            META_PRECIP_STATIONS_URL,
+            status=200,
+            body=_fixture_bytes("ogd-smn-precip_meta_stations.csv"),
+        )
+        stations = await fetch_precip_stations(session)
+
+    by_abbr = {s.abbr: s for s in stations}
+    assert set(by_abbr) == {"BEL", "LAU", "KIE", "ABE"}
+    bel = by_abbr["BEL"]
+    assert bel.name == "Belp"
+    assert bel.canton == "BE"
+    assert bel.height_masl == 482.0
+    assert bel.lat == pytest.approx(46.897)
+    assert bel.lon == pytest.approx(7.497)
+
+
+async def test_fetch_precip_stations_missing_header_raises(session) -> None:
+    with aioresponses() as mock:
+        mock.get(
+            META_PRECIP_STATIONS_URL,
+            status=200,
+            body=b"not;a;station;file\n1;2\n",
+        )
+        with pytest.raises(OgdParseError):
+            await fetch_precip_stations(session)
+
+
+def _load_precip_stations() -> list:
+    import csv
+    import io
+
+    text = _fixture_bytes("ogd-smn-precip_meta_stations.csv").decode("cp1252")
+    from custom_components.meteoswiss_weather.ogd.models import Station
+
+    rows = csv.DictReader(io.StringIO(text), delimiter=";")
+    out = []
+    for r in rows:
+        out.append(
+            Station(
+                abbr=r["station_abbr"],
+                name=r["station_name"],
+                canton=r["station_canton"],
+                lat=float(r["station_coordinates_wgs84_lat"]),
+                lon=float(r["station_coordinates_wgs84_lon"]),
+                height_masl=float(r["station_height_masl"]),
+            )
+        )
+    return out
+
+
+def test_nearest_precip_stations_ordering() -> None:
+    """nearest_stations works unchanged on the precipitation station list."""
+    stations = _load_precip_stations()
+    nearest = nearest_stations(stations, KOENIZ_LAT, KOENIZ_LON)
+    abbrs = [s.abbr for s in nearest]
+    # BEL is ~6 km, LAU ~8 km, KIE ~16 km — ABE is ~49 km away.
+    assert abbrs == ["BEL", "LAU", "KIE"]
+
+
+def test_nearest_precip_stations_limit() -> None:
+    stations = _load_precip_stations()
+    assert len(nearest_stations(stations, KOENIZ_LAT, KOENIZ_LON, limit=1)) == 1
+    assert len(nearest_stations(stations, KOENIZ_LAT, KOENIZ_LON, limit=4)) == 4
+
+
+async def test_fetch_precip_datainventory_active_params(session) -> None:
+    with aioresponses() as mock:
+        mock.get(
+            META_PRECIP_DATAINVENTORY_URL,
+            status=200,
+            body=_fixture_bytes("ogd-smn-precip_meta_datainventory.csv"),
+        )
+        inventory = await fetch_precip_datainventory(session)
+
+    # BEL carries rre150z0 and rre150h0 (both open).
+    assert inventory["BEL"] == frozenset({"rre150z0", "rre150h0", "rre150d0"})
+    # LAU carries the same open params.
+    assert inventory["LAU"] == frozenset({"rre150z0", "rre150h0", "rre150d0"})
+    # ABE's rre150h0 has data_till set — only rre150z0 is active.
+    assert inventory["ABE"] == frozenset({"rre150z0"})
+
+
+async def test_fetch_precip_current_happy_path(session) -> None:
+    with aioresponses() as mock:
+        mock.get(
+            BEL_URL,
+            status=200,
+            body=_fixture_bytes("ogd-smn-precip_bel_t_now.csv"),
+        )
+        obs = await fetch_precip_current(session, "bel")
+
+    # Last row with non-empty rre150z0 is 07:20.
+    assert obs.station_abbr == "BEL"
+    assert obs.timestamp == datetime(2026, 8, 28, 7, 20, tzinfo=UTC)
+    assert obs.precipitation_10min == pytest.approx(0.5)
+    # All other observation fields are absent from the precip file → None.
+    assert obs.temperature is None
+    assert obs.humidity is None
+    assert obs.wind_speed_kmh is None
+
+
+async def test_fetch_precip_current_404_raises_connection_error(session) -> None:
+    with aioresponses() as mock:
+        mock.get(BEL_URL, status=404)
+        with pytest.raises(OgdConnectionError):
+            await fetch_precip_current(session, "bel")
+
+
+async def test_fetch_precip_current_missing_header_raises_parse_error(
+    session,
+) -> None:
+    # File has temperature column but not rre150z0 — wrong collection.
+    body = b"station_abbr;reference_timestamp;tre200s0\nBEL;28.08.2026 07:00;18.0\n"
+    with aioresponses() as mock:
+        mock.get(BEL_URL, status=200, body=body)
+        with pytest.raises(OgdParseError):
+            await fetch_precip_current(session, "bel")
+
+
+async def test_fetch_precip_current_all_empty_raises_parse_error(session) -> None:
+    # Every rre150z0 cell is empty — no usable row.
+    body = b"station_abbr;reference_timestamp;rre150z0\nBEL;28.08.2026 07:30;\n"
+    with aioresponses() as mock:
+        mock.get(BEL_URL, status=200, body=body)
+        with pytest.raises(OgdParseError):
+            await fetch_precip_current(session, "bel")

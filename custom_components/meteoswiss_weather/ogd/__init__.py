@@ -53,6 +53,9 @@ from .stac import Run, latest_run
 from .stations import (
     fetch_current,
     fetch_datainventory,
+    fetch_precip_current,
+    fetch_precip_datainventory,
+    fetch_precip_stations,
     fetch_stations,
     nearest_stations,
 )
@@ -88,6 +91,9 @@ __all__ = [
     "fetch_pollen_datainventory",
     "fetch_pollen_parameters",
     "fetch_pollen_stations",
+    "fetch_precip_current",
+    "fetch_precip_datainventory",
+    "fetch_precip_stations",
     "fetch_station_history",
     "fetch_stations",
     "get_text",

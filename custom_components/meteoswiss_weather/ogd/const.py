@@ -12,6 +12,7 @@ OGD_FILE_BASE = "https://data.geo.admin.ch"
 # STAC catalogue for discovering the newest local-forecast run (docs/ogd.md).
 OGD_STAC_BASE = f"{OGD_FILE_BASE}/api/stac/v1"
 COLLECTION_STATIONS = "ch.meteoschweiz.ogd-smn"
+COLLECTION_PRECIP = "ch.meteoschweiz.ogd-smn-precip"
 COLLECTION_FORECAST = "ch.meteoschweiz.ogd-local-forecasting"
 COLLECTION_POLLEN = "ch.meteoschweiz.ogd-pollen"
 
@@ -29,6 +30,15 @@ META_STATIONS_URL = f"{OGD_FILE_BASE}/{COLLECTION_STATIONS}/ogd-smn_meta_station
 # for parameters the chosen station does not carry (issue #46).
 META_DATAINVENTORY_URL = (
     f"{OGD_FILE_BASE}/{COLLECTION_STATIONS}/ogd-smn_meta_datainventory.csv"
+)
+
+# Precipitation-only station network (ADR-0006, issue #56). Same meta shape as
+# the full SwissMetNet (A1) but ~141 stations with rre150z0 only.
+META_PRECIP_STATIONS_URL = (
+    f"{OGD_FILE_BASE}/{COLLECTION_PRECIP}/ogd-smn-precip_meta_stations.csv"
+)
+META_PRECIP_DATAINVENTORY_URL = (
+    f"{OGD_FILE_BASE}/{COLLECTION_PRECIP}/ogd-smn-precip_meta_datainventory.csv"
 )
 
 # Pollen metadata (download once, cache): station list, parameter names, and
@@ -179,6 +189,15 @@ def station_now_url(abbr: str) -> str:
     """URL of a station's 10-minute ``now`` file (the one to poll)."""
     lower = abbr.lower()
     return f"{OGD_FILE_BASE}/{COLLECTION_STATIONS}/{lower}/ogd-smn_{lower}_t_now.csv"
+
+
+def precip_station_now_url(abbr: str) -> str:
+    """URL of a precipitation station's 10-minute ``now`` file."""
+    lower = abbr.lower()
+    return (
+        f"{OGD_FILE_BASE}/{COLLECTION_PRECIP}/{lower}"
+        f"/ogd-smn-precip_{lower}_t_now.csv"
+    )
 
 
 def station_stac_item_url(abbr: str) -> str:
