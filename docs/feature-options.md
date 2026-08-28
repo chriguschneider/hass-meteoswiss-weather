@@ -200,12 +200,15 @@ numbers (up to 8 more files; ~7–11 MB each at the A5 default horizon,
   for the summit, current conditions and snow depth (B1) from the
   nearest mountain station. Effort S–M; config surface change, no ADR
   expected.
-- [x] **B16 — Daily wind derived from the hourly forecast** (added and
-  selected 2026-08-28). The dataset has no daily wind parameter; with
-  the hourly opt-in on, the daily entries get the day's maximum wind
-  speed, maximum gust and the direction at that hour, aggregated per
-  local calendar day. Days beyond the hourly horizon stay empty rather
-  than guessed. Effort S; no new data, no option, no ADR.
+- [x] **B16 — Daily wind derived from the hourly wind files, on by
+  default** (added and selected 2026-08-28, reshaped the same day). The
+  dataset has no daily wind parameter, but the three hourly wind files
+  are point-major (#50): one point's block costs ~5 KB each, so the
+  daily forecast can carry the day's maximum wind speed, maximum gust
+  and the direction at that hour **for every user**, without the
+  hourly opt-in — ~0.5 MB/day. Guardrail: if a file turns out not to
+  be point-major, the wind stays empty; no full download for a default
+  feature. Effort S on top of #50; one line in the ADR-0002 revision.
 
 ## Deliberate non-goals
 
@@ -250,7 +253,7 @@ it until the upstream beta exists.
    opt-in with per-entity gating, one ADR-0002 revision for the set,
    after A5; nearly free once A4 ships. B14 — tiered refresh, on top
    of A5, same ADR-0002 revision. B15 — mountain points in the config
-   flow, after the P1 basics. B16 — daily wind from the hourly data,
-   any time after the hourly path exists.
+   flow, after the P1 basics. B16 — daily wind from the point-major
+   wind files, on by default, right after #50.
 2. **Still open:** A1, A2, A14.
 3. **Alongside (human):** A12, A13, A15.
