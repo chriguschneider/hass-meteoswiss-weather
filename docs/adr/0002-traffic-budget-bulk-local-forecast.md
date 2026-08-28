@@ -5,6 +5,7 @@
 - **Revised:** 2026-08-28 (issue #50) — see [Revision](#revision-2026-08-28-issue-50)
 - **Revised again:** 2026-08-28 (issue #54) — see [Revision 2](#revision-2-2026-08-28-issue-54)
 - **Revised again:** 2026-08-28 (issue #60) — see [Revision 3](#revision-3-2026-08-28-issue-60)
+- **Revised again:** 2026-08-28 (issue #55) — see [Revision 4](#revision-4-2026-08-28-issue-55)
 
 ## Context
 
@@ -182,3 +183,27 @@ request stays conditional, parsing stays in the executor — are unchanged.
 The wind block fetches are guarded by the same point-major detection that
 the hourly fetch uses (Revision 1); adding a non-point-major wind file in a
 future run would only suppress wind fields, never trigger a full download.
+
+## Revision 4 (2026-08-28, issue #55)
+
+**Three additional point-major files join the hourly minimum set.** The files
+`rp0003i0` (3-hour precipitation probability, integer %), `zprfr0hs` (zero-degree
+level, m) and `gre000h0` (global radiation, W/m²) are all point-major (measured
+2026-08-28: ~5 KB per point block). They are fetched whenever the hourly opt-in
+is on — no per-entity gating, because each point block costs the same order as
+the existing point-major files (symbol, precipitation, wind).
+
+**Revised budget** (hourly opt-in, default horizon): the point-major group grows
+from 5 to 8 files, adding ~15 KB per refresh of the point-major tier (~5 KB each).
+Total point-major cost per run: **~40 KB** instead of ~25 KB — still negligible.
+The date-major temperature file and the near/far tier schedule are unchanged.
+
+**New hourly fields** exposed by the weather entity and the `HourlyForecast` model:
+- `precipitation_probability` (B7): the 3-hour rolling probability ending at the
+  forecast hour, mapped to the standard HA `precipitation_probability` forecast key.
+- `zero_degree_level` (B8): m above sea level; additionally exposed as a sensor
+  showing the current hour's value (snow-line material; hourly opt-in required).
+- `radiation` (B10): global radiation (W/m²); hourly forecast attribute only.
+
+The decisions above — daily stays default, hourly stays opt-in, every request
+stays conditional, parsing stays in the executor — are unchanged.

@@ -38,6 +38,7 @@
       "temp_max_today": { "name": "High temperature today" },
       "temp_min_today": { "name": "Low temperature today" },
       "precipitation_today": { "name": "Precipitation today" },
+      "zero_degree_level": { "name": "Zero-degree level" },
       "pollen_grasses": { "name": "Grass pollen" },
       "pollen_birch": { "name": "Birch pollen" },
       "pollen_alder": { "name": "Alder pollen" },

@@ -268,7 +268,7 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
     @staticmethod
     def _as_hourly_forecast(hour: HourlyForecast) -> Forecast:
         # The hourly symbol (jww003i0) already encodes the day/night variant.
-        return {
+        forecast: Forecast = {
             "datetime": hour.time.isoformat(),
             "condition": condition_for_symbol(hour.symbol),
             "native_temperature": hour.temperature,
@@ -277,6 +277,12 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
             "native_wind_gust_speed": hour.gust_kmh,
             "wind_bearing": hour.wind_bearing,
         }
+        # B7: precipitation probability is a standard HA forecast field.
+        if hour.precipitation_probability is not None:
+            forecast["precipitation_probability"] = round(
+                hour.precipitation_probability
+            )
+        return forecast
 
     @callback
     def _handle_coordinator_update(self) -> None:

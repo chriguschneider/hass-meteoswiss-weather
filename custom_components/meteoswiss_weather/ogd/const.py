@@ -93,6 +93,13 @@ HOURLY_SYMBOL = "jww003i0"
 HOURLY_WIND_SPEED = "fu3010h0"
 HOURLY_GUST = "fu3010h1"
 HOURLY_WIND_DIRECTION = "dkl010h0"
+# B7: 3-hour precipitation probability (rolling window ending at Date),
+# B8: zero-degree level (snow-line material), B10: global radiation.
+# All three are point-major (~5 KB block); they join the hourly minimum set
+# whenever the hourly opt-in is on (issue #55, ADR-0002 revision 4).
+HOURLY_PRECIP_PROBABILITY = "rp0003i0"
+HOURLY_ZERO_DEGREE = "zprfr0hs"
+HOURLY_RADIATION = "gre000h0"
 HOURLY_REQUIRED_PARAMS: tuple[str, ...] = (
     HOURLY_TEMPERATURE,
     HOURLY_PRECIPITATION,
@@ -100,6 +107,9 @@ HOURLY_REQUIRED_PARAMS: tuple[str, ...] = (
     HOURLY_WIND_SPEED,
     HOURLY_GUST,
     HOURLY_WIND_DIRECTION,
+    HOURLY_PRECIP_PROBABILITY,
+    HOURLY_ZERO_DEGREE,
+    HOURLY_RADIATION,
 )
 
 # The tiered refresh (issue #68, ADR-0002 revision 2) fetches the required set in
@@ -118,6 +128,9 @@ HOURLY_POINT_MAJOR_PARAMS: tuple[str, ...] = (
     HOURLY_WIND_SPEED,
     HOURLY_GUST,
     HOURLY_WIND_DIRECTION,
+    HOURLY_PRECIP_PROBABILITY,
+    HOURLY_ZERO_DEGREE,
+    HOURLY_RADIATION,
 )
 
 # The three point-major hourly wind files fetched with every daily refresh to

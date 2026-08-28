@@ -33,7 +33,10 @@ from custom_components.meteoswiss_weather.ogd.const import (
     COLLECTION_FORECAST,
     DAILY_REQUIRED_PARAMS,
     DAILY_WIND_PARAMS,
+    HOURLY_PRECIP_PROBABILITY,
+    HOURLY_RADIATION,
     HOURLY_REQUIRED_PARAMS,
+    HOURLY_ZERO_DEGREE,
     META_POINT_URL,
     stac_items_url,
 )
@@ -426,6 +429,75 @@ async def test_bulk_backend_fetch_hourly(session) -> None:
     assert len(hourly) == 24
     assert hourly[0].temperature == 10.0
     assert hourly[0].wind_bearing == 180
+
+
+# --- B7/B8/B10 additions (issue #55) ----------------------------------------
+
+
+def test_parse_hourly_b7_precipitation_probability() -> None:
+    """B7: rp0003i0 maps to precipitation_probability on HourlyForecast.
+
+    The fixture sets 0% for most hours and 30% at hour 12 (rolling 3-hour
+    window ending at Date, per docs/ogd.md §E4 rp0003i0 semantics).
+    """
+    text = _fixture_text(f"vnut12.lssw.{RUN_TS}.{HOURLY_PRECIP_PROBABILITY}.csv")
+    hourly = parse_hourly({HOURLY_PRECIP_PROBABILITY: text}, _koeniz_point())
+    assert len(hourly) == 24
+    # Hour 0: 0% probability
+    assert hourly[0].precipitation_probability == 0.0
+    # Hour 12: 30% probability (the distinctive value set in the fixture)
+    noon = next(h for h in hourly if h.time.hour == 12)
+    assert noon.precipitation_probability == 30.0
+    # Other hourly fields not in this file stay None.
+    assert all(h.temperature is None for h in hourly)
+    assert all(h.symbol is None for h in hourly)
+
+
+def test_parse_hourly_b8_zero_degree_level() -> None:
+    """B8: zprfr0hs maps to zero_degree_level on HourlyForecast.
+
+    The fixture uses 2500 + h*5 for point 309800;2, so hour 0 = 2500 m.
+    """
+    text = _fixture_text(f"vnut12.lssw.{RUN_TS}.{HOURLY_ZERO_DEGREE}.csv")
+    hourly = parse_hourly({HOURLY_ZERO_DEGREE: text}, _koeniz_point())
+    assert len(hourly) == 24
+    assert hourly[0].zero_degree_level == 2500.0
+    # All 24 hours have a value.
+    assert all(h.zero_degree_level is not None for h in hourly)
+
+
+def test_parse_hourly_b10_radiation() -> None:
+    """B10: gre000h0 maps to radiation on HourlyForecast.
+
+    The fixture sets 0 W/m² at night and a positive value at hour 10 (daytime).
+    """
+    text = _fixture_text(f"vnut12.lssw.{RUN_TS}.{HOURLY_RADIATION}.csv")
+    hourly = parse_hourly({HOURLY_RADIATION: text}, _koeniz_point())
+    assert len(hourly) == 24
+    # Hour 0 (UTC midnight = nighttime in CEST): 0 W/m²
+    assert hourly[0].radiation == 0.0
+    # Hour 10 (UTC): positive radiation (peak of the day in the fixture)
+    h10 = next(h for h in hourly if h.time.hour == 10)
+    assert h10.radiation is not None and h10.radiation > 0
+
+
+def test_parse_hourly_b7_b8_b10_merged_with_full_set() -> None:
+    """All three new fields survive the multi-file merge with the minimum set."""
+    hourly = parse_hourly(_hourly_texts(), _koeniz_point())
+    assert len(hourly) == 24
+
+    # B7: precipitation probability from fixture
+    assert hourly[0].precipitation_probability == 0.0
+    noon = next(h for h in hourly if h.time.hour == 12)
+    assert noon.precipitation_probability == 30.0
+
+    # B8: zero-degree level from fixture (hour 0 = 2500 m)
+    assert hourly[0].zero_degree_level == 2500.0
+
+    # B10: radiation from fixture (hour 0 = 0 W/m², hour 10 > 0)
+    assert hourly[0].radiation == 0.0
+    h10 = next(h for h in hourly if h.time.hour == 10)
+    assert h10.radiation is not None and h10.radiation > 0
 
 
 # --- daily wind aggregation (issue #60) ------------------------------------
