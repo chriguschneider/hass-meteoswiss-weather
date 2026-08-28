@@ -15,6 +15,14 @@ on:
   # auto-merges are caught by the timer below thanks to GitHub's loop guard).
   pull_request:
     types: [closed]
+  # The reliable drivers. Every completed CI or review run and every issue
+  # label/assignment change re-evaluates the gate below; the gate is
+  # idempotent (an open agent PR stops it), so extra triggers cost ~10 s.
+  workflow_run:
+    workflows: ["CI", "Claude (review + auto-merge)"]
+    types: [completed]
+  issues:
+    types: [labeled, unlabeled, unassigned, reopened]
   schedule:
     # Off the :00/:30 slots -- GitHub delays or drops scheduled runs under load.
     - cron: "13,43 * * * *"
@@ -32,9 +40,11 @@ jobs:
     # used to leave the chain dead until the next cron tick, and GitHub fires
     # the cron only best-effort (observed on 2026-08-28: about every 10 h
     # instead of every 30 min). The open-PR gate below prevents double-starts.
+    # Every event re-evaluates the gate; the only exclusion is a foreign bot
+    # actor (dependabot pushes trigger CI too), which the Claude action would
+    # refuse anyway.
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.merged == true
+      !endsWith(github.actor, '[bot]') || github.actor == 'claude[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -57,6 +67,10 @@ jobs:
       - uses: actions/checkout@v7
         if: steps.token.outputs.present == 'true'
         with:
+          # Always the default branch: the agent branches from it, and the
+          # event's own ref (a closed PR's merge ref, a workflow_run's head)
+          # is not what the work should start from.
+          ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 0
           # See claude-review.yml: checkout@v7's includeIf credentials would
           # make agent pushes go out as github-actions[bot].
