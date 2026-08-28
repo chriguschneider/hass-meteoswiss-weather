@@ -104,8 +104,8 @@ Imports the configured station's **official hourly history** into Home Assistant
 | field | required | default | meaning |
 |---|---|---|---|
 | `config_entry_id` | yes | — | which MeteoSwiss Weather entry (station) to import |
-| `start` | no | 1 January of the current year | earliest time to import (UTC when no timezone is given) |
-| `end` | no | now | latest time to import (UTC when no timezone is given) |
+| `start` | no | 1 January of the current year | earliest time to import (local time when no timezone is given) |
+| `end` | no | now | latest time to import (local time when no timezone is given) |
 
 **Traffic (one-off, outside the recurring budget):** this is the only place the integration reads the history files, and only when you call it. The download is one file at a time (largest ≈ 13 MB), parsed in the executor. Rough sizes per station (ADR-0007): the **current year ≈ 1 MB**, a **past decade ≈ 8–13 MB**, and **everything since 1980 ≈ 45 MB**. Pick the smallest range you need.
 

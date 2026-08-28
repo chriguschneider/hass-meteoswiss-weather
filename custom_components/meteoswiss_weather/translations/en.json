@@ -133,11 +133,11 @@
         },
         "start": {
           "name": "Start",
-          "description": "Earliest time to import (UTC when no timezone is given). Defaults to 1 January of the current year."
+          "description": "Earliest time to import (local time when no timezone is given). Defaults to 1 January of the current year."
         },
         "end": {
           "name": "End",
-          "description": "Latest time to import (UTC when no timezone is given). Defaults to now."
+          "description": "Latest time to import (local time when no timezone is given). Defaults to now."
         }
       }
     }

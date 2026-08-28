@@ -133,11 +133,11 @@
         },
         "start": {
           "name": "Start",
-          "description": "Frühester zu importierender Zeitpunkt (UTC, wenn keine Zeitzone angegeben ist). Standard: 1. Januar des laufenden Jahres."
+          "description": "Frühester zu importierender Zeitpunkt (lokale Zeit, wenn keine Zeitzone angegeben ist). Standard: 1. Januar des laufenden Jahres."
         },
         "end": {
           "name": "Ende",
-          "description": "Spätester zu importierender Zeitpunkt (UTC, wenn keine Zeitzone angegeben ist). Standard: jetzt."
+          "description": "Spätester zu importierender Zeitpunkt (lokale Zeit, wenn keine Zeitzone angegeben ist). Standard: jetzt."
         }
       }
     }

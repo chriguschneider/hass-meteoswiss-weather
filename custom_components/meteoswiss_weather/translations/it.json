@@ -133,11 +133,11 @@
         },
         "start": {
           "name": "Inizio",
-          "description": "Ora più remota da importare (UTC se non è indicato alcun fuso orario). Predefinito: 1° gennaio dell'anno corrente."
+          "description": "Ora più remota da importare (ora locale se non è indicato alcun fuso orario). Predefinito: 1° gennaio dell'anno corrente."
         },
         "end": {
           "name": "Fine",
-          "description": "Ora più recente da importare (UTC se non è indicato alcun fuso orario). Predefinito: adesso."
+          "description": "Ora più recente da importare (ora locale se non è indicato alcun fuso orario). Predefinito: adesso."
         }
       }
     }

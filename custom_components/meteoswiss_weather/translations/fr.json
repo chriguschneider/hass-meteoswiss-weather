@@ -133,11 +133,11 @@
         },
         "start": {
           "name": "Début",
-          "description": "Heure la plus ancienne à importer (UTC si aucun fuseau horaire n'est indiqué). Par défaut : 1er janvier de l'année en cours."
+          "description": "Heure la plus ancienne à importer (heure locale si aucun fuseau horaire n'est indiqué). Par défaut : 1er janvier de l'année en cours."
         },
         "end": {
           "name": "Fin",
-          "description": "Heure la plus récente à importer (UTC si aucun fuseau horaire n'est indiqué). Par défaut : maintenant."
+          "description": "Heure la plus récente à importer (heure locale si aucun fuseau horaire n'est indiqué). Par défaut : maintenant."
         }
       }
     }
