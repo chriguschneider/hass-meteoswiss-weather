@@ -652,6 +652,38 @@ async def test_get_wind_texts_missing_wind_assets_returns_none(session) -> None:
     assert backend._wind_texts == {}
 
 
+async def test_bulk_backend_fetch_daily_wind_fetch_error_degrades_to_none(
+    session,
+) -> None:
+    """A transient connection error on a wind block degrades wind to None and
+    still returns the daily forecast (temperature/precipitation/symbol).
+
+    Wind is a best-effort bonus on the default daily refresh; a wind-file hiccup
+    must not fail the whole update and lose the small daily files that fetched
+    fine (ADR-0002 revision 3 — the same "never crash the default daily refresh"
+    contract as the missing-asset and non-point-major guardrails).
+    """
+    with aioresponses() as mock:
+        mock.get(ITEMS_URL, status=200,
+                 body=_fixture_bytes("ogd-local-forecasting_items.json"))
+        for param in DAILY_REQUIRED_PARAMS:
+            mock.get(_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        # Every wind block probe returns HTTP 503 → OgdConnectionError.
+        for param in DAILY_WIND_PARAMS:
+            mock.get(_asset_url(param), status=503, repeat=True)
+        backend = BulkCsvBackend(session)
+        daily = await backend.fetch_daily(_koeniz_point())
+
+    # Daily forecast is intact; wind fields degraded to None, not an exception.
+    assert daily[0].temp_max == 29.3
+    assert all(d.native_wind_speed is None for d in daily)
+    assert all(d.native_wind_gust_speed is None for d in daily)
+    assert all(d.wind_bearing is None for d in daily)
+    # Sentinel cached so a repeat call for the same run short-circuits.
+    assert backend._wind_texts == {}
+
+
 async def test_bulk_backend_fetch_hourly_reuses_daily_wind_cache(session) -> None:
     """When fetch_daily() has cached point-major wind for the same run,
     fetch_hourly() does not download the wind files a second time.
