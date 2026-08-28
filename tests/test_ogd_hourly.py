@@ -300,3 +300,91 @@ async def test_fetch_hourly_file_fallback_downloads_full(monkeypatch, caplog) ->
     # The whole file came back; parsing still finds the point's rows.
     hourly = parse_hourly({"tre200h0": result.text}, _TARGET, None)
     assert len(hourly) == _HOURS
+
+
+# --- horizon_start lower bound (issue #92) ----------------------------------
+
+
+def _make_csv(header: str, rows: list[tuple]) -> str:
+    """Build a minimal CSV string from a header and value tuples."""
+    lines = [header]
+    for row in rows:
+        lines.append(";".join(str(v) for v in row))
+    return "\n".join(lines) + "\n"
+
+
+_CSV_HEADER = "point_id;point_type_id;Date;tre200h0"
+_PID, _PTYPE = _TARGET.point_id, _TARGET.point_type_id
+
+
+def _row(dt: datetime, val: float) -> tuple:
+    return (_PID, _PTYPE, dt.strftime("%Y%m%d%H%M"), val)
+
+
+def test_horizon_start_drops_past_hours() -> None:
+    """Hours strictly before horizon_start are dropped; the running hour is kept."""
+    h0 = datetime(2026, 8, 28, 19, 0, tzinfo=UTC)  # the "current" hour
+    rows = [_row(h0 - timedelta(hours=2), 1.0),  # 17:00 — 2 h ago
+            _row(h0 - timedelta(hours=1), 2.0),  # 18:00 — 1 h ago
+            _row(h0, 3.0),                        # 19:00 — running hour
+            _row(h0 + timedelta(hours=1), 4.0)]   # 20:00 — future
+    text = _make_csv(_CSV_HEADER, rows)
+    hourly = parse_hourly({"tre200h0": text}, _TARGET, horizon_start=h0)
+    assert [h.time for h in hourly] == [h0, h0 + timedelta(hours=1)]
+
+
+def test_horizon_start_keeps_running_hour() -> None:
+    """The hour that equals horizon_start (the running hour) is kept."""
+    h0 = datetime(2026, 8, 28, 20, 0, tzinfo=UTC)
+    text = _make_csv(_CSV_HEADER, [_row(h0, 22.2)])
+    hourly = parse_hourly({"tre200h0": text}, _TARGET, horizon_start=h0)
+    assert len(hourly) == 1
+    assert hourly[0].time == h0
+
+
+def test_full_run_still_trims_past() -> None:
+    """horizon_start applies even when horizon_end is None (full-run mode)."""
+    h0 = datetime(2026, 8, 28, 20, 0, tzinfo=UTC)
+    rows = [_row(h0 - timedelta(hours=23), 1.0),
+            _row(h0, 2.0),
+            _row(h0 + timedelta(hours=1), 3.0)]
+    text = _make_csv(_CSV_HEADER, rows)
+    # horizon_end=None is the full-run sentinel; the lower bound still fires.
+    hourly = parse_hourly({"tre200h0": text}, _TARGET, horizon_end=None,
+                          horizon_start=h0)
+    assert [h.time for h in hourly] == [h0, h0 + timedelta(hours=1)]
+
+
+def test_ragged_head_within_single_tier() -> None:
+    """A parameter file that starts earlier than the others is trimmed.
+
+    Simulates two point-major parameters: one starts at h0-1, the other at h0.
+    With horizon_start=h0, only h0 onward survives from both files, so the
+    first merged hour has both fields present rather than one ragged field.
+    """
+    from custom_components.meteoswiss_weather.ogd.const import (
+        HOURLY_WIND_DIRECTION,
+        HOURLY_WIND_SPEED,
+    )
+
+    h0 = datetime(2026, 8, 28, 20, 0, tzinfo=UTC)
+    # wind_direction file starts one hour early (ragged head).
+    dir_csv = _make_csv(
+        f"point_id;point_type_id;Date;{HOURLY_WIND_DIRECTION}",
+        [_row(h0 - timedelta(hours=1), 219.0),
+         _row(h0, 210.0)]
+    )
+    # wind_speed file starts at h0.
+    spd_csv = _make_csv(
+        f"point_id;point_type_id;Date;{HOURLY_WIND_SPEED}",
+        [_row(h0, 12.0)]
+    )
+    hourly = parse_hourly(
+        {HOURLY_WIND_DIRECTION: dir_csv, HOURLY_WIND_SPEED: spd_csv},
+        _TARGET,
+        horizon_start=h0,
+    )
+    assert len(hourly) == 1
+    assert hourly[0].time == h0
+    assert hourly[0].wind_bearing == 210.0
+    assert hourly[0].wind_speed_kmh == 12.0

@@ -534,3 +534,146 @@ async def test_provider_percentile_option_fetches_and_merges_band(
     assert hourly[0].temperature_p10 == 8.0
     assert hourly[0].temperature_p90 == 13.0
     assert hourly[0].cloud_high is None
+
+
+# ---------------------------------------------------------------------------
+# _merge: required-field gate and optional-field pass-through (issue #92)
+# ---------------------------------------------------------------------------
+
+
+def _complete_hour(when: datetime) -> HourlyForecast:
+    """A fully populated hour (all required fields present)."""
+    return HourlyForecast(
+        time=when,
+        temperature=20.0,
+        precipitation=0.0,
+        symbol=1,
+        wind_speed_kmh=10.0,
+        gust_kmh=15.0,
+        wind_bearing=270,
+        precipitation_probability=30.0,
+    )
+
+
+def _provider_with_groups(
+    hass,
+    date_major: dict[datetime, HourlyForecast],
+    point_major: dict[datetime, HourlyForecast],
+) -> HourlyForecastProvider:
+    """Return a provider whose two groups are pre-seeded (no fetch needed)."""
+    provider = HourlyForecastProvider(
+        hass, _RecordingBackend(), _POINT, enabled=True, horizon_days=2
+    )
+    provider._date_major = date_major
+    provider._point_major = point_major
+    return provider
+
+
+async def test_merge_drops_hour_missing_temperature(hass: HomeAssistant) -> None:
+    """An hour present only in point_major (no temperature) is not emitted."""
+    h0 = datetime(2026, 8, 28, 20, 0, tzinfo=UTC)
+    # date_major has no entry for h0; point_major does.
+    dm = {}
+    pm = {h0: _complete_hour(h0)}
+    provider = _provider_with_groups(hass, dm, pm)
+    result = provider._merge()
+    assert result == []
+
+
+async def test_merge_drops_hour_missing_symbol(hass: HomeAssistant) -> None:
+    """An hour whose symbol is None (ragged point-major head) is not emitted."""
+    h0 = datetime(2026, 8, 28, 20, 0, tzinfo=UTC)
+    # Both groups have h0, but point-major symbol is missing.
+    dm = {h0: HourlyForecast(time=h0, temperature=20.0)}
+    block = HourlyForecast(time=h0, precipitation=0.0, symbol=None, wind_speed_kmh=10.0)
+    pm = {h0: block}
+    provider = _provider_with_groups(hass, dm, pm)
+    result = provider._merge()
+    assert result == []
+
+
+async def test_merge_drops_hour_missing_wind_speed(hass: HomeAssistant) -> None:
+    """An hour whose wind_speed_kmh is None is not emitted."""
+    h0 = datetime(2026, 8, 28, 20, 0, tzinfo=UTC)
+    dm = {h0: HourlyForecast(time=h0, temperature=20.0)}
+    block = HourlyForecast(time=h0, precipitation=0.0, symbol=1, wind_speed_kmh=None)
+    pm = {h0: block}
+    provider = _provider_with_groups(hass, dm, pm)
+    result = provider._merge()
+    assert result == []
+
+
+async def test_merge_keeps_hour_missing_only_optional_fields(
+    hass: HomeAssistant,
+) -> None:
+    """An hour with all required fields is emitted even if optional fields are None.
+
+    precipitation_probability, zero_degree_level, radiation and the B9/B11
+    gated fields are optional and must never gate an otherwise good hour.
+    """
+    h0 = datetime(2026, 8, 28, 20, 0, tzinfo=UTC)
+    dm = {h0: HourlyForecast(time=h0, temperature=20.0)}
+    block = HourlyForecast(
+        time=h0,
+        precipitation=0.0,
+        symbol=1,
+        wind_speed_kmh=10.0,
+        # All optional fields absent.
+        precipitation_probability=None,
+        zero_degree_level=None,
+        radiation=None,
+    )
+    pm = {h0: block}
+    provider = _provider_with_groups(hass, dm, pm)
+    result = provider._merge()
+    assert len(result) == 1
+    assert result[0].time == h0
+    assert result[0].temperature == 20.0
+    assert result[0].precipitation_probability is None
+
+
+async def test_merge_complete_hours_pass_through(hass: HomeAssistant) -> None:
+    """Hours with all required fields in both groups are emitted intact."""
+    h0 = datetime(2026, 8, 28, 20, 0, tzinfo=UTC)
+    h1 = h0 + timedelta(hours=1)
+    dm = {
+        h0: HourlyForecast(time=h0, temperature=20.0),
+        h1: HourlyForecast(time=h1, temperature=21.0),
+    }
+    pm = {
+        h0: HourlyForecast(time=h0, precipitation=0.0, symbol=1, wind_speed_kmh=10.0),
+        h1: HourlyForecast(time=h1, precipitation=0.5, symbol=6, wind_speed_kmh=15.0),
+    }
+    provider = _provider_with_groups(hass, dm, pm)
+    result = provider._merge()
+    assert len(result) == 2
+    assert result[0].time == h0
+    assert result[1].time == h1
+    assert result[1].temperature == 21.0
+    assert result[1].symbol == 6
+
+
+async def test_merge_near_only_refresh_drops_ragged_head(
+    hass: HomeAssistant,
+) -> None:
+    """After a near-only refresh, an hour that exists only in date_major is dropped.
+
+    This covers the scenario where the near tier has a fresher temperature
+    for an hour that the point_major group does not yet cover: _merge must not
+    emit a temperature-only stub.
+    """
+    h0 = datetime(2026, 8, 28, 20, 0, tzinfo=UTC)
+    h1 = h0 + timedelta(hours=1)
+    # Near fetch brought h0 into date_major but point_major has only h1.
+    dm = {
+        h0: HourlyForecast(time=h0, temperature=20.0),
+        h1: HourlyForecast(time=h1, temperature=21.0),
+    }
+    pm = {
+        h1: HourlyForecast(time=h1, precipitation=0.5, symbol=6, wind_speed_kmh=15.0),
+    }
+    provider = _provider_with_groups(hass, dm, pm)
+    result = provider._merge()
+    # h0 is dropped (no point-major data); h1 is complete.
+    assert len(result) == 1
+    assert result[0].time == h1

@@ -350,18 +350,34 @@ class HourlyForecastProvider:
         the cloud layers and temperature percentiles (issue #69); the
         point-major group carries precipitation, symbol, wind and the B7/B8/B10
         additions. Each hour reads its fields from whichever group holds them.
+
+        Hours that are missing any of the four fields a weather card must render
+        (temperature, symbol, precipitation, wind_speed_kmh) are dropped so a
+        tier boundary or ragged file head never emits a blank or half-filled
+        entry (issue #92).
         """
         result: list[HourlyForecast] = []
         for when in sorted(set(self._date_major) | set(self._point_major)):
             dm = self._date_major.get(when)
             block = self._point_major.get(when)
+            temperature = dm.temperature if dm else None
+            precipitation = block.precipitation if block else None
+            symbol = block.symbol if block else None
+            wind_speed_kmh = block.wind_speed_kmh if block else None
+            if (
+                temperature is None
+                or symbol is None
+                or precipitation is None
+                or wind_speed_kmh is None
+            ):
+                continue
             result.append(
                 HourlyForecast(
                     time=when,
-                    temperature=dm.temperature if dm else None,
-                    precipitation=block.precipitation if block else None,
-                    symbol=block.symbol if block else None,
-                    wind_speed_kmh=block.wind_speed_kmh if block else None,
+                    temperature=temperature,
+                    precipitation=precipitation,
+                    symbol=symbol,
+                    wind_speed_kmh=wind_speed_kmh,
                     gust_kmh=block.gust_kmh if block else None,
                     wind_bearing=block.wind_bearing if block else None,
                     precipitation_probability=(
