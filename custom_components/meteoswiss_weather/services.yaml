@@ -1,0 +1,17 @@
+import_history:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: meteoswiss_weather
+    start:
+      required: false
+      example: "2020-01-01"
+      selector:
+        datetime:
+    end:
+      required: false
+      example: "2024-12-31"
+      selector:
+        datetime:

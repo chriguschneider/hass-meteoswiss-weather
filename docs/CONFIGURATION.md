@@ -89,6 +89,42 @@ One sensor entity per measured field from the SwissMetNet station. All are disab
 
 This throttling keeps the traffic reasonable while offering a sharp hourly view to those who need it.
 
+## Services
+
+### `meteoswiss_weather.import_history`
+
+Imports the configured station's **official hourly history** into Home Assistant's **long-term statistics**, so the statistics graphs and the Energy/Statistics cards show data from before the integration was installed.
+
+**What it writes:** long-term statistics only — **not** the raw short-term states. Under the integration's own sensor statistic ids it writes hourly mean/min/max for temperature, hourly mean for humidity, dew point, pressure, wind speed, gust and global radiation, and an hourly **sum** for precipitation. Only sensors that already exist for the entry are written.
+
+**Overlaps:** re-running over a period you already imported **replaces** those hours rather than duplicating them, so the service is safe to run again.
+
+**Fields:**
+
+| field | required | default | meaning |
+|---|---|---|---|
+| `config_entry_id` | yes | — | which MeteoSwiss Weather entry (station) to import |
+| `start` | no | 1 January of the current year | earliest time to import (UTC when no timezone is given) |
+| `end` | no | now | latest time to import (UTC when no timezone is given) |
+
+**Traffic (one-off, outside the recurring budget):** this is the only place the integration reads the history files, and only when you call it. The download is one file at a time (largest ≈ 13 MB), parsed in the executor. Rough sizes per station (ADR-0007): the **current year ≈ 1 MB**, a **past decade ≈ 8–13 MB**, and **everything since 1980 ≈ 45 MB**. Pick the smallest range you need.
+
+The outcome (rows imported, statistics written, or the file that failed) is shown as a persistent notification.
+
+```yaml
+# Import the current year for one entry (find the entry id in the service UI).
+service: meteoswiss_weather.import_history
+data:
+  config_entry_id: 0123456789abcdef0123456789abcdef
+
+# Import a specific past range.
+service: meteoswiss_weather.import_history
+data:
+  config_entry_id: 0123456789abcdef0123456789abcdef
+  start: "2020-01-01 00:00:00"
+  end: "2024-12-31 23:00:00"
+```
+
 ## Dashboard Examples
 
 ### Weather Forecast Card

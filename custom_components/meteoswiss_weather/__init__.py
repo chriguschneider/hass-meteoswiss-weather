@@ -10,12 +10,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import aiohttp
+import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import ConfigEntrySelector
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_HOURLY_FORECAST,
@@ -26,14 +32,35 @@ from .const import (
     CONF_POSTAL_CODE,
     CONF_STATION_ABBR,
     DEFAULT_HOURLY_HORIZON_DAYS,
+    DOMAIN,
 )
 from .coordinator import ForecastCoordinator, StationCoordinator
+from .history import async_backfill
 from .ogd import (
     BulkCsvBackend,
     ForecastBackend,
     ForecastPoint,
     OgdError,
     fetch_datainventory,
+)
+
+# ``import_history`` service (B12b, ADR-0007): a one-off, user-triggered import
+# of a station's official hourly history into long-term statistics. Nothing polls
+# the history files — this is the only recurring-budget exception, and it only
+# runs when the user calls it.
+SERVICE_IMPORT_HISTORY = "import_history"
+ATTR_CONFIG_ENTRY_ID = "config_entry_id"
+ATTR_START = "start"
+ATTR_END = "end"
+
+_IMPORT_HISTORY_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_CONFIG_ENTRY_ID): ConfigEntrySelector(
+            {"integration": DOMAIN}
+        ),
+        vol.Optional(ATTR_START): cv.datetime,
+        vol.Optional(ATTR_END): cv.datetime,
+    }
 )
 
 # Seam for tests: replace with a FakeBackend to run without network I/O.
@@ -132,8 +159,83 @@ async def async_setup_entry(
     # coordinator and the weather entity pick up the new feature set (ADR-0002).
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
 
+    _async_register_services(hass)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+@callback
+def _async_register_services(hass: HomeAssistant) -> None:
+    """Register the domain-level ``import_history`` service once."""
+    if hass.services.has_service(DOMAIN, SERVICE_IMPORT_HISTORY):
+        return
+
+    async def _async_import_history(call: ServiceCall) -> None:
+        """Import a station's official hourly history into long-term statistics.
+
+        Defaults to the current year when no range is given (ADR-0007). Reports
+        the outcome as a persistent notification; a fetch/parse error names the
+        offending file. A one-off traffic exception outside the ADR-0002 budget.
+        """
+        entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if entry is None or entry.domain != DOMAIN:
+            raise ServiceValidationError(
+                f"No MeteoSwiss Weather config entry with id {entry_id}"
+            )
+
+        now = dt_util.utcnow()
+        # Default range is the current year; a naive user input is read as local
+        # time (Home Assistant's convention) and converted to UTC to match the
+        # history timestamps.
+        start_in = call.data.get(ATTR_START)
+        end_in = call.data.get(ATTR_END)
+        start = (
+            dt_util.as_utc(start_in)
+            if start_in
+            else datetime(now.year, 1, 1, tzinfo=UTC)
+        )
+        end = dt_util.as_utc(end_in) if end_in else now
+        if end < start:
+            raise ServiceValidationError("'end' must not be before 'start'")
+
+        station_abbr = str(entry.data[CONF_STATION_ABBR])
+        try:
+            result = await async_backfill(hass, entry, station_abbr, start, end)
+        except (OgdError, HomeAssistantError) as err:
+            _async_notify(
+                hass,
+                f"Import for {entry.title} failed: {err}",
+            )
+            raise HomeAssistantError(str(err)) from err
+
+        _async_notify(
+            hass,
+            f"Imported {result.rows} hourly history rows for {entry.title} "
+            f"({station_abbr}) across {result.series} statistics, "
+            f"{start.date().isoformat()} to {end.date().isoformat()}.",
+        )
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_IMPORT_HISTORY,
+        _async_import_history,
+        schema=_IMPORT_HISTORY_SCHEMA,
+    )
+
+
+@callback
+def _async_notify(hass: HomeAssistant, message: str) -> None:
+    """Post the import outcome as a persistent notification."""
+    from homeassistant.components import persistent_notification
+
+    persistent_notification.async_create(
+        hass,
+        message,
+        title="MeteoSwiss Weather history import",
+        notification_id=f"{DOMAIN}_import_history",
+    )
 
 
 async def _async_reload_entry(
@@ -146,5 +248,14 @@ async def _async_reload_entry(
 async def async_unload_entry(
     hass: HomeAssistant, entry: MeteoSwissConfigEntry
 ) -> bool:
-    """Unload a config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    """Unload a config entry, dropping the service once the last entry goes."""
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        remaining = [
+            other
+            for other in hass.config_entries.async_entries(DOMAIN)
+            if other.entry_id != entry.entry_id
+        ]
+        if not remaining and hass.services.has_service(DOMAIN, SERVICE_IMPORT_HISTORY):
+            hass.services.async_remove(DOMAIN, SERVICE_IMPORT_HISTORY)
+    return unloaded
