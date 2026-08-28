@@ -10,6 +10,7 @@ from __future__ import annotations
 from .backend import BulkCsvBackend, ForecastBackend
 from .const import POINT_TYPE_MOUNTAIN
 from .forecast import (
+    aggregate_daily_wind,
     fetch_points,
     mountain_points,
     nearest_point,
@@ -22,6 +23,7 @@ from .hourly import (
     AiohttpRangeReader,
     classify_layout,
     fetch_hourly_file,
+    fetch_wind_block,
     horizon_end_utc,
 )
 from .http import CachedResponse, get_text
@@ -60,6 +62,7 @@ __all__ = [
     "POINT_TYPE_MOUNTAIN",
     "CachedResponse",
     "DailyForecast",
+    "aggregate_daily_wind",
     "FileLayout",
     "ForecastBackend",
     "ForecastPoint",
@@ -77,6 +80,7 @@ __all__ = [
     "fetch_current",
     "fetch_datainventory",
     "fetch_hourly_file",
+    "fetch_wind_block",
     "fetch_points",
     "mountain_points",
     "fetch_pollen_current",

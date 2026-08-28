@@ -21,6 +21,7 @@ from custom_components.meteoswiss_weather.ogd import (
     BulkCsvBackend,
     ForecastPoint,
     OgdParseError,
+    aggregate_daily_wind,
     fetch_points,
     latest_run,
     nearest_point,
@@ -31,6 +32,7 @@ from custom_components.meteoswiss_weather.ogd import (
 from custom_components.meteoswiss_weather.ogd.const import (
     COLLECTION_FORECAST,
     DAILY_REQUIRED_PARAMS,
+    DAILY_WIND_PARAMS,
     HOURLY_REQUIRED_PARAMS,
     META_POINT_URL,
     stac_items_url,
@@ -319,12 +321,18 @@ async def test_bulk_backend_fetch_daily(session) -> None:
         for param in DAILY_REQUIRED_PARAMS:
             mock.get(_asset_url(param), status=200,
                      body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        # Wind block files — fixture is date-major so guardrail fires, wind = None.
+        for param in DAILY_WIND_PARAMS:
+            mock.get(_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
         backend = BulkCsvBackend(session)
         daily = await backend.fetch_daily(_koeniz_point())
 
     assert len(daily) == 9
     assert daily[0].temp_max == 29.3
     assert daily[0].symbol == 2
+    # The fixture wind files are date-major → guardrail fires → daily wind is None.
+    assert daily[0].native_wind_speed is None
 
 
 # --- hourly parser ----------------------------------------------------------
@@ -418,3 +426,268 @@ async def test_bulk_backend_fetch_hourly(session) -> None:
     assert len(hourly) == 24
     assert hourly[0].temperature == 10.0
     assert hourly[0].wind_bearing == 180
+
+
+# --- daily wind aggregation (issue #60) ------------------------------------
+
+
+def _wind_texts() -> dict[str, str]:
+    """The three wind fixture files as decoded text (same encoding as forecast)."""
+    return {
+        param: _fixture_text(f"vnut12.lssw.{RUN_TS}.{param}.csv")
+        for param in DAILY_WIND_PARAMS
+    }
+
+
+def _point_major_wind_text(param: str, hours: int = 24) -> str:
+    """Synthetic point-major CSV for one wind parameter.
+
+    Two points sorted by point_id so classify_layout() returns POINT_MAJOR_ID.
+    Point 1;1 carries values 10x the target; point 309800;2 starts at
+    ``param_base`` and increments by 0.5 per hour.
+    """
+    # Value for point 309800;2: hour 0 = 5.0 (speed), 8.0 (gust), 180 (dir)
+    param_base = {
+        "fu3010h0": (5.0, 0.5),
+        "fu3010h1": (8.0, 0.5),
+        "dkl010h0": (180.0, 0.0),
+    }.get(param, (0.0, 0.0))
+
+    rows = [f"point_id;point_type_id;Date;{param}"]
+    # Point 1;1 first (lower id): 24 rows
+    for h in range(hours):
+        stamp = datetime(2026, 8, 27, h, 0, tzinfo=UTC).strftime("%Y%m%d%H%M")
+        rows.append(f"1;1;{stamp};{param_base[0] * 10 + h:.1f}")
+    # Point 309800;2 second: 24 rows
+    for h in range(hours):
+        stamp = datetime(2026, 8, 27, h, 0, tzinfo=UTC).strftime("%Y%m%d%H%M")
+        val = param_base[0] + h * param_base[1]
+        rows.append(f"309800;2;{stamp};{val:.1f}")
+    return "\n".join(rows) + "\n"
+
+
+def test_aggregate_daily_wind_summer_utc_local_boundary() -> None:
+    """Fixture data covers 2026-08-27 00:00–23:00 UTC; in CEST (UTC+2) this splits
+    into local days 2026-08-27 (hours 0–21 UTC) and 2026-08-28 (hours 22–23 UTC).
+
+    Wind speed for point 309800;2: hour n → 5.0 + n*0.5 km/h (monotone ↑).
+    Gust: 8.0 + n*0.5.  Direction: always 180°.
+    """
+    result = aggregate_daily_wind(_wind_texts(), _koeniz_point())
+
+    # Local day 2026-08-27: UTC hours 0–21 (22 hours in CEST)
+    d27 = date(2026, 8, 27)
+    assert d27 in result
+    speed_27, gust_27, bearing_27 = result[d27]
+    # Max speed at hour 21 UTC: 5.0 + 21*0.5 = 15.5
+    assert speed_27 == pytest.approx(15.5)
+    # Max gust at hour 21 UTC: 8.0 + 21*0.5 = 18.5
+    assert gust_27 == pytest.approx(18.5)
+    # Direction at the max-speed hour (21 UTC) = 180
+    assert bearing_27 == pytest.approx(180.0)
+
+    # Local day 2026-08-28: UTC hours 22–23 (2 hours in CEST)
+    d28 = date(2026, 8, 28)
+    assert d28 in result
+    speed_28, gust_28, bearing_28 = result[d28]
+    # Max speed at hour 23 UTC: 5.0 + 23*0.5 = 16.5
+    assert speed_28 == pytest.approx(16.5)
+    # Max gust at hour 23 UTC: 8.0 + 23*0.5 = 19.5
+    assert gust_28 == pytest.approx(19.5)
+    assert bearing_28 == pytest.approx(180.0)
+
+
+def test_aggregate_daily_wind_winter_utc_local_boundary() -> None:
+    """In CET (UTC+1), midnight is at 23:00 UTC the previous day.
+
+    Two hours of speed data: 22:00 UTC (local day D+1: 23:00 CET → wrong day)
+    and 23:00 UTC (local day D+1: 00:00 CET next day).
+    Verifies the 23:00 UTC hour lands on the *next* local day in winter time.
+    """
+    # CET = UTC+1; 2026-01-14 23:00 UTC = 2026-01-15 00:00 CET
+    text_speed = (
+        "point_id;point_type_id;Date;fu3010h0\n"
+        "309800;2;202601142200;10.0\n"  # 2026-01-14 23:00 CET → local day 2026-01-14
+        "309800;2;202601142300;20.0\n"  # 2026-01-15 00:00 CET → local day 2026-01-15
+    )
+    texts = {"fu3010h0": text_speed}
+    result = aggregate_daily_wind(texts, _koeniz_point())
+
+    # Max speed on 2026-01-14 = 10.0 (only UTC 22:00 is on that local day)
+    assert result[date(2026, 1, 14)][0] == pytest.approx(10.0)
+    # Max speed on 2026-01-15 = 20.0 (UTC 23:00 = midnight CET)
+    assert result[date(2026, 1, 15)][0] == pytest.approx(20.0)
+
+
+def test_aggregate_daily_wind_no_gust_file() -> None:
+    """Missing gust data yields gust=None for that day; speed and bearing unaffected."""
+    texts = {k: v for k, v in _wind_texts().items() if k != "fu3010h1"}
+    result = aggregate_daily_wind(texts, _koeniz_point())
+
+    d27 = date(2026, 8, 27)
+    speed, gust, bearing = result[d27]
+    assert speed == pytest.approx(15.5)
+    assert gust is None
+    assert bearing == pytest.approx(180.0)
+
+
+def test_aggregate_daily_wind_bearing_at_max_speed_hour_not_gust_hour() -> None:
+    """Direction is taken from the hour of max *speed*, not max *gust*.
+
+    Speed peaks at hour 10 (180° bearing); gust peaks at hour 23 (90° bearing).
+    """
+    text_speed = (
+        "point_id;point_type_id;Date;fu3010h0\n"
+        "309800;2;202608270000;5.0\n"
+        "309800;2;202608271000;15.0\n"  # max speed at hour 10
+        "309800;2;202608272300;10.0\n"
+    )
+    text_gust = (
+        "point_id;point_type_id;Date;fu3010h1\n"
+        "309800;2;202608270000;6.0\n"
+        "309800;2;202608271000;14.0\n"
+        "309800;2;202608272300;25.0\n"  # max gust at hour 23
+    )
+    text_dir = (
+        "point_id;point_type_id;Date;dkl010h0\n"
+        "309800;2;202608270000;270\n"
+        "309800;2;202608271000;180\n"  # bearing at max-speed hour
+        "309800;2;202608272300;90\n"
+    )
+    texts = {"fu3010h0": text_speed, "fu3010h1": text_gust, "dkl010h0": text_dir}
+    result = aggregate_daily_wind(texts, _koeniz_point())
+
+    # All three hours are on the same local day (CEST: UTC+2, so 23:00 UTC =
+    # 01:00 CEST next day → actually 23:00 UTC falls on 2026-08-28 in CEST)
+    # Let's just check the day that has hour 10 UTC:
+    d27 = date(2026, 8, 27)
+    speed, gust, bearing = result[d27]
+    assert speed == pytest.approx(15.0)
+    assert gust == pytest.approx(14.0)   # max gust on 2026-08-27 (not hour 23)
+    assert bearing == pytest.approx(180.0)  # direction at max-speed hour (hour 10)
+
+
+def test_aggregate_daily_wind_empty_input() -> None:
+    """An empty text dict returns an empty result, not an error."""
+    assert aggregate_daily_wind({}, _koeniz_point()) == {}
+
+
+# --- backend daily wind (point-major fixture) ----------------------------------
+
+
+async def test_bulk_backend_fetch_daily_with_point_major_wind(session) -> None:
+    """When wind files are point-major, daily forecast carries wind fields."""
+    with aioresponses() as mock:
+        mock.get(ITEMS_URL, status=200,
+                 body=_fixture_bytes("ogd-local-forecasting_items.json"))
+        for param in DAILY_REQUIRED_PARAMS:
+            mock.get(_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        for param in DAILY_WIND_PARAMS:
+            mock.get(_asset_url(param), status=200,
+                     body=_point_major_wind_text(param).encode("iso-8859-1"))
+        backend = BulkCsvBackend(session)
+        daily = await backend.fetch_daily(_koeniz_point())
+
+    assert len(daily) == 9
+    assert daily[0].temp_max == 29.3   # existing field unchanged
+    # Wind fields come from the point-major blocks; first local day is 2026-08-27.
+    # In CEST the fixture hours 0–21 UTC fall on 2026-08-27: max speed = 15.5 km/h.
+    assert daily[0].native_wind_speed == pytest.approx(15.5)
+    assert daily[0].native_wind_gust_speed == pytest.approx(18.5)
+    assert daily[0].wind_bearing == pytest.approx(180.0)
+
+
+async def test_bulk_backend_fetch_daily_wind_not_point_major_returns_none(
+    session,
+) -> None:
+    """Non-point-major wind file → guardrail fires, all daily wind fields = None.
+
+    No full download is attempted: the backend returns None and logs a warning.
+    The date-major fixture files trigger this path automatically.
+    """
+    with aioresponses() as mock:
+        mock.get(ITEMS_URL, status=200,
+                 body=_fixture_bytes("ogd-local-forecasting_items.json"))
+        for param in DAILY_REQUIRED_PARAMS:
+            mock.get(_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        # Date-major fixture → classify_layout returns DATE_MAJOR → guardrail.
+        for param in DAILY_WIND_PARAMS:
+            mock.get(_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        backend = BulkCsvBackend(session)
+        daily = await backend.fetch_daily(_koeniz_point())
+
+    # Guardrail fires: wind fields are None for all nine days.
+    assert all(d.native_wind_speed is None for d in daily)
+    assert all(d.native_wind_gust_speed is None for d in daily)
+    assert all(d.wind_bearing is None for d in daily)
+    # Temperature still populated.
+    assert daily[0].temp_max == 29.3
+
+
+async def test_get_wind_texts_missing_wind_assets_returns_none(session) -> None:
+    """A daily-complete run whose wind files have not published yet degrades to
+    None, never a KeyError (issue #60).
+
+    The daily run is chosen on DAILY_REQUIRED_PARAMS alone; during a run's
+    publish window the small daily files land before the ~30 MB wind files, so
+    ``run.assets`` can lack the wind params. That must not crash the default
+    daily refresh — no request is even attempted for the absent files.
+    """
+    from custom_components.meteoswiss_weather.ogd.stac import Run
+
+    run = Run(
+        timestamp=datetime(2026, 8, 27, 3, 0, tzinfo=UTC),
+        assets={param: _asset_url(param) for param in DAILY_REQUIRED_PARAMS},
+    )
+    backend = BulkCsvBackend(session)
+
+    # No aioresponses mock registered: any HTTP attempt would raise, proving the
+    # guardrail returns before touching the network.
+    assert await backend._get_wind_texts(_koeniz_point(), run) is None
+    # Sentinel cached so a repeat call for the same run short-circuits.
+    assert backend._wind_run == run.timestamp
+    assert backend._wind_texts == {}
+
+
+async def test_bulk_backend_fetch_hourly_reuses_daily_wind_cache(session) -> None:
+    """When fetch_daily() has cached point-major wind for the same run,
+    fetch_hourly() does not download the wind files a second time.
+
+    Each wind URL is registered once (aioresponses fails on a second call
+    to an unregistered URL); the test proves exactly one fetch per file.
+    """
+    with aioresponses() as mock:
+        # STAC endpoint queried twice (once by fetch_daily, once by fetch_hourly).
+        mock.get(ITEMS_URL, status=200,
+                 body=_fixture_bytes("ogd-local-forecasting_items.json"))
+        mock.get(ITEMS_URL, status=200,
+                 body=_fixture_bytes("ogd-local-forecasting_items.json"))
+
+        for param in DAILY_REQUIRED_PARAMS:
+            mock.get(_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+
+        # Wind files registered *once*: if fetch_hourly re-fetches them the test fails.
+        for param in DAILY_WIND_PARAMS:
+            mock.get(_asset_url(param), status=200,
+                     body=_point_major_wind_text(param).encode("iso-8859-1"))
+
+        # Non-wind hourly params registered once for the hourly fetch.
+        non_wind = [p for p in HOURLY_REQUIRED_PARAMS if p not in DAILY_WIND_PARAMS]
+        for param in non_wind:
+            mock.get(_hourly_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+
+        backend = BulkCsvBackend(session)
+        point = _koeniz_point()
+        daily = await backend.fetch_daily(point)
+        hourly = await backend.fetch_hourly(point)
+
+    # Daily wind populated from the block fetch.
+    assert daily[0].native_wind_speed == pytest.approx(15.5)
+    # Hourly wind comes from the reused cache; full 24 hours returned.
+    assert len(hourly) == 24
+    assert hourly[0].wind_speed_kmh == pytest.approx(5.0)

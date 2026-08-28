@@ -4,6 +4,7 @@
 - **Date:** 2026-08-26
 - **Revised:** 2026-08-28 (issue #50) — see [Revision](#revision-2026-08-28-issue-50)
 - **Revised again:** 2026-08-28 (issue #54) — see [Revision 2](#revision-2-2026-08-28-issue-54)
+- **Revised again:** 2026-08-28 (issue #60) — see [Revision 3](#revision-3-2026-08-28-issue-60)
 
 ## Context
 
@@ -147,3 +148,37 @@ per day** — the same order as Revision 1, but the near term is at most one
 run behind the model instead of up to three hours, and an instance nobody
 looks at pays nothing. The seam and the announced per-point OGC Features
 API remain the eventual replacement for all of this.
+
+## Revision 3 (2026-08-28, issue #60)
+
+**Daily wind fields on by default.** The three point-major wind files
+(`fu3010h0`, `fu3010h1`, `dkl010h0`) are fetched concurrently with every
+daily refresh and their per-point blocks aggregated into the daily forecast:
+
+| field | meaning |
+|---|---|
+| `native_wind_speed` | maximum hourly mean wind speed of the day (km/h) |
+| `native_wind_gust_speed` | maximum hourly gust of the day (km/h) |
+| `wind_bearing` | direction at the hour of maximum wind speed (°) |
+
+**Cost per run:** three block fetches at ~5 KB each ≈ **~15 KB** added to
+the default daily refresh (~5 MB total). This is negligible next to the
+existing daily files and well inside the budget for a default feature
+(issue #34 set the bar at "order of 5 MB"; this raises it to ~5.015 MB).
+
+**Guardrail:** `fetch_wind_block()` returns `None` for any file that is not
+point-major. `_get_wind_texts()` in the backend logs a warning and sets a
+sentinel value so no full-file download is ever triggered for a default
+feature; wind fields remain `None` for that run.
+
+**Cache sharing:** the wind block texts are cached by run stamp on the
+backend instance. When the lazy hourly fetch runs for the same run, it
+reuses the cached texts without a second download; when no cache hit exists
+(e.g. hourly fetch before the first daily refresh), all `HOURLY_REQUIRED_PARAMS`
+are fetched as before (pre-#60 behaviour).
+
+The decisions above — daily stays default, hourly stays opt-in, every
+request stays conditional, parsing stays in the executor — are unchanged.
+The wind block fetches are guarded by the same point-major detection that
+the hourly fetch uses (Revision 1); adding a non-point-major wind file in a
+future run would only suppress wind fields, never trigger a full download.

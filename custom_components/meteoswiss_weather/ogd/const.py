@@ -102,6 +102,19 @@ HOURLY_REQUIRED_PARAMS: tuple[str, ...] = (
     HOURLY_WIND_DIRECTION,
 )
 
+# The three point-major hourly wind files fetched with every daily refresh to
+# populate ``native_wind_speed``, ``native_wind_gust_speed``, and
+# ``wind_bearing`` on each ``DailyForecast`` entry (issue #60, ADR-0002
+# revision 3). Each file's block is ~5 KB; all three together cost ~15 KB plus
+# three verification probes — well inside the daily budget. If a file is
+# detected as non-point-major the daily wind fields are set to None (guardrail:
+# the full 30 MB download is never triggered for a default feature).
+DAILY_WIND_PARAMS: tuple[str, ...] = (
+    HOURLY_WIND_SPEED,
+    HOURLY_GUST,
+    HOURLY_WIND_DIRECTION,
+)
+
 # Per-file HTTP-Range strategy for the hourly bulk files (issue #50, ADR-0002
 # revision). The 30 MB files have two layouts, detected at runtime:
 #   - "date-major": rows sorted by Date, so the earliest hours of every point

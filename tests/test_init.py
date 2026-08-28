@@ -29,6 +29,7 @@ from custom_components.meteoswiss_weather.const import (
 )
 from custom_components.meteoswiss_weather.ogd.const import (
     DAILY_REQUIRED_PARAMS,
+    DAILY_WIND_PARAMS,
     HOURLY_REQUIRED_PARAMS,
     station_now_url,
 )
@@ -86,9 +87,33 @@ def _daily_calls(aioclient_mock: AiohttpClientMocker) -> int:
     )
 
 
+# Hourly-only params: the three non-wind files (temperature, precipitation,
+# symbol) that are fetched exclusively by the opt-in hourly forecast and never
+# by the default daily refresh. Wind files (fu3010h0, fu3010h1, dkl010h0) are
+# point-major block-fetched on every daily refresh (issue #60) so they are
+# tracked separately by _wind_calls() below.
+_HOURLY_ONLY_PARAMS = tuple(
+    p for p in HOURLY_REQUIRED_PARAMS if p not in DAILY_WIND_PARAMS
+)
+
+
 def _hourly_calls(aioclient_mock: AiohttpClientMocker) -> int:
-    """Number of hourly parameter-file downloads recorded so far."""
-    suffixes = tuple(f"{_RUN_TS}.{param}.csv" for param in HOURLY_REQUIRED_PARAMS)
+    """Opt-in hourly-forecast file downloads (excludes daily-wind files).
+
+    Counts only the three non-wind hourly parameters so tests that verify the
+    lazy hourly behaviour are not confused by the daily wind fetch (issue #60).
+    """
+    suffixes = tuple(f"{_RUN_TS}.{param}.csv" for param in _HOURLY_ONLY_PARAMS)
+    return sum(
+        1
+        for _method, url, *_ in aioclient_mock.mock_calls
+        if url.path.endswith(suffixes)
+    )
+
+
+def _wind_calls(aioclient_mock: AiohttpClientMocker) -> int:
+    """Number of wind-block file downloads (daily wind fetch, issue #60)."""
+    suffixes = tuple(f"{_RUN_TS}.{param}.csv" for param in DAILY_WIND_PARAMS)
     return sum(
         1
         for _method, url, *_ in aioclient_mock.mock_calls
@@ -254,7 +279,12 @@ async def test_hourly_provider_fetches_once_and_caches(
     """
     start = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
     run = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
-    n_params = len(HOURLY_REQUIRED_PARAMS)
+    # Wind files (fu3010h0/fu3010h1/dkl010h0) are now fetched on every daily
+    # refresh (issue #60). With the fixture's date-major layout the guardrail
+    # fires, so fetch_hourly() falls back to fetching all HOURLY_REQUIRED_PARAMS.
+    # _hourly_calls() excludes wind files (counted by _wind_calls()); only the
+    # three non-wind params (tre200h0, rre150h0, jww003i0) appear in the count.
+    n_params = len(_HOURLY_ONLY_PARAMS)
 
     with freeze_time(start) as frozen:
         hourly_config_entry.add_to_hass(hass)
@@ -300,7 +330,7 @@ async def test_run_change_fetches_hourly_only_with_subscriber(
     """
     from homeassistant.components.weather import DOMAIN as WEATHER_DOMAIN
 
-    n_params = len(HOURLY_REQUIRED_PARAMS)
+    n_params = len(_HOURLY_ONLY_PARAMS)
 
     with freeze_time(datetime(2026, 8, 27, 2, 0, tzinfo=UTC)):
         hass.states.async_set("sun.sun", "above_horizon")

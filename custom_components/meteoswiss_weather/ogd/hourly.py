@@ -502,6 +502,29 @@ async def fetch_hourly_file(
     )
 
 
+async def fetch_wind_block(
+    session: aiohttp.ClientSession,
+    url: str,
+    point: ForecastPoint,
+    *,
+    cached_start: int | None = None,
+) -> HourlyFileResult | None:
+    """Fetch the point's block from a point-major wind file for the daily wind.
+
+    The daily wind feature must never trigger a full 30 MB download (ADR-0002
+    guardrail, issue #60): returns ``None`` when the file is not point-major so
+    the caller can set the daily wind fields to ``None`` and log a warning.
+    When the file is point-major the full point block (~5 KB) is fetched and
+    returned as a :class:`HourlyFileResult`.
+    """
+    reader = AiohttpRangeReader(session, url)
+    layout = await classify_layout(reader)
+    if layout not in (FileLayout.POINT_MAJOR_TYPE, FileLayout.POINT_MAJOR_ID):
+        return None
+    text, block_start = await _fetch_point_major(reader, layout, point, cached_start)
+    return HourlyFileResult(text=text, layout=layout, block_start=block_start)
+
+
 def horizon_end_utc(horizon_days: int | None, now: datetime) -> datetime | None:
     """UTC cut-off for the hourly horizon, or ``None`` for the full run.
 
