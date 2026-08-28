@@ -1,6 +1,7 @@
 {
   "domain": "meteoswiss_weather",
   "name": "MeteoSwiss Weather",
+  "after_dependencies": ["logbook", "recorder"],
   "codeowners": ["@chriguschneider"],
   "config_flow": true,
   "dependencies": [],

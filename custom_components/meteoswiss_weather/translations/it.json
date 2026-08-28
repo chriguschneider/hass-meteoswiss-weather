@@ -61,6 +61,23 @@
         "data": {
           "station_abbr": "Stazione meteorologica"
         }
+      },
+      "reconfigure": {
+        "title": "Riconfigura MeteoSwiss Weather",
+        "description": "Modifica il punto di previsione e la stazione meteorologica senza eliminare la voce. Il codice postale attuale è precompilato.",
+        "data": {
+          "postal_code": "Codice postale"
+        },
+        "data_description": {
+          "postal_code": "Codice postale svizzero (NPA) della località da prevedere."
+        }
+      },
+      "history": {
+        "title": "Stazione meteorologica cambiata",
+        "description": "Hai cambiato la stazione meteorologica da {old_station} a {new_station}. Scegli cosa fare con la cronologia registrata finora. Il backfill riguarda solo le statistiche a lungo termine, non gli stati grezzi a breve termine.",
+        "data": {
+          "history_action": "Cronologia registrata"
+        }
       }
     },
     "error": {
@@ -68,7 +85,17 @@
       "unknown_postal_code": "Nessun punto di previsione trovato per questo codice postale. Verifica il codice e riprova."
     },
     "abort": {
-      "already_configured": "Questo punto di previsione è già configurato."
+      "already_configured": "Questo punto di previsione è già configurato.",
+      "reconfigure_successful": "La voce MeteoSwiss Weather è stata aggiornata."
+    }
+  },
+  "selector": {
+    "history_action": {
+      "options": {
+        "keep": "Mantieni: i valori registrati finora provengono dalla stazione precedente; il cambio viene registrato nel logbook",
+        "discard": "Scarta: elimina gli stati dei sensori della stazione e cancella le loro statistiche a lungo termine per ripartire da zero",
+        "backfill": "Backfill: riscrivi le statistiche a lungo termine dalla cronologia ufficiale della nuova stazione"
+      }
     }
   },
   "options": {

@@ -61,6 +61,23 @@
         "data": {
           "station_abbr": "Wetterstation"
         }
+      },
+      "reconfigure": {
+        "title": "MeteoSwiss Weather neu konfigurieren",
+        "description": "Ändern Sie den Vorhersagepunkt und die Wetterstation, ohne den Eintrag zu löschen. Die aktuelle Postleitzahl ist vorausgefüllt.",
+        "data": {
+          "postal_code": "Postleitzahl"
+        },
+        "data_description": {
+          "postal_code": "Schweizer Postleitzahl (PLZ) des Vorhersageorts."
+        }
+      },
+      "history": {
+        "title": "Wetterstation geändert",
+        "description": "Sie haben die Wetterstation von {old_station} zu {new_station} geändert. Wählen Sie, was mit der bisher aufgezeichneten Historie geschehen soll. Das Backfill betrifft nur die Langzeitstatistiken, nicht die kurzfristigen Rohzustände.",
+        "data": {
+          "history_action": "Aufgezeichnete Historie"
+        }
       }
     },
     "error": {
@@ -68,7 +85,17 @@
       "unknown_postal_code": "Kein Vorhersagepunkt für diese Postleitzahl gefunden. Überprüfen Sie die Postleitzahl und versuchen Sie es erneut."
     },
     "abort": {
-      "already_configured": "Dieser Vorhersagepunkt ist bereits eingerichtet."
+      "already_configured": "Dieser Vorhersagepunkt ist bereits eingerichtet.",
+      "reconfigure_successful": "Der MeteoSwiss-Weather-Eintrag wurde aktualisiert."
+    }
+  },
+  "selector": {
+    "history_action": {
+      "options": {
+        "keep": "Behalten: Die bisherigen Werte stammen von der vorherigen Station; der Wechsel wird protokolliert",
+        "discard": "Verwerfen: Zustände der Stationssensoren löschen und ihre Langzeitstatistiken für einen sauberen Neustart leeren",
+        "backfill": "Backfill: Langzeitstatistiken aus der offiziellen Historie der neuen Station neu schreiben"
+      }
     }
   },
   "options": {
