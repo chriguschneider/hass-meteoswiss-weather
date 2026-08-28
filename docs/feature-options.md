@@ -214,6 +214,13 @@ Autopilot order is P1 → P2 → P3, lowest number first, one PR at a
 time; #57 carries no P-label and a `Tracking:` title, so the bots skip
 it until the upstream beta exists.
 
+*Re-sliced 2026-08-28:* the first P2 run (#51) hit the autopilot's
+100-turn cap because measurement + ADR + client + service were one
+issue. The measurements and the ADRs (0005–0007, ADR-0002 revision 2)
+now come from the maintainer's session (`docs/ogd.md`), and every
+remaining issue is an implementation slice: client first, platform or
+service second.
+
 | option | issue | priority | model |
 |---|---|---|---|
 | A10 | #46 | P1 | sonnet |
@@ -221,12 +228,12 @@ it until the upstream beta exists.
 | B6 | #48 | P1 | sonnet |
 | B13 | #49 | P1 | sonnet |
 | A5 | #50 | P1 | opus |
-| B12 | #51 | P2 | opus |
+| B12a client / B12b service | #51 / #66 | P2 | sonnet / opus |
 | A9 | #52 | P2 | opus |
-| A7 | #53 | P2 | opus |
-| B14 | #54 | P2 | opus |
-| B7–B11 | #55 | P3 | opus |
-| A11 | #56 | P3 | opus |
+| A7a client / A7b platform | #53 / #67 | P2 | sonnet |
+| B14a lazy fetch / B14b tiers | #54 / #68 | P2 | opus |
+| B7/B8/B10 point-major / B9/B11 date-major | #55 / #69 | P3 | sonnet / opus |
+| A11a client / A11b setup | #56 / #70 | P3 | sonnet / opus |
 | B15 | #59 | P2 | sonnet |
 | A4 | #57 | — (tracking) | — |
 

@@ -3,6 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-08-26
 - **Revised:** 2026-08-28 (issue #50) — see [Revision](#revision-2026-08-28-issue-50)
+- **Revised again:** 2026-08-28 (issue #54) — see [Revision 2](#revision-2-2026-08-28-issue-54)
 
 ## Context
 
@@ -111,3 +112,38 @@ conditional, and parsing stays in the executor keeping only the point's rows.
 The seam and the announced per-point OGC Features API are unaffected. The
 constants (`hourly_horizon_days`, the Range budget) live in `const.py`; raising
 the traffic still means revisiting this ADR, not just editing a constant.
+
+## Revision 2 (2026-08-28, issue #54)
+
+Revision 1 kept the rule "never more often than every 3 hours". Measuring
+all 24 runs of 2026-08-27 for two points (`docs/ogd.md`, "Change rhythm
+across runs") showed that the hourly files change on model rhythms, not
+hourly: the near term (today and tomorrow) moves at the runs of 02, 05, 08,
+11, 14, 17, 20 and 23 UTC (ICON-CH1, every 3 h), days 2–5 at 04/05, 10/11,
+16/17 and 22/23 UTC (ICON-CH2, every 6 h), and six runs a day change
+nothing at all. Home Assistant, for its part, calls `async_forecast_hourly`
+only while a subscriber exists or a `weather.get_forecasts` call asks.
+
+Decisions that replace the flat 3-hour throttle:
+
+- **Lazy fetch.** The hourly data is fetched from inside
+  `async_forecast_hourly`, cached by run stamp and tier; the coordinator
+  only tracks the run stamp. No subscriber and no service call means **no
+  hourly download**, whatever the option says.
+- **Near tier** — the date-major prefix up to the end of tomorrow (local
+  day): refreshed when a new run exists and its UTC hour is one of
+  02/05/08/11/14/17/20/23, or when the last near fetch is older than 3 h.
+- **Far tier** — the rest of the chosen horizon (`hourly_horizon_days`):
+  refreshed at the runs of 05/11/17/23 UTC, or when the last far fetch is
+  older than 6 h.
+- **Point-major files** (symbol, precipitation, wind, gusts, direction):
+  refreshed with every new run — the point block costs ~5 KB.
+- The landing hours and the two cadences live in `const.py` and are
+  asserted by tests, like the old interval was.
+
+Budget at the default horizon with a permanent subscriber: 8 near fetches
+(~7 MB of `tre200h0` each) plus 4 far fetches (~4 MB more each) ≈ **70 MB
+per day** — the same order as Revision 1, but the near term is at most one
+run behind the model instead of up to three hours, and an instance nobody
+looks at pays nothing. The seam and the announced per-point OGC Features
+API remain the eventual replacement for all of this.

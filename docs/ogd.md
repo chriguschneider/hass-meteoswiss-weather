@@ -93,6 +93,50 @@ The legacy all-station snapshot
 (used by the app-API integrations) still exists but is **not** used here:
 per-station `_t_now.csv` files are the documented OGD path.
 
+### History files (measured 2026-08-28, station BER) — for the backfill (#51)
+
+The STAC item of a station lists, next to `_t_now.csv`:
+
+| file | content | size (BER) | updated |
+|---|---|---|---|
+| `ogd-smn_ber_h_now.csv` | hourly values, today | 1.5 KB | hourly |
+| `ogd-smn_ber_h_recent.csv` | hourly values, 1 January of this year → yesterday 23:00 | 829 KB (5,736 rows) | daily, ~02:15 UTC |
+| `ogd-smn_ber_h_historical_2020-2029.csv` | hourly values 2020-01-01 → 2025-12-31 | 7.6 MB | yearly (February) |
+| `…_h_historical_2010-2019.csv` … `_1980-1989.csv` | one file per decade | 12.5 MB (2010s) | yearly |
+| `ogd-smn_ber_d_recent.csv` / `_d_historical.csv` | daily values | 40 KB | daily |
+| `ogd-smn_ber_t_recent.csv` / `_t_historical_<decade>.csv` | 10-minute values | — | daily / yearly |
+
+Hourly header (verified):
+`station_abbr;reference_timestamp;tre200h0;tre200hn;tre200hx;tre005h0;tre005hn;ure200h0;pva200h0;tde200h0;prestah0;pp0qffh0;pp0qnhh0;ppz700h0;ppz850h0;fkl010h1;dkl010h0;fkl010h0;fu3010h0;fu3010h1;fkl010h3;fu3010h3;wcc006h0;fve010h0;rre150h0;htoauths;gre000h0;oli000h0;olo000h0;osr000h0;ods000h0;sre000h0;…`
+— the hourly **mean, min and max** of temperature (`tre200h0`/`hn`/`hx`)
+are exactly what Home Assistant's long-term statistics store per hour.
+`reference_timestamp` is `dd.mm.yyyy HH:MM` UTC, encoding Windows-1252,
+`;`-separated, not gzip-encoded. A full backfill of one station is
+`_h_recent` plus the decade files (8–13 MB each; 1980 onwards ≈ 45 MB,
+one-off); `_h_recent` alone covers the current year.
+
+## A2 — Precipitation stations (`ch.meteoschweiz.ogd-smn-precip`) — measured 2026-08-28
+
+The rain-only network next to SwissMetNet: **141 automatic precipitation
+stations** (`station_type_en` "Automatic precipitation stations"), meta
+CSVs with the same columns as A1 (`…/ogd-smn-precip_meta_stations.csv`,
+134 KB, with WGS84 coordinates and height; `_meta_parameters.csv`;
+`_meta_datainventory.csv`). Parameters: `rre150z0` (10-minute sum),
+`rre150h0`, `rre150d0` (6–6 UTC), `rka150d0` (0–0 UTC), `rre150m0`,
+`rre150y0`.
+
+Per-station files follow the A1 pattern:
+`…/ogd-smn-precip/<abbr>/ogd-smn-precip_<abbr>_t_now.csv` — verified ABE:
+1.2 KB, header `station_abbr;reference_timestamp;rre150z0`, 10-minute rows
+since 00:00 UTC, the 07:30 row present at 07:48 (~15 min lag) — plus
+`_t_recent`, `_t_historical_<decade>`, `_h_*`, `_d_*`, `_m`, `_y`.
+Encoding Windows-1252.
+
+Density: the nearest precipitation stations to Köniz (3098) are Belp
+7.2 km, Laupen 13.3 km, Kiesen 16.7 km, next to the full SwissMetNet
+station BER. This is the dataset behind the optional second
+"precipitation station" (ADR-0006, #56).
+
 ## E4 — Local forecast (`ch.meteoschweiz.ogd-local-forecasting`)
 
 The forecast the MeteoSwiss app shows, for ~5,627 points, 9 days, refreshed
@@ -214,13 +258,32 @@ each file's layout at runtime from offset probes, then
 For the minimum set at the default horizon this is **~7–11 MB per refresh**
 instead of ~125 MB. See ADR-0002 (revised) for the budget and the option.
 
+#### Change rhythm across runs (measured 2026-08-27, all 24 runs, `tre200h0`)
+
+A new file is published every hour, but the content of one point moves in
+rhythms tied to the model cycles behind it. Consecutive runs compared for
+the postal-code point `309800` and the station point `1` (same picture):
+
+| forecast range | changes at (UTC run hour) | rhythm |
+|---|---|---|
+| today + tomorrow (d0–d1) | 02, 05, 08, 11, 14, 17, 20, 23 (small d0-only touches at 06, 15, 18, 19) | every 3 h — ICON-CH1 cycles (00/03/06/…) landing ~2 h later |
+| days 2–5 | 04, 10, 16, 22, and again 05, 11, 17, 23 | every 6 h — ICON-CH2 cycles (00/06/12/18) landing ~4 h later, refined by the next CH1 run |
+| days 6–9 | 05, 08, 11, 17, 20, 23 | with the runs above |
+| past hours (the file starts at 21:00 UTC of the previous day) | never | — |
+
+The runs at 01, 03, 07, 09, 12 and 13 UTC changed **nothing** for either
+point. Fetching the near term at 02/05/08/…/23 UTC and the far range at
+05/11/17/23 UTC catches every observed change with 8 near and 4 far
+fetches per day; fetching every run wastes 6 of 24 downloads outright.
+This is the basis of the tiered refresh (ADR-0002, revision 2; #54).
+
 ### Parameter codes (from the docs; confirm against the meta CSV)
 
 | hourly | meaning |
 |---|---|
 | `tre200h0` | temperature 2 m; `treq10h0` / `treq90h0` = 10 % / 90 % percentile |
 | `rre150h0` | precipitation sum; `rreq10h0` / `rreq90h0` percentiles |
-| `rre003i0`, `rp0003i0` | precipitation over a 3-hour interval and its probability |
+| `rre003i0`, `rp0003i0` | precipitation over a 3-hour interval and its probability. **Measured 2026-08-28:** `rp0003i0` has a row for **every hour** (217 rows per point, integer %, e.g. `0,0,0,2,6,18,41,57`), so it is a rolling 3-hour window; the meta description says only "during 3 hours", the sibling `jww003i0` says "preceding 3 hours" — treat the value as the window **ending** at `Date` unless the docs say otherwise |
 | `jww003i0` | **weather symbol** (MeteoSwiss icon code, day/night variants) |
 | `fu3010h0` | wind speed km/h; `fu3010h1` gust; `fu3q10h0` … percentiles |
 | `dkl010h0` | wind direction ° |
@@ -249,6 +312,35 @@ The symbol codes must be mapped to Home Assistant conditions
 (`sunny`, `partlycloudy`, `rainy`, `snowy`, `lightning-rainy`, …). The
 mapping used by `Rudd-O/hamsclientfork` (MIT) is a usable reference for
 the code list; verify against the app's icon set before trusting it.
+
+## Pollen (`ch.meteoschweiz.ogd-pollen`) — measured 2026-08-28
+
+The automatic pollen network: **15 stations**, abbreviations `P…` (PBE
+Bern, PBS Basel, PBU Buchs SG, PCF La Chaux-de-Fonds, PDS Davos, PGE
+Genève, PLO Locarno, PLS Lausanne, PLU Lugano, PLZ Luzern, PMU
+Münsterlingen, PNE Neuchâtel, PPY Payerne, PSN Sion, PZH Zürich). Meta CSVs
+in the A1 shape: `ogd-pollen_meta_stations.csv` (12.5 KB, WGS84
+coordinates and height), `_meta_parameters.csv` (9 KB, names in
+de/fr/it/en), `_meta_datainventory.csv` (20 KB).
+
+**28 parameters = 7 taxa × 4 granularities.** Taxon prefixes: `kaalnu`
+alder, `kabetu` birch, `kacory` hazel, `kafagu` beech, `kafrax` ash,
+`kaquer` oak, `khpoac` grasses. Suffixes: `h0` hourly mean, `d0` daily
+mean 6–6 UTC, `d1` daily mean 0–0 UTC, `y0` annual integral. Unit `No/m³`
+(grains per cubic metre), integer.
+
+Per-station files (STAC item id = lowercase abbreviation):
+`…/ogd-pollen/<abbr>/ogd-pollen_<abbr>_h_now.csv` — verified PBE: 391
+bytes, header
+`station_abbr;reference_timestamp;kabetuh0;khpoach0;kaalnuh0;kacoryh0;kafaguh0;kafraxh0;kaquerh0`,
+rows for today 00:00 → 07:00 UTC present at 07:48, so **hourly with about
+one hour of lag** — plus `_h_recent.csv` (215 KB), `_h_historical_2020-2029.csv`,
+`_d_recent.csv` (13 KB; the 6–6 UTC `d0` values fill in a day late, the
+0–0 UTC `d1` values for yesterday are present), `_d_historical.csv`,
+`_y.csv`. Encoding Windows-1252; timestamps `dd.mm.yyyy HH:MM` UTC. Daily
+data since 1990, hourly since 2023 (datainventory).
+
+Dataset behind the pollen platform (ADR-0005, #53).
 
 ## Adding the OGC Features backend
 
@@ -290,8 +382,9 @@ need it — that is an ADR-worthy change.
 - **Weather warnings.** No dataset, not on the 2026 roadmap. The README
   points to Home Assistant's core `meteoalarm` integration (regional CAP
   feed). Do not add the app API for this (ADR-0001).
-- **Pollen** is there (`ch.meteoschweiz.ogd-pollen`) but out of scope for
-  now; `frimtec/hass-swiss-pollen` covers it.
+- **Pollen** is in the open data (`ch.meteoschweiz.ogd-pollen`, section
+  above) and in scope since 2026-08-28 (ADR-0005, #53);
+  `frimtec/hass-swiss-pollen` is the standalone alternative.
 - **Radar / nowcast** (`ch.meteoschweiz.ogd-radar-precip`, INCA) is the
   radar integration's territory (ADR-0003).
 
@@ -299,7 +392,7 @@ need it — that is an ADR-worthy change.
 
 | collection | content | format |
 |---|---|---|
-| `ch.meteoschweiz.ogd-smn-precip` | precipitation-only stations | CSV |
+| `ch.meteoschweiz.ogd-smn-precip` | precipitation-only stations — see A2 | CSV |
 | `ch.meteoschweiz.ogd-radar-precip` | radar composites, 5 min | ODIM HDF5 |
 | `ch.meteoschweiz.ogd-forecasting-icon-ch1` / `-ch2` | ICON-CH1/CH2-EPS model output | GRIB2 |
-| `ch.meteoschweiz.ogd-pollen` | pollen measurements | CSV |
+| `ch.meteoschweiz.ogd-pollen` | pollen measurements — see the Pollen section | CSV |
