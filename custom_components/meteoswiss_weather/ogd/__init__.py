@@ -8,8 +8,10 @@ module re-exports the public surface; submodules hold the implementation.
 from __future__ import annotations
 
 from .backend import BulkCsvBackend, ForecastBackend
+from .const import POINT_TYPE_MOUNTAIN
 from .forecast import (
     fetch_points,
+    mountain_points,
     nearest_point,
     parse_daily,
     parse_hourly,
@@ -55,6 +57,7 @@ from .stations import (
 __all__ = [
     "AiohttpRangeReader",
     "BulkCsvBackend",
+    "POINT_TYPE_MOUNTAIN",
     "CachedResponse",
     "DailyForecast",
     "FileLayout",
@@ -75,6 +78,7 @@ __all__ = [
     "fetch_datainventory",
     "fetch_hourly_file",
     "fetch_points",
+    "mountain_points",
     "fetch_pollen_current",
     "fetch_pollen_datainventory",
     "fetch_pollen_parameters",

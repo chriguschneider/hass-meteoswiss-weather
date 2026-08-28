@@ -49,6 +49,11 @@ _POINTS: list[ForecastPoint] = [
     ForecastPoint(800100, 2, "8001", "Zürich", 47.3769, 8.5417, 408.0),
     ForecastPoint(100300, 2, "1003", "Lausanne", 46.5197, 6.6323, 495.0),
     ForecastPoint(1, 1, "", "Bern / Zollikofen", 46.990765, 7.464061, 552.0),
+    # Mountain points (type 3) — mirrors the trimmed fixture.
+    ForecastPoint(5000, 3, "", "Jungfraujoch", 46.5475, 7.9855, 3571.0),
+    ForecastPoint(5001, 3, "", "Säntis", 47.2491, 9.3413, 2502.0),
+    ForecastPoint(5002, 3, "", "Titlis", 46.7723, 8.4277, 3238.0),
+    ForecastPoint(5003, 3, "", "Gorner Glacier", 46.0825, 7.7935, 3089.0),
 ]
 
 _STATIONS: list[Station] = [
@@ -64,6 +69,11 @@ _BERN_LAT = 46.948
 _BERN_LON = 7.447
 
 _FLOW = "custom_components.meteoswiss_weather.config_flow"
+
+# Flow-internal constants (must match config_flow.py).
+_CONF_MODE = "forecast_mode"
+_MODE_POSTAL_CODE = "postal_code"
+_MODE_MOUNTAIN = "mountain"
 
 
 async def _mock_load_ok(self) -> bool:
@@ -88,16 +98,23 @@ def mock_ogd_functions():
 async def test_happy_path_two_point_postal_code(
     hass: HomeAssistant, mock_ogd_functions
 ) -> None:
-    """Full three-step flow for postal code 3098 (two forecast points)."""
+    """Full flow for postal code 3098 (two forecast points) via postal-code mode."""
     hass.config.latitude = _BERN_LAT
     hass.config.longitude = _BERN_LON
 
-    # Step 1: user form appears, postal code pre-filled from HA location.
+    # Step 1: mode selection form appears.
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
     )
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "user"
+
+    # Select postal-code mode.
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "postal_code"
 
     # Submit postal code 3098 → two points → point-selection step.
     result = await hass.config_entries.flow.async_configure(
@@ -106,14 +123,14 @@ async def test_happy_path_two_point_postal_code(
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "point"
 
-    # Step 2: pick the primary point (309800 Köniz).
+    # Step: pick the primary point (309800 Köniz).
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={CONF_POINT_ID: 309800}
     )
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "station"
 
-    # Step 3: accept the nearest station (BER — Bern is closest to Köniz).
+    # Final step: accept the nearest station (BER — Bern is closest to Köniz).
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={CONF_STATION_ABBR: "BER"}
     )
@@ -145,6 +162,11 @@ async def test_single_point_postal_code_skips_point_step(
     )
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "user"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
+    )
+    assert result["step_id"] == "postal_code"
 
     # 8001 → one point → goes straight to station step.
     result = await hass.config_entries.flow.async_configure(
@@ -179,6 +201,9 @@ async def test_station_step_shows_radar_hint_when_not_installed(
         DOMAIN, context={"source": SOURCE_USER}
     )
     result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
+    )
+    result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={CONF_POSTAL_CODE: 8001}
     )
     assert result["step_id"] == "station"
@@ -200,6 +225,9 @@ async def test_station_step_hides_radar_hint_when_installed(
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
     )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={CONF_POSTAL_CODE: 8001}
@@ -234,6 +262,9 @@ async def test_duplicate_entry_aborts(
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
     )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={CONF_POSTAL_CODE: 3098}
@@ -284,11 +315,171 @@ async def test_unknown_postal_code_shows_error(
         DOMAIN, context={"source": SOURCE_USER}
     )
     result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
+    )
+    result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={CONF_POSTAL_CODE: 9999}
     )
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "user"
+    assert result["step_id"] == "postal_code"
     assert result["errors"] == {"base": "unknown_postal_code"}
+
+
+# ---------------------------------------------------------------------------
+# Mountain path: end-to-end setup flow
+# ---------------------------------------------------------------------------
+
+
+async def test_mountain_path_happy(
+    hass: HomeAssistant, mock_ogd_functions
+) -> None:
+    """Full mountain-path flow: mode → mountain dropdown → station → entry."""
+    # Use Bern coordinates — nearest mountain point is Jungfraujoch (5000).
+    hass.config.latitude = _BERN_LAT
+    hass.config.longitude = _BERN_LON
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    assert result["step_id"] == "user"
+
+    # Select mountain mode.
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_MOUNTAIN}
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "mountain"
+
+    # The mountain dropdown must list all type-3 points from _POINTS (4 total),
+    # sorted by name: Gorner Glacier, Jungfraujoch, Säntis, Titlis.
+    options = result["data_schema"].schema[CONF_POINT_ID].config["options"]
+    option_labels = [o["label"] for o in options]
+    assert option_labels == [
+        "Gorner Glacier (3089 m)",
+        "Jungfraujoch (3571 m)",
+        "Säntis (2502 m)",
+        "Titlis (3238 m)",
+    ]
+
+    # Pick Jungfraujoch (point_id 5000); submit as string (SelectSelector value).
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_POINT_ID: "5000"}
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "station"
+
+    # The three nearest stations to Jungfraujoch are ABO, BER, PAY.
+    # Accept whichever HA offers first (ABO is closest at ~1321 m altitude).
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_STATION_ABBR: "ABO"}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Jungfraujoch"
+    data = result["data"]
+    assert data[CONF_POINT_ID] == 5000
+    assert data[CONF_POINT_TYPE_ID] == 3
+    assert data[CONF_POSTAL_CODE] == ""
+    assert data[CONF_POINT_NAME] == "Jungfraujoch"
+    assert data[CONF_STATION_ABBR] == "ABO"
+    assert data[CONF_STATION_NAME] == "Adelboden"
+
+
+async def test_mountain_unique_id(
+    hass: HomeAssistant, mock_ogd_functions
+) -> None:
+    """Mountain entry unique_id is '3-<point_id>'."""
+    hass.config.latitude = _BERN_LAT
+    hass.config.longitude = _BERN_LON
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_MOUNTAIN}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_POINT_ID: "5002"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_STATION_ABBR: "ABO"}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    # HA stores the unique_id on the entry.
+    entries = hass.config_entries.async_entries(DOMAIN)
+    assert len(entries) == 1
+    assert entries[0].unique_id == "3-5002"
+
+
+async def test_mountain_duplicate_aborts(
+    hass: HomeAssistant, mock_ogd_functions
+) -> None:
+    """A second mountain entry for the same point is rejected."""
+    existing = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="3-5000",
+        data={
+            CONF_POINT_ID: 5000,
+            CONF_POINT_TYPE_ID: 3,
+            CONF_POSTAL_CODE: "",
+            CONF_POINT_NAME: "Jungfraujoch",
+            CONF_STATION_ABBR: "ABO",
+            CONF_STATION_NAME: "Adelboden",
+        },
+        title="Jungfraujoch",
+    )
+    existing.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_MOUNTAIN}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_POINT_ID: "5000"}
+    )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+async def test_mountain_nearest_preselected(
+    hass: HomeAssistant, mock_ogd_functions
+) -> None:
+    """Nearest mountain point to the HA location is the dropdown default."""
+    # Säntis is closest to north-eastern Switzerland (Säntis lat/lon).
+    hass.config.latitude = 47.25
+    hass.config.longitude = 9.34
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_MOUNTAIN}
+    )
+    assert result["step_id"] == "mountain"
+    # The schema default should be the point_id of Säntis (5001) as a string.
+    default = result["data_schema"]({}).get(CONF_POINT_ID)
+    assert default == "5001"
+
+
+async def test_mountain_daily_fixture_carries_type3_rows(
+    hass: HomeAssistant,
+) -> None:
+    """Smoke test: the daily fixture files contain rows for the mountain point."""
+    import csv
+    import io
+    from pathlib import Path
+
+    fixture_dir = Path(__file__).parent / "fixtures"
+    for param in ("tre200px", "tre200pn", "rka150p0", "jp2000d0"):
+        path = fixture_dir / f"vnut12.lssw.202608270200.{param}.csv"
+        text = path.read_text()
+        reader = csv.DictReader(io.StringIO(text), delimiter=";")
+        type3_rows = [r for r in reader if r["point_type_id"] == "3"]
+        assert type3_rows, f"{param} fixture has no type-3 rows"
+        # The Jungfraujoch point must be present.
+        jfj_rows = [r for r in type3_rows if r["point_id"] == "5000"]
+        assert jfj_rows, f"{param} fixture has no Jungfraujoch (5000) rows"
 
 
 # ---------------------------------------------------------------------------
@@ -418,6 +609,12 @@ async def test_reconfigure_station_change_keep(
 
     result = await entry.start_reconfigure_flow(hass)
     assert result["step_id"] == "reconfigure"
+
+    # Select postal-code mode (entry is type 2).
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
+    )
+    assert result["step_id"] == "postal_code"
     # Postal code is pre-filled from the entry.
     assert result["data_schema"]({})[CONF_POSTAL_CODE] == 8001
 
@@ -469,6 +666,9 @@ async def test_reconfigure_station_change_discard(
 
     result = await entry.start_reconfigure_flow(hass)
     result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
+    )
+    result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={CONF_POSTAL_CODE: 8001}
     )
     result = await hass.config_entries.flow.async_configure(
@@ -507,6 +707,9 @@ async def test_reconfigure_point_only_change_skips_history(
     entry.add_to_hass(hass)
 
     result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
+    )
     # 3098 has two points → the point step, pre-selecting the current one.
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={CONF_POSTAL_CODE: 3098}
@@ -558,6 +761,9 @@ async def test_reconfigure_onto_existing_point_aborts(
 
     result = await entry.start_reconfigure_flow(hass)
     result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
+    )
+    result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={CONF_POSTAL_CODE: 3098}
     )
     result = await hass.config_entries.flow.async_configure(
@@ -579,6 +785,9 @@ async def test_reconfigure_backfill_hidden_without_b12(
 
     result = await entry.start_reconfigure_flow(hass)
     result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
+    )
+    result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={CONF_POSTAL_CODE: 8001}
     )
     result = await hass.config_entries.flow.async_configure(
@@ -596,6 +805,9 @@ async def test_reconfigure_backfill_shown_when_available(
     entry.add_to_hass(hass)
 
     result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
+    )
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={CONF_POSTAL_CODE: 8001}
     )
@@ -627,6 +839,67 @@ async def test_reconfigure_cannot_connect(hass: HomeAssistant) -> None:
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "reconfigure"
     assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_reconfigure_mode_preselects_mountain_for_mountain_entry(
+    hass: HomeAssistant, mock_ogd_functions
+) -> None:
+    """Reconfiguring a mountain entry pre-selects mountain mode."""
+    entry = _configured_entry(
+        point_id=5000,
+        point_type_id=3,
+        postal_code="",
+        point_name="Jungfraujoch",
+        station_abbr="ABO",
+        station_name="Adelboden",
+    )
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reconfigure_flow(hass)
+    assert result["step_id"] == "reconfigure"
+    # The schema default should be mountain mode.
+    default_mode = result["data_schema"]({}).get("forecast_mode")
+    assert default_mode == _MODE_MOUNTAIN
+
+
+async def test_reconfigure_mountain_to_postal_code(
+    hass: HomeAssistant, mock_ogd_functions
+) -> None:
+    """A mountain entry can be reconfigured to a postal-code entry."""
+    # Start with SMA so selecting SMA on the new postal-code path is a
+    # station-unchanged reconfigure (skips the history step).
+    entry = _configured_entry(
+        point_id=5000,
+        point_type_id=3,
+        postal_code="",
+        point_name="Jungfraujoch",
+        station_abbr="SMA",
+        station_name="Zürich / Fluntern",
+    )
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reconfigure_flow(hass)
+    # Switch to postal-code mode.
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
+    )
+    assert result["step_id"] == "postal_code"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_POSTAL_CODE: 8001}
+    )
+    assert result["step_id"] == "station"
+
+    with patch.object(hass.config_entries, "async_schedule_reload"):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={CONF_STATION_ABBR: "SMA"}
+        )
+
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_POINT_TYPE_ID] == 2
+    assert entry.data[CONF_POINT_ID] == 800100
+    assert entry.unique_id == "2-800100"
 
 
 async def test_options_flow_full_run_horizon(hass: HomeAssistant) -> None:

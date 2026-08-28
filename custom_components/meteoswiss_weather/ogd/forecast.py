@@ -28,6 +28,7 @@ from .const import (
     HOURLY_WIND_DIRECTION,
     HOURLY_WIND_SPEED,
     META_POINT_URL,
+    POINT_TYPE_MOUNTAIN,
     POINT_TYPE_POSTAL_CODE,
 )
 from .geo import haversine_km
@@ -140,6 +141,14 @@ def points_for_postal_code(
         if p.point_type_id == POINT_TYPE_POSTAL_CODE and p.postal_code == wanted
     ]
     return sorted(matches, key=lambda p: p.point_id)
+
+
+def mountain_points(points: list[ForecastPoint]) -> list[ForecastPoint]:
+    """All type-3 (mountain point of interest) points, sorted by name."""
+    return sorted(
+        [p for p in points if p.point_type_id == POINT_TYPE_MOUNTAIN],
+        key=lambda p: p.name,
+    )
 
 
 def nearest_point(
