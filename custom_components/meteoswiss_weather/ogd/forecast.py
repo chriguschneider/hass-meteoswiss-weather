@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import io
 from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -21,6 +22,7 @@ from .const import (
     DAILY_TEMP_MAX,
     DAILY_TEMP_MIN,
     FORECAST_ENCODING,
+    FORECAST_TIMEZONE,
     HOURLY_GUST,
     HOURLY_PRECIPITATION,
     HOURLY_SYMBOL,
@@ -266,3 +268,77 @@ def parse_hourly(
         HourlyForecast(time=when, **values)
         for when, values in sorted(by_time.items())
     ]
+
+
+def aggregate_daily_wind(
+    text_by_param: dict[str, str],
+    point: ForecastPoint,
+) -> dict[date, tuple[float | None, float | None, float | None]]:
+    """Aggregate hourly wind block texts into per-day (max speed, max gust, bearing).
+
+    A **plain function** so the backend can run it in an executor (ADR-0002).
+    The hourly ``Date`` stamps are UTC; grouping uses Europe/Zurich local
+    calendar days — the same boundary as the daily ``p``-variants.
+
+    Returns a dict mapping each local calendar date to a triple:
+    - ``native_wind_speed``: maximum hourly mean wind speed of the day (km/h)
+    - ``native_wind_gust_speed``: maximum hourly gust of the day (km/h, or
+      ``None`` when the gust file carried no data for the day)
+    - ``wind_bearing``: direction (°) at the hour of maximum wind speed (or
+      ``None`` when the direction file had no matching row)
+    """
+    tz = ZoneInfo(FORECAST_TIMEZONE)
+
+    speed_by_hour: dict[datetime, float] = {}
+    gust_by_hour: dict[datetime, float] = {}
+    dir_by_hour: dict[datetime, float] = {}
+
+    for param, text in text_by_param.items():
+        cast = _to_int if param == HOURLY_WIND_DIRECTION else _to_float
+        target = (
+            speed_by_hour if param == HOURLY_WIND_SPEED
+            else gust_by_hour if param == HOURLY_GUST
+            else dir_by_hour if param == HOURLY_WIND_DIRECTION
+            else None
+        )
+        if target is None:
+            continue
+        for row in _reader(text):
+            if _to_int(row.get(_DATA_POINT_ID)) != point.point_id:
+                continue
+            if _to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
+                continue
+            when = _parse_datetime(row.get(_DATA_DATE))
+            if when is None:
+                continue
+            val = cast(row.get(param))
+            if val is not None:
+                target[when] = val  # type: ignore[assignment]
+
+    if not speed_by_hour:
+        return {}
+
+    # Find the hour of maximum wind speed and the maximum gust, per local day.
+    max_speed: dict[date, float] = {}
+    max_speed_hour: dict[date, datetime] = {}
+    max_gust: dict[date, float] = {}
+
+    for when, speed in speed_by_hour.items():
+        local_day = when.astimezone(tz).date()
+        if local_day not in max_speed or speed > max_speed[local_day]:
+            max_speed[local_day] = speed
+            max_speed_hour[local_day] = when
+
+    for when, gust in gust_by_hour.items():
+        local_day = when.astimezone(tz).date()
+        if local_day not in max_gust or gust > max_gust[local_day]:
+            max_gust[local_day] = gust
+
+    return {
+        day: (
+            max_speed[day],
+            max_gust.get(day),
+            dir_by_hour.get(max_speed_hour[day]),
+        )
+        for day in max_speed
+    }

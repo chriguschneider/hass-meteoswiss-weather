@@ -114,6 +114,10 @@ class DailyForecast:
 
     Every measured field is optional: a parameter file that omitted the day,
     or left the cell empty, yields ``None`` rather than an invented value.
+    Wind fields come from aggregated hourly blocks (issue #60, ADR-0002):
+    ``native_wind_speed`` is the daily maximum of hourly mean wind speed,
+    ``native_wind_gust_speed`` is the daily maximum gust, and ``wind_bearing``
+    is the direction at the hour of maximum wind speed.
     """
 
     date: date
@@ -122,6 +126,9 @@ class DailyForecast:
     precipitation: float | None = None
     precipitation_probability: float | None = None
     symbol: int | None = None
+    native_wind_speed: float | None = None
+    native_wind_gust_speed: float | None = None
+    wind_bearing: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

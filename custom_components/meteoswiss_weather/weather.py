@@ -239,6 +239,12 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
         }
         if day.precipitation_probability is not None:
             forecast["precipitation_probability"] = round(day.precipitation_probability)
+        if day.native_wind_speed is not None:
+            forecast["native_wind_speed"] = day.native_wind_speed
+        if day.native_wind_gust_speed is not None:
+            forecast["native_wind_gust_speed"] = day.native_wind_gust_speed
+        if day.wind_bearing is not None:
+            forecast["wind_bearing"] = day.wind_bearing
         return forecast
 
     # -- hourly forecast (opt-in, ADR-0002) ---------------------------------

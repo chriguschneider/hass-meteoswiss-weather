@@ -22,6 +22,7 @@ import pytest
 from custom_components.meteoswiss_weather.ogd.const import (
     COLLECTION_FORECAST,
     DAILY_REQUIRED_PARAMS,
+    DAILY_WIND_PARAMS,
     HOURLY_REQUIRED_PARAMS,
     META_DATAINVENTORY_URL,
     META_POINT_URL,
@@ -99,6 +100,15 @@ def _register_mock_ogd(
 
     # Daily parameter CSV files for the fixture run.
     for param in DAILY_REQUIRED_PARAMS:
+        aioclient_mock.get(
+            f"{_ASSET_BASE}/vnut12.lssw.{_RUN_TS}.{param}.csv",
+            content=_fixture_bytes(f"vnut12.lssw.{_RUN_TS}.{param}.csv"),
+        )
+
+    # Wind block files fetched with every daily refresh (issue #60). Registered
+    # unconditionally; if layout detection returns non-point-major the daily wind
+    # fields are None (guardrail fires), but the test entry remains valid.
+    for param in DAILY_WIND_PARAMS:
         aioclient_mock.get(
             f"{_ASSET_BASE}/vnut12.lssw.{_RUN_TS}.{param}.csv",
             content=_fixture_bytes(f"vnut12.lssw.{_RUN_TS}.{param}.csv"),
