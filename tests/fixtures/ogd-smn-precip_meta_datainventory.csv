@@ -1,0 +1,11 @@
+station_abbr;parameter_shortname;meas_cat_nr;data_since;data_till;owner
+BEL;rre150z0;1;01.01.2000 00:00;;MeteoSwiss
+BEL;rre150h0;1;01.01.2000 00:00;;MeteoSwiss
+BEL;rre150d0;1;01.01.2000 00:00;;MeteoSwiss
+LAU;rre150z0;1;01.01.2000 00:00;;MeteoSwiss
+LAU;rre150h0;1;01.01.2000 00:00;;MeteoSwiss
+LAU;rre150d0;1;01.01.2000 00:00;;MeteoSwiss
+KIE;rre150z0;1;01.01.2000 00:00;;MeteoSwiss
+KIE;rre150h0;1;01.01.2000 00:00;;MeteoSwiss
+ABE;rre150z0;1;01.01.2000 00:00;;MeteoSwiss
+ABE;rre150h0;1;01.01.2000 00:00;01.01.2020 00:00;MeteoSwiss
