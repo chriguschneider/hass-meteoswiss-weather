@@ -1,15 +1,10 @@
 {
   "domain": "meteoswiss_weather",
   "name": "MeteoSwiss Weather",
-  "codeowners": [
-    "@chriguschneider"
-  ],
+  "after_dependencies": ["logbook", "recorder"],
+  "codeowners": ["@chriguschneider"],
   "config_flow": true,
   "dependencies": [],
-  "after_dependencies": [
-    "logbook",
-    "recorder"
-  ],
   "documentation": "https://github.com/chriguschneider/hass-meteoswiss-weather",
   "integration_type": "service",
   "iot_class": "cloud_polling",
