@@ -8,7 +8,7 @@ module re-exports the public surface; submodules hold the implementation.
 from __future__ import annotations
 
 from .backend import BulkCsvBackend, ForecastBackend
-from .const import POINT_TYPE_MOUNTAIN
+from .const import POINT_TYPE_MOUNTAIN, hourly_date_major_params
 from .forecast import (
     aggregate_daily_wind,
     fetch_points,
@@ -98,6 +98,7 @@ __all__ = [
     "fetch_stations",
     "get_text",
     "horizon_end_utc",
+    "hourly_date_major_params",
     "latest_run",
     "nearest_point",
     "nearest_pollen_station",

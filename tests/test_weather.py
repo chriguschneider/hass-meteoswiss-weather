@@ -20,7 +20,9 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
 from custom_components.meteoswiss_weather.const import (
+    CONF_HOURLY_CLOUD_LAYERS,
     CONF_HOURLY_FORECAST,
+    CONF_HOURLY_TEMP_PERCENTILES,
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
@@ -64,6 +66,22 @@ def hourly_config_entry() -> MockConfigEntry:
         domain=DOMAIN,
         data=_entry_data(),
         options={CONF_HOURLY_FORECAST: True},
+        title="Köniz",
+        unique_id="2-309800",
+    )
+
+
+@pytest.fixture
+def hourly_gated_config_entry() -> MockConfigEntry:
+    """Hourly on with the B9 cloud layers and B11 percentiles enabled (issue #69)."""
+    return MockConfigEntry(
+        domain=DOMAIN,
+        data=_entry_data(),
+        options={
+            CONF_HOURLY_FORECAST: True,
+            CONF_HOURLY_CLOUD_LAYERS: True,
+            CONF_HOURLY_TEMP_PERCENTILES: True,
+        },
         title="Köniz",
         unique_id="2-309800",
     )
@@ -249,6 +267,65 @@ async def test_hourly_feature_and_forecast_when_option_on(
     assert first["wind_gust_speed"] == 8.0
     assert first["wind_bearing"] == 180
     assert first["condition"] == "sunny"  # symbol 1 at hour 0
+
+
+async def test_hourly_cloud_and_percentile_attributes(
+    hass: HomeAssistant,
+    hourly_gated_config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """B9/B11 (issue #69): the gated options add the hourly attributes.
+
+    ``cloud_coverage`` is documented as the maximum of the three layers. In the
+    fixture for hour 0, the layers are high=20, mid=40, low=10, so the single
+    number is 40; the three layers and the p10/p90 band ride along as extras.
+    """
+    with freeze_time(datetime(2026, 8, 27, 2, 0, tzinfo=UTC)):
+        await _setup(hass, hourly_gated_config_entry)
+
+        response = await hass.services.async_call(
+            "weather",
+            "get_forecasts",
+            {"entity_id": _ENTITY_ID, "type": "hourly"},
+            blocking=True,
+            return_response=True,
+        )
+
+    first = response[_ENTITY_ID]["forecast"][0]
+    # cloud_coverage is the maximum of the three layers (documented).
+    assert first["cloud_coverage"] == 40
+    assert first["cloud_coverage_high"] == 20.0
+    assert first["cloud_coverage_mid"] == 40.0
+    assert first["cloud_coverage_low"] == 10.0
+    # B11 percentile band brackets the median temperature (converted key).
+    assert first["temperature_p10"] == 8.0
+    assert first["temperature_p90"] == 13.0
+    assert first["temperature_p10"] < first["temperature"]
+    assert first["temperature"] < first["temperature_p90"]
+
+
+async def test_hourly_gated_attributes_absent_without_options(
+    hass: HomeAssistant,
+    hourly_config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Plain hourly (no gated options) exposes none of the B9/B11 attributes."""
+    with freeze_time(datetime(2026, 8, 27, 2, 0, tzinfo=UTC)):
+        await _setup(hass, hourly_config_entry)
+
+        response = await hass.services.async_call(
+            "weather",
+            "get_forecasts",
+            {"entity_id": _ENTITY_ID, "type": "hourly"},
+            blocking=True,
+            return_response=True,
+        )
+
+    first = response[_ENTITY_ID]["forecast"][0]
+    assert "cloud_coverage" not in first
+    assert "cloud_coverage_high" not in first
+    assert "temperature_p10" not in first
+    assert "temperature_p90" not in first
 
 
 async def test_condition_prefers_current_hour_symbol(

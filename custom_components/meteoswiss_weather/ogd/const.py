@@ -143,6 +143,52 @@ HOURLY_POINT_MAJOR_PARAMS: tuple[str, ...] = (
     HOURLY_RADIATION,
 )
 
+# B9/B11 date-major additions behind per-entity gating (issue #69). Measured
+# 2026-08-28 (docs/ogd.md §E4, "Row order"): the three cloud-cover files and the
+# two temperature-percentile files are all **date-major**, so each one costs a
+# horizon prefix (~7–11 MB at the default horizon) exactly like ``tre200h0`` —
+# not the ~5 KB point block of the point-major group. Three prefixes for one
+# ``cloud_coverage`` number, or two for the percentile band, is the expensive
+# path, so these files are fetched **only when the option that needs them is
+# enabled** (the gusts/direction gating pattern of ADR-0002). They ride the same
+# near/far tier schedule as the temperature file, being date-major.
+#
+# B9: high / mid / low cloud cover (%). ``cloud_coverage`` (HA's single number)
+# is the maximum of the three layers; each layer is also exposed as an attribute.
+HOURLY_CLOUD_HIGH = "nprohihs"
+HOURLY_CLOUD_MID = "npromths"
+HOURLY_CLOUD_LOW = "nprolohs"
+HOURLY_CLOUD_PARAMS: tuple[str, ...] = (
+    HOURLY_CLOUD_HIGH,
+    HOURLY_CLOUD_MID,
+    HOURLY_CLOUD_LOW,
+)
+# B11: temperature 10th / 90th percentile (°C), the forecast's uncertainty band.
+HOURLY_TEMP_P10 = "treq10h0"
+HOURLY_TEMP_P90 = "treq90h0"
+HOURLY_TEMP_PERCENTILE_PARAMS: tuple[str, ...] = (HOURLY_TEMP_P10, HOURLY_TEMP_P90)
+
+
+def hourly_date_major_params(
+    *, cloud_layers: bool = False, temp_percentiles: bool = False
+) -> tuple[str, ...]:
+    """The date-major hourly files to fetch for the enabled options (issue #69).
+
+    A pure **fetch-set registry**: it maps the set of enabled entities/attributes
+    to the upstream files they need. The base set is always the temperature file
+    (``tre200h0``). The B9 cloud-cover files and the B11 temperature-percentile
+    files are date-major too — each an extra horizon prefix — so they join only
+    when their option is on (ADR-0002 per-entity gating). With nothing extra
+    enabled the result is exactly :data:`HOURLY_DATE_MAJOR_PARAMS`, so nothing
+    extra is ever fetched. tests/test_const.py asserts this.
+    """
+    params: list[str] = list(HOURLY_DATE_MAJOR_PARAMS)
+    if cloud_layers:
+        params.extend(HOURLY_CLOUD_PARAMS)
+    if temp_percentiles:
+        params.extend(HOURLY_TEMP_PERCENTILE_PARAMS)
+    return tuple(params)
+
 # The three point-major hourly wind files fetched with every daily refresh to
 # populate ``native_wind_speed``, ``native_wind_gust_speed``, and
 # ``wind_bearing`` on each ``DailyForecast`` entry (issue #60, ADR-0002

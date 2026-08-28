@@ -171,10 +171,14 @@
         "title": "Horizon de la prévision horaire",
         "description": "Jusqu'où télécharger la prévision horaire, en jours calendaires locaux complets. Un horizon plus court télécharge moins. « Cycle complet » télécharge les ~220 heures (environ 9 jours).",
         "data": {
-          "hourly_horizon_days": "Horizon de prévision"
+          "hourly_horizon_days": "Horizon de prévision",
+          "hourly_cloud_layers": "Inclure les couches de couverture nuageuse",
+          "hourly_temp_percentiles": "Inclure les percentiles de température"
         },
         "data_description": {
-          "hourly_horizon_days": "Par défaut : le reste d'aujourd'hui plus deux jours complets (environ 7 à 11 Mo par actualisation). « Cycle complet » télécharge chaque heure (environ 30 Mo par actualisation)."
+          "hourly_horizon_days": "Par défaut : le reste d'aujourd'hui plus deux jours complets (environ 7 à 11 Mo par actualisation). « Cycle complet » télécharge chaque heure (environ 30 Mo par actualisation).",
+          "hourly_cloud_layers": "Ajoute cloud_coverage (le maximum des couches haute, moyenne et basse) ainsi que les trois couches comme attributs horaires. Télécharge trois fichiers supplémentaires par actualisation, ce qui quadruple environ le trafic horaire. Désactivé par défaut.",
+          "hourly_temp_percentiles": "Ajoute les 10e et 90e percentiles de température (la marge d'incertitude de la prévision) comme attributs horaires. Télécharge deux fichiers supplémentaires par actualisation. Désactivé par défaut."
         }
       },
       "pollen_station": {

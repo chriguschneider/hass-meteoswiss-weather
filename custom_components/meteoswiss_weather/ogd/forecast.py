@@ -23,11 +23,16 @@ from .const import (
     DAILY_TEMP_MIN,
     FORECAST_ENCODING,
     FORECAST_TIMEZONE,
+    HOURLY_CLOUD_HIGH,
+    HOURLY_CLOUD_LOW,
+    HOURLY_CLOUD_MID,
     HOURLY_GUST,
     HOURLY_PRECIP_PROBABILITY,
     HOURLY_PRECIPITATION,
     HOURLY_RADIATION,
     HOURLY_SYMBOL,
+    HOURLY_TEMP_P10,
+    HOURLY_TEMP_P90,
     HOURLY_TEMPERATURE,
     HOURLY_WIND_DIRECTION,
     HOURLY_WIND_SPEED,
@@ -66,8 +71,10 @@ _DAILY_FIELDS: dict[str, str] = {
 }
 
 # Hourly parameter code -> HourlyForecast field (ADR-0002 minimum set plus the
-# gust and wind-direction files the entity exposes, and the B7/B8/B10 additions
-# of issue #55). ``symbol`` is the integer icon code; the rest are floats.
+# gust and wind-direction files the entity exposes, the B7/B8/B10 additions of
+# issue #55, and the B9/B11 gated additions of issue #69). ``symbol`` is the
+# integer icon code; the rest are floats. A parameter absent from the fetched
+# text (because its option is off) is simply not merged — the field stays None.
 _HOURLY_FIELDS: dict[str, str] = {
     HOURLY_TEMPERATURE: "temperature",
     HOURLY_PRECIPITATION: "precipitation",
@@ -78,6 +85,13 @@ _HOURLY_FIELDS: dict[str, str] = {
     HOURLY_PRECIP_PROBABILITY: "precipitation_probability",
     HOURLY_ZERO_DEGREE: "zero_degree_level",
     HOURLY_RADIATION: "radiation",
+    # B9 cloud cover (three date-major layers) and B11 temperature percentiles
+    # (two date-major files), fetched only behind their opt-in (issue #69).
+    HOURLY_CLOUD_HIGH: "cloud_high",
+    HOURLY_CLOUD_MID: "cloud_mid",
+    HOURLY_CLOUD_LOW: "cloud_low",
+    HOURLY_TEMP_P10: "temperature_p10",
+    HOURLY_TEMP_P90: "temperature_p90",
 }
 
 

@@ -24,8 +24,10 @@ from homeassistant.helpers.selector import ConfigEntrySelector
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_HOURLY_CLOUD_LAYERS,
     CONF_HOURLY_FORECAST,
     CONF_HOURLY_HORIZON_DAYS,
+    CONF_HOURLY_TEMP_PERCENTILES,
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
@@ -130,6 +132,14 @@ async def async_setup_entry(
     hourly_horizon_days = int(
         entry.options.get(CONF_HOURLY_HORIZON_DAYS, DEFAULT_HOURLY_HORIZON_DAYS)
     )
+    # B9/B11 gated date-major additions (issue #69). Only meaningful with the
+    # hourly opt-in on; each turns on extra expensive files, so both default off.
+    hourly_cloud_layers = hourly_enabled and bool(
+        entry.options.get(CONF_HOURLY_CLOUD_LAYERS, False)
+    )
+    hourly_temp_percentiles = hourly_enabled and bool(
+        entry.options.get(CONF_HOURLY_TEMP_PERCENTILES, False)
+    )
 
     station_coordinator = StationCoordinator(hass, entry, session, station_abbr)
     forecast_coordinator = ForecastCoordinator(
@@ -140,6 +150,8 @@ async def async_setup_entry(
         point,
         hourly_enabled=hourly_enabled,
         hourly_horizon_days=hourly_horizon_days,
+        hourly_cloud_layers=hourly_cloud_layers,
+        hourly_temp_percentiles=hourly_temp_percentiles,
     )
 
     # A first-refresh failure raises ConfigEntryNotReady so HA retries setup.

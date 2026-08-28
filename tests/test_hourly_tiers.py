@@ -33,8 +33,16 @@ from custom_components.meteoswiss_weather.coordinator import (
     _tier_due,
 )
 from custom_components.meteoswiss_weather.ogd.const import (
+    HOURLY_CLOUD_HIGH,
+    HOURLY_CLOUD_LOW,
+    HOURLY_CLOUD_MID,
+    HOURLY_CLOUD_PARAMS,
     HOURLY_DATE_MAJOR_PARAMS,
     HOURLY_POINT_MAJOR_PARAMS,
+    HOURLY_TEMP_P10,
+    HOURLY_TEMP_P90,
+    HOURLY_TEMP_PERCENTILE_PARAMS,
+    hourly_date_major_params,
 )
 from custom_components.meteoswiss_weather.ogd.models import (
     ForecastPoint,
@@ -335,3 +343,125 @@ async def test_provider_none_run_returns_none(
     )
     assert await provider.async_get_hourly(run) is None
     assert backend.calls == []
+
+
+# ---------------------------------------------------------------------------
+# B9/B11 per-entity gating of the date-major additions (issue #69)
+# ---------------------------------------------------------------------------
+
+
+class _GatedRecordingBackend:
+    """Recording backend that fills the gated date-major fields when asked.
+
+    ``fetch_hourly`` returns cloud and percentile values only for the params it
+    is actually asked for, so a test can assert both which files a tier fetched
+    *and* that the merge carries the gated fields through.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[tuple[str, ...], int]] = []
+
+    async def fetch_daily(self, point):  # pragma: no cover - unused here
+        return []
+
+    async def fetch_hourly(self, point, *, horizon_days=-1, params=()):
+        self.calls.append((tuple(params), horizon_days))
+        want = set(params)
+        base = datetime(2026, 8, 27, 0, 0, tzinfo=UTC)
+        return [
+            HourlyForecast(
+                time=base + timedelta(hours=h),
+                temperature=float(h),
+                precipitation=0.0,
+                symbol=1,
+                wind_speed_kmh=1.0,
+                gust_kmh=2.0,
+                wind_bearing=90,
+                cloud_high=20.0 if HOURLY_CLOUD_HIGH in want else None,
+                cloud_mid=40.0 if HOURLY_CLOUD_MID in want else None,
+                cloud_low=10.0 if HOURLY_CLOUD_LOW in want else None,
+                temperature_p10=8.0 if HOURLY_TEMP_P10 in want else None,
+                temperature_p90=13.0 if HOURLY_TEMP_P90 in want else None,
+            )
+            for h in range(24)
+        ]
+
+
+def _date_major_calls(backend) -> list[tuple[str, ...]]:
+    """Params of the recorded date-major fetches (not the point-major group)."""
+    return [
+        params
+        for params, _ in backend.calls
+        if params != tuple(HOURLY_POINT_MAJOR_PARAMS)
+    ]
+
+
+async def test_provider_default_fetches_no_gated_files(hass: HomeAssistant) -> None:
+    """With neither gated option on, the date-major fetch is temperature only."""
+    backend = _GatedRecordingBackend()
+    provider = HourlyForecastProvider(
+        hass, backend, _POINT, enabled=True, horizon_days=_HORIZON_DAYS
+    )
+    run = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+    with freeze_time(run):
+        await provider.async_get_hourly(run)
+
+    for params in _date_major_calls(backend):
+        assert params == tuple(HOURLY_DATE_MAJOR_PARAMS)
+        assert not set(params) & set(HOURLY_CLOUD_PARAMS)
+        assert not set(params) & set(HOURLY_TEMP_PERCENTILE_PARAMS)
+
+
+async def test_provider_cloud_option_fetches_and_merges_layers(
+    hass: HomeAssistant,
+) -> None:
+    """With cloud layers on, the date-major fetch adds the three cloud files."""
+    backend = _GatedRecordingBackend()
+    provider = HourlyForecastProvider(
+        hass,
+        backend,
+        _POINT,
+        enabled=True,
+        horizon_days=_HORIZON_DAYS,
+        cloud_layers=True,
+    )
+    run = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+    with freeze_time(run):
+        hourly = await provider.async_get_hourly(run)
+
+    expected = hourly_date_major_params(cloud_layers=True)
+    for params in _date_major_calls(backend):
+        assert params == expected
+    # The merged forecast carries the cloud fields, but no percentiles.
+    assert hourly is not None
+    assert hourly[0].cloud_high == 20.0
+    assert hourly[0].cloud_mid == 40.0
+    assert hourly[0].cloud_low == 10.0
+    assert hourly[0].temperature_p10 is None
+    assert hourly[0].temperature_p90 is None
+
+
+async def test_provider_percentile_option_fetches_and_merges_band(
+    hass: HomeAssistant,
+) -> None:
+    """With percentiles on, the date-major fetch adds the p10/p90 files only."""
+    backend = _GatedRecordingBackend()
+    provider = HourlyForecastProvider(
+        hass,
+        backend,
+        _POINT,
+        enabled=True,
+        horizon_days=_HORIZON_DAYS,
+        temp_percentiles=True,
+    )
+    run = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+    with freeze_time(run):
+        hourly = await provider.async_get_hourly(run)
+
+    expected = hourly_date_major_params(temp_percentiles=True)
+    for params in _date_major_calls(backend):
+        assert params == expected
+    assert hourly is not None
+    assert hourly[0].temperature_p10 == 8.0
+    assert hourly[0].temperature_p90 == 13.0
+    assert hourly[0].cloud_high is None
