@@ -36,6 +36,7 @@ from custom_components.meteoswiss_weather.ogd.const import (
 # The fixture run (conftest) and the station whose ``now`` file it serves.
 _RUN_TS = "202608270200"
 _STATION_ABBR = "BER"
+_ENTITY_ID = "weather.koniz"
 
 
 @pytest.fixture
@@ -117,8 +118,9 @@ async def test_setup_populates_both_coordinators(
     forecast = runtime.forecast_coordinator.data
     assert forecast is not None
     assert len(forecast.daily) == 9
-    # Hourly is off by default (ADR-0002): no hourly data fetched.
-    assert forecast.hourly is None
+    # Hourly is off by default (ADR-0002) and lazy even when on (issue #54):
+    # nothing has been fetched at setup.
+    assert runtime.forecast_coordinator.hourly_provider.last_fetch is None
     assert runtime.forecast_coordinator.last_run is not None
 
     assert await hass.config_entries.async_unload(config_entry.entry_id)
@@ -203,20 +205,55 @@ async def test_hourly_option_off_downloads_no_hourly_files(
     await hass.async_block_till_done()
 
     # A second forecast refresh must not reach for hourly files either.
-    await config_entry.runtime_data.forecast_coordinator.async_refresh()
+    coordinator = config_entry.runtime_data.forecast_coordinator
+    await coordinator.async_refresh()
     await hass.async_block_till_done()
 
+    # Even asking the provider directly stays silent while the option is off.
+    provider = coordinator.hourly_provider
+    assert await provider.async_get_hourly(coordinator.last_run) is None
     assert _hourly_calls(mock_ogd) == 0
-    assert config_entry.runtime_data.forecast_coordinator.data.hourly is None
+    assert provider.last_fetch is None
 
 
-async def test_hourly_option_on_fetches_once_and_throttles(
+async def test_hourly_is_lazy_not_fetched_at_setup(
     hass: HomeAssistant,
     hourly_config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """Hourly is fetched at setup, then never faster than the 3 h floor."""
+    """With the option on, setup and coordinator ticks fetch no hourly files.
+
+    The bulk hourly download only happens when something asks for the hourly
+    forecast (issue #54); a coordinator refresh only tracks the run stamp.
+    """
+    with freeze_time(datetime(2026, 8, 27, 2, 0, tzinfo=UTC)):
+        hourly_config_entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(hourly_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+        coordinator = hourly_config_entry.runtime_data.forecast_coordinator
+        assert _hourly_calls(mock_ogd) == 0
+        assert coordinator.hourly_provider.last_fetch is None
+
+        # A plain coordinator refresh still fetches nothing hourly.
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        assert _hourly_calls(mock_ogd) == 0
+
+
+async def test_hourly_provider_fetches_once_and_caches(
+    hass: HomeAssistant,
+    hourly_config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """One request fetches the set once; a second within the floor hits cache.
+
+    A run change past the 3 h floor (the staleness rule B14a keeps) fetches
+    again. The provider is driven directly here, standing in for the
+    ``weather.get_forecasts`` call that reaches it in production.
+    """
     start = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+    run = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
     n_params = len(HOURLY_REQUIRED_PARAMS)
 
     with freeze_time(start) as frozen:
@@ -224,25 +261,74 @@ async def test_hourly_option_on_fetches_once_and_throttles(
         assert await hass.config_entries.async_setup(hourly_config_entry.entry_id)
         await hass.async_block_till_done()
 
-        coordinator = hourly_config_entry.runtime_data.forecast_coordinator
-        # First refresh downloaded the full hourly set exactly once.
-        assert _hourly_calls(mock_ogd) == n_params
-        assert coordinator.data.hourly is not None
-        assert len(coordinator.data.hourly) == 24
+        provider = hourly_config_entry.runtime_data.forecast_coordinator.hourly_provider
 
-        # A refresh one hour later is inside the 3 h floor: no new download.
+        # First request downloads the full hourly set exactly once.
+        hourly = await provider.async_get_hourly(run)
+        assert hourly is not None
+        assert len(hourly) == 24
+        assert _hourly_calls(mock_ogd) == n_params
+
+        # A second request one hour later on the same run hits the cache.
         frozen.move_to(start + timedelta(hours=1))
-        await coordinator.async_refresh()
-        await hass.async_block_till_done()
-        assert coordinator.last_update_success
+        hourly = await provider.async_get_hourly(run)
+        assert len(hourly) == 24
         assert _hourly_calls(mock_ogd) == n_params
 
-        # Just past the 3 h floor the hourly files are fetched again.
+        # A new run within the floor is still throttled: the cache is served.
+        newer_run = run + timedelta(hours=3)
+        hourly = await provider.async_get_hourly(newer_run)
+        assert _hourly_calls(mock_ogd) == n_params
+
+        # A new run past the floor fetches the set again.
         frozen.move_to(start + HOURLY_FORECAST_MIN_INTERVAL + timedelta(seconds=1))
-        await coordinator.async_refresh()
-        await hass.async_block_till_done()
-        assert coordinator.last_update_success
+        hourly = await provider.async_get_hourly(newer_run)
+        assert len(hourly) == 24
         assert _hourly_calls(mock_ogd) == 2 * n_params
+
+
+async def test_run_change_fetches_hourly_only_with_subscriber(
+    hass: HomeAssistant,
+    hourly_config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A new run downloads hourly only while a card/automation subscribes (#54).
+
+    The coordinator just tracks the run stamp; the weather entity turns a run
+    change into an ``async_update_listeners`` push, which pulls the bulk files
+    lazily and only when someone is listening.
+    """
+    from homeassistant.components.weather import DOMAIN as WEATHER_DOMAIN
+
+    n_params = len(HOURLY_REQUIRED_PARAMS)
+
+    with freeze_time(datetime(2026, 8, 27, 2, 0, tzinfo=UTC)):
+        hass.states.async_set("sun.sun", "above_horizon")
+        hourly_config_entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(hourly_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+        coordinator = hourly_config_entry.runtime_data.forecast_coordinator
+        entity = hass.data[WEATHER_DOMAIN].get_entity(_ENTITY_ID)
+        assert entity is not None
+        assert _hourly_calls(mock_ogd) == 0
+
+        # A new run with nobody subscribed: the run change downloads nothing.
+        coordinator.last_run = coordinator.last_run + timedelta(hours=3)
+        entity._handle_forecast_update()
+        await hass.async_block_till_done()
+        assert _hourly_calls(mock_ogd) == 0
+
+        # A card subscribes; the next run change pulls the hourly set once.
+        received: list = []
+        unsub = entity.async_subscribe_forecast("hourly", received.append)
+        coordinator.last_run = coordinator.last_run + timedelta(hours=3)
+        entity._handle_forecast_update()
+        await hass.async_block_till_done()
+
+        assert _hourly_calls(mock_ogd) == n_params
+        assert received and received[-1] is not None
+        unsub()
 
 
 async def test_options_change_reloads_entry(
@@ -250,11 +336,16 @@ async def test_options_change_reloads_entry(
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """Turning the hourly option on reloads the entry and starts fetching it."""
+    """Turning the hourly option on reloads the entry with the option enabled.
+
+    The reload does not download anything: the hourly fetch stays lazy (#54).
+    """
     config_entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
     assert _hourly_calls(mock_ogd) == 0
+    coordinator = config_entry.runtime_data.forecast_coordinator
+    assert coordinator.hourly_provider.enabled is False
 
     hass.config_entries.async_update_entry(
         config_entry, options={CONF_HOURLY_FORECAST: True}
@@ -262,6 +353,9 @@ async def test_options_change_reloads_entry(
     await hass.async_block_till_done()
 
     assert config_entry.state is ConfigEntryState.LOADED
-    # The reload rebuilt the coordinator with hourly on, so it fetched the set.
-    assert _hourly_calls(mock_ogd) == len(HOURLY_REQUIRED_PARAMS)
-    assert config_entry.runtime_data.forecast_coordinator.data.hourly is not None
+    # The reload rebuilt the coordinator with hourly on, but nothing is fetched
+    # until something asks for the hourly forecast.
+    provider = config_entry.runtime_data.forecast_coordinator.hourly_provider
+    assert provider.enabled is True
+    assert _hourly_calls(mock_ogd) == 0
+    assert provider.last_fetch is None

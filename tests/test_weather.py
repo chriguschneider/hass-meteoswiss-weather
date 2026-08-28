@@ -256,12 +256,29 @@ async def test_condition_prefers_current_hour_symbol(
     hourly_config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """With hourly on, the current hour's symbol overrides the daily symbol.
+    """Once hourly data is cached, the current hour's symbol sharpens condition.
 
     At 12:00 UTC the hourly symbol is 7 (snowy-rainy) while today's daily
-    symbol is 2 (partlycloudy); the entity state must follow the sharper
-    hourly value.
+    symbol is 2 (partlycloudy). The hourly fetch is lazy (issue #54), so the
+    condition only sharpens after something pulls the hourly forecast; before
+    that it falls back to the daily symbol.
     """
     with freeze_time(datetime(2026, 8, 27, 12, 0, tzinfo=UTC)):
         await _setup(hass, hourly_config_entry)
+
+        # Nothing has fetched hourly yet: condition uses the daily symbol.
+        assert hass.states.get(_ENTITY_ID).state == "partlycloudy"
+
+        # Pull the hourly forecast (as a card or automation would), which fills
+        # the provider cache, then re-render the entity state.
+        await hass.services.async_call(
+            "weather",
+            "get_forecasts",
+            {"entity_id": _ENTITY_ID, "type": "hourly"},
+            blocking=True,
+            return_response=True,
+        )
+        await hourly_config_entry.runtime_data.station_coordinator.async_refresh()
+        await hass.async_block_till_done()
+
         assert hass.states.get(_ENTITY_ID).state == "snowy-rainy"

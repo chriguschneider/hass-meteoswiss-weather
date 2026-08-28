@@ -66,6 +66,14 @@ async def async_get_config_entry_diagnostics(
                     str(fc.last_exception) if fc.last_exception else None
                 ),
                 "last_run": fc.last_run.isoformat() if fc.last_run else None,
+                "hourly": {
+                    "enabled": fc.hourly_provider.enabled,
+                    "last_fetch": (
+                        fc.hourly_provider.last_fetch.isoformat()
+                        if fc.hourly_provider.last_fetch
+                        else None
+                    ),
+                },
             },
         },
         _TO_REDACT,

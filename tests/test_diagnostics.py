@@ -414,18 +414,19 @@ async def test_forecast_hourly_parse_error_creates_repair_issue(
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """A parse error while fetching the hourly files creates the repair issue."""
+    """A parse error in the lazy hourly fetch creates the repair issue (#54)."""
+    from datetime import UTC, datetime
+
     await _setup(hass, config_entry)
 
-    coordinator = config_entry.runtime_data.forecast_coordinator
-    # Enable the hourly download and clear its throttle so the branch runs.
-    coordinator._hourly_enabled = True
-    coordinator._last_hourly_fetch = None
+    # The lazy provider is where hourly I/O happens now; enable it and drive it.
+    provider = config_entry.runtime_data.forecast_coordinator.hourly_provider
+    provider._enabled = True
 
     with patch.object(
-        coordinator._backend, "fetch_hourly", side_effect=OgdParseError("bad hourly")
+        provider._backend, "fetch_hourly", side_effect=OgdParseError("bad hourly")
     ):
-        await coordinator.async_refresh()
+        await provider.async_get_hourly(datetime(2026, 8, 27, 2, 0, tzinfo=UTC))
         await hass.async_block_till_done()
 
     issue_reg = ir.async_get(hass)
@@ -437,21 +438,25 @@ async def test_forecast_hourly_connection_error_creates_no_repair_issue(
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """A connection error while fetching the hourly files posts no repair issue."""
+    """A connection error in the lazy hourly fetch posts no repair issue (#54)."""
+    from datetime import UTC, datetime
+
     await _setup(hass, config_entry)
 
-    coordinator = config_entry.runtime_data.forecast_coordinator
-    coordinator._hourly_enabled = True
-    coordinator._last_hourly_fetch = None
+    provider = config_entry.runtime_data.forecast_coordinator.hourly_provider
+    provider._enabled = True
 
     with patch.object(
-        coordinator._backend,
+        provider._backend,
         "fetch_hourly",
         side_effect=OgdConnectionError("hourly unreachable"),
     ):
-        await coordinator.async_refresh()
+        # The provider swallows the transient error, keeping last-good (None).
+        assert (
+            await provider.async_get_hourly(datetime(2026, 8, 27, 2, 0, tzinfo=UTC))
+            is None
+        )
         await hass.async_block_till_done()
 
-    assert coordinator.last_update_success is False
     issue_reg = ir.async_get(hass)
     assert issue_reg.async_get_issue(DOMAIN, "parse_error_forecast") is None
