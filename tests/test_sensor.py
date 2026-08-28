@@ -292,7 +292,7 @@ async def test_full_station_creates_all_sensors(
             "sensor", DOMAIN, f"{device_unique_id}_{desc.key}"
         ) is not None
     )
-    # All 11 descriptions must produce a registry entry.
+    # All descriptions must produce a registry entry.
     assert sensor_count == len(_SENSORS)
 
 
@@ -321,6 +321,107 @@ async def test_reduced_station_creates_only_carried_sensors(
         assert entity_id is None, (
             f"sensor for key={desc.key!r} should not exist for a reduced station"
         )
+
+
+# ---------------------------------------------------------------------------
+# B1–B5 new sensors (issue #47)
+# ---------------------------------------------------------------------------
+
+
+async def test_snow_depth(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Snow depth sensor exists, is disabled by default, reads 0.0 cm from fixture."""
+    await _setup(hass, config_entry)
+    entity_reg = er.async_get(hass)
+    entry = entity_reg.async_get("sensor.koniz_snow_depth")
+    assert entry is not None
+    assert entry.disabled_by is not None  # disabled by default
+
+
+async def test_wind_chill(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Wind chill sensor exists and is disabled by default."""
+    await _setup(hass, config_entry)
+    entity_reg = er.async_get(hass)
+    entry = entity_reg.async_get("sensor.koniz_wind_chill")
+    assert entry is not None
+    assert entry.disabled_by is not None
+
+
+async def test_pressure_qnh(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """QNH pressure sensor exists and is disabled by default."""
+    await _setup(hass, config_entry)
+    entity_reg = er.async_get(hass)
+    entry = entity_reg.async_get("sensor.koniz_pressure_qnh")
+    assert entry is not None
+    assert entry.disabled_by is not None
+
+
+async def test_soil_temperatures(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Soil temperature sensors exist and are disabled by default."""
+    await _setup(hass, config_entry)
+    entity_reg = er.async_get(hass)
+    for entity_id in (
+        "sensor.koniz_soil_temperature_5_cm",
+        "sensor.koniz_soil_temperature_10_cm",
+        "sensor.koniz_soil_temperature_20_cm",
+    ):
+        entry = entity_reg.async_get(entity_id)
+        assert entry is not None, f"{entity_id!r} not found"
+        assert entry.disabled_by is not None, f"{entity_id!r} should be disabled"
+
+
+async def test_air_temp_5cm(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """5 cm air temperature sensor exists and is disabled by default."""
+    await _setup(hass, config_entry)
+    entity_reg = er.async_get(hass)
+    entry = entity_reg.async_get("sensor.koniz_air_temperature_5_cm")
+    assert entry is not None
+    assert entry.disabled_by is not None
+
+
+async def test_diffuse_radiation(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Diffuse radiation sensor exists and is disabled by default."""
+    await _setup(hass, config_entry)
+    entity_reg = er.async_get(hass)
+    entry = entity_reg.async_get("sensor.koniz_diffuse_radiation")
+    assert entry is not None
+    assert entry.disabled_by is not None
+
+
+async def test_longwave_radiation(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Longwave radiation sensor exists and is disabled by default."""
+    await _setup(hass, config_entry)
+    entity_reg = er.async_get(hass)
+    entry = entity_reg.async_get("sensor.koniz_longwave_radiation")
+    assert entry is not None
+    assert entry.disabled_by is not None
 
 
 async def test_orphan_registry_entries_removed_on_setup(

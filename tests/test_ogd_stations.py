@@ -218,10 +218,14 @@ async def test_fetch_datainventory_full_station(session) -> None:
 
     assert "BER" in inventory
     ber_params = inventory["BER"]
-    # All 11 parameter codes that sensor.py maps to observation fields.
+    # All parameter codes that sensor.py maps to observation fields.
     expected = {
         "tre200s0", "ure200s0", "tde200s0", "pp0qffs0", "prestas0",
         "fu3010z0", "dkl010z0", "fu3010z1", "rre150z0", "sre000z0", "gre000z0",
+        # B1–B5 (issue #47)
+        "htoauts0", "xchills0", "pp0qnhs0",
+        "tso005s0", "tso010s0", "tso020s0",
+        "tre005s0", "ods000z0", "oli000z0",
     }
     assert expected == ber_params
 

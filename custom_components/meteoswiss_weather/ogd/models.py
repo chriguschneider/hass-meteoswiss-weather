@@ -55,6 +55,20 @@ class Observation:
     precipitation_10min: float | None = None
     sunshine_10min: float | None = None
     global_radiation: float | None = None
+    # B1
+    snow_depth: float | None = None
+    # B2
+    wind_chill: float | None = None
+    pressure_qnh: float | None = None
+    # B3
+    soil_temp_5cm: float | None = None
+    soil_temp_10cm: float | None = None
+    soil_temp_20cm: float | None = None
+    # B4
+    air_temp_5cm: float | None = None
+    # B5
+    diffuse_radiation: float | None = None
+    longwave_radiation: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

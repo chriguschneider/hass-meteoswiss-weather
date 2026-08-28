@@ -55,6 +55,20 @@ _OBSERVATION_CODES: dict[str, str] = {
     "precipitation_10min": "rre150z0",
     "sunshine_10min": "sre000z0",
     "global_radiation": "gre000z0",
+    # B1
+    "snow_depth": "htoauts0",
+    # B2
+    "wind_chill": "xchills0",
+    "pressure_qnh": "pp0qnhs0",
+    # B3
+    "soil_temp_5cm": "tso005s0",
+    "soil_temp_10cm": "tso010s0",
+    "soil_temp_20cm": "tso020s0",
+    # B4
+    "air_temp_5cm": "tre005s0",
+    # B5
+    "diffuse_radiation": "ods000z0",
+    "longwave_radiation": "oli000z0",
 }
 
 
