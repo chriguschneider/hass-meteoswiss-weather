@@ -29,6 +29,7 @@ async def async_get_config_entry_diagnostics(
     runtime = entry.runtime_data
     sc = runtime.station_coordinator
     fc = runtime.forecast_coordinator
+    pc = runtime.precip_coordinator
 
     return async_redact_data(
         {
@@ -75,6 +76,24 @@ async def async_get_config_entry_diagnostics(
                     ),
                 },
             },
+            # Optional precipitation station (ADR-0006): only present when set.
+            "precip_coordinator": (
+                {
+                    "station_abbr": pc._station_abbr,
+                    "station_name": runtime.precip_station_name,
+                    "last_update_success": pc.last_update_success,
+                    "last_success": (
+                        pc.last_success.isoformat() if pc.last_success else None
+                    ),
+                    "last_exception": (
+                        str(pc.last_exception) if pc.last_exception else None
+                    ),
+                    "cache_etag": pc._cache.etag,
+                    "cache_last_modified": pc._cache.last_modified,
+                }
+                if pc is not None
+                else None
+            ),
         },
         _TO_REDACT,
     )

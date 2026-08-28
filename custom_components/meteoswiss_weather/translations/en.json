@@ -11,6 +11,10 @@
     "parse_error_pollen": {
       "title": "MeteoSwiss pollen file format changed",
       "description": "The pollen observation file could not be parsed. The upstream format may have changed. Check `docs/ogd.md` in the integration repository for the current format and open a drift issue if the layout no longer matches."
+    },
+    "parse_error_precip": {
+      "title": "MeteoSwiss precipitation-station file format changed",
+      "description": "The precipitation-station observation file could not be parsed. The upstream format may have changed. Check `docs/ogd.md` in the integration repository for the current format and open a drift issue if the layout no longer matches."
     }
   },
   "entity": {
@@ -88,7 +92,11 @@
         "title": "Select weather station",
         "description": "Choose the SwissMetNet station to use for current conditions. The nearest station is pre-selected.{radar_hint}",
         "data": {
-          "station_abbr": "Weather station"
+          "station_abbr": "Weather station",
+          "precip_station_abbr": "Precipitation station (optional)"
+        },
+        "data_description": {
+          "precip_station_abbr": "Rain is hyper-local and SwissMetNet is sparse. Optionally pick a nearer station from the automatic precipitation network; when set, only the current precipitation is read from it. Leave as \"None\" to use the main station."
         }
       },
       "reconfigure": {

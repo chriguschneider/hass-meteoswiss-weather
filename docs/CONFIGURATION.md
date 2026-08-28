@@ -33,6 +33,19 @@ Choose a mountain point from the dropdown list. All 631 alpine forecast points a
 
 Choose a SwissMetNet weather station to provide current conditions. The setup flow shows the three nearest stations with the closest one pre-selected. You can override it if you prefer a different station (e.g. one with better elevation or terrain match).
 
+#### Optional: separate precipitation station
+
+The same step offers an optional **precipitation station** from the automatic precipitation-only network (`ch.meteoschweiz.ogd-smn-precip`, ~141 gauges — denser than SwissMetNet). Rain is hyper-local, so a nearer rain gauge is often more representative than the main station's. The three nearest precipitation stations are offered and **none is selected by default** — the feature is opt-in.
+
+When set:
+
+- the current **precipitation** (the `precipitation` sensor and the weather entity's `current_precipitation` attribute) is read from this station;
+- **every other value** — temperature, humidity, pressure, wind, condition — stays with the main station;
+- the precipitation sensor's attribution and a `station` attribute name the precipitation station it reads;
+- a second small (~1.2 KB) file is polled every 10 minutes, conditionally, only while the option is set — inside the station traffic budget ([ADR-0002](adr/0002-traffic-budget-bulk-local-forecast.md), [ADR-0006](adr/0006-optional-precipitation-station.md)).
+
+The pick can be changed (or cleared) later with **Reconfigure**.
+
 ## Entities
 
 ### Weather Entity
@@ -51,6 +64,7 @@ One `weather` entity per config entry.
 | `wind_bearing` | Wind direction from the station | ° (0–360, where 0 is north) |
 | `wind_gust_speed` | Peak wind gust from the station | km/h |
 | `condition` | Weather condition (`sunny`, `partlycloudy`, `cloudy`, `rainy`, `snowy`, etc.) | — |
+| `current_precipitation` | Current 10-minute precipitation (from the precipitation station when one is configured, otherwise the main station) | mm |
 
 **Forecast:**
 
@@ -69,7 +83,7 @@ One sensor entity per measured field from the SwissMetNet station. All are disab
 | **Wind Speed** | km/h | Yes | 10-minute mean |
 | **Wind Bearing** | ° | Yes | 0–360, where 0 is north |
 | **Gust Speed** | km/h | Yes | Peak gust |
-| **Precipitation** | mm | Yes | 10-minute total |
+| **Precipitation** | mm | Yes | 10-minute total; from the precipitation station when one is configured (see Step 3) |
 | **Dew Point** | °C | No | Diagnostic |
 | **Pressure (QFE)** | hPa | No | Station-level pressure |
 | **Sunshine Duration** | min | No | 10-minute total |

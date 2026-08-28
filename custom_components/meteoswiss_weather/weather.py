@@ -34,7 +34,11 @@ from homeassistant.util import dt as dt_util
 
 from . import MeteoSwissConfigEntry
 from .const import ATTRIBUTION, CONF_HOURLY_FORECAST, DOMAIN
-from .coordinator import ForecastCoordinator, StationCoordinator
+from .coordinator import (
+    ForecastCoordinator,
+    PrecipStationCoordinator,
+    StationCoordinator,
+)
 from .ogd import DailyForecast, ForecastPoint, HourlyForecast
 from .symbols import condition_for_symbol
 
@@ -74,6 +78,13 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
         # forecast refresh also writes state.
         super().__init__(runtime.station_coordinator)
         self._forecast_coordinator: ForecastCoordinator = runtime.forecast_coordinator
+        # Optional precipitation-only station (ADR-0006, #70): when set, the
+        # current precipitation attribute reads from it instead of the main
+        # station. ``None`` unless the user picked one.
+        self._precip_coordinator: PrecipStationCoordinator | None = (
+            runtime.precip_coordinator
+        )
+        self._precip_station_name: str = runtime.precip_station_name
         point: ForecastPoint = runtime.point
 
         # Hourly is an opt-in feature (ADR-0002): advertise FORECAST_HOURLY only
@@ -112,6 +123,15 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
         self.async_on_remove(
             self._forecast_coordinator.async_add_listener(self._handle_forecast_update)
         )
+        # A precipitation-station refresh must re-write the current precipitation
+        # attribute too (ADR-0006). Its failure never affects availability —
+        # precipitation is one opt-in attribute, not a core condition.
+        if self._precip_coordinator is not None:
+            self.async_on_remove(
+                self._precip_coordinator.async_add_listener(
+                    self._handle_coordinator_update
+                )
+            )
 
     @property
     def available(self) -> bool:
@@ -158,6 +178,25 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
     def native_wind_gust_speed(self) -> float | None:
         obs = self.coordinator.data
         return obs.gust_kmh if obs else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, float | str | None]:
+        """Current precipitation (mm, 10-minute sum), sourced per ADR-0006.
+
+        Home Assistant's ``WeatherEntity`` has no first-class current
+        precipitation, so it rides here. It comes from the optional
+        precipitation station when one is configured — with ``precipitation_station``
+        naming it — and from the main station otherwise.
+        """
+        if self._precip_coordinator is not None:
+            obs = self._precip_coordinator.data
+            attrs: dict[str, float | str | None] = {
+                "current_precipitation": obs.precipitation_10min if obs else None,
+                "precipitation_station": self._precip_station_name,
+            }
+            return attrs
+        obs = self.coordinator.data
+        return {"current_precipitation": obs.precipitation_10min if obs else None}
 
     # -- condition (today's daily symbol) -----------------------------------
 

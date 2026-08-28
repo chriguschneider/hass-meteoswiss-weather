@@ -439,10 +439,16 @@ async def async_setup_entry(
     )
 
     station_params = runtime.station_parameters
+    precip_coordinator = runtime.precip_coordinator
     # None means inventory was unavailable; create all sensors as a safe fallback.
+    # The precipitation sensor is handled separately below: when an optional
+    # precipitation station is configured (ADR-0006), it reads from that station
+    # (which always carries rre150z0) rather than from the main station and its
+    # inventory, so it is excluded from the main-station set here.
     supported = [
         desc for desc in _SENSORS
-        if station_params is None or desc.parameter_code in station_params
+        if (station_params is None or desc.parameter_code in station_params)
+        and not (precip_coordinator is not None and desc.key == "precipitation")
     ]
 
     # Determine which pollen sensors to create (only when coordinator exists).
@@ -464,6 +470,10 @@ async def async_setup_entry(
             | {f"{device_unique_id}_{_ZERO_DEGREE_DESCRIPTION.key}"}
             | {f"{device_unique_id}_{desc.key}" for desc in _POLLEN_SENSORS}
         )
+        # The precipitation sensor is created from the precip station below and
+        # is excluded from ``supported``, so keep its id in the valid set.
+        if precip_coordinator is not None:
+            valid_unique_ids.add(f"{device_unique_id}_precipitation")
         sensor_uid_prefix = f"{device_unique_id}_"
         entity_reg = er.async_get(hass)
         for entity_entry in er.async_entries_for_config_entry(
@@ -481,6 +491,23 @@ async def async_setup_entry(
         )
         for description in supported
     )
+    # Precipitation from the optional precipitation station (ADR-0006, #70): its
+    # attribution and a ``station`` attribute name the station it reads.
+    if precip_coordinator is not None:
+        precip_description = next(
+            desc for desc in _SENSORS if desc.key == "precipitation"
+        )
+        async_add_entities(
+            [
+                MeteoSwissSensor(
+                    precip_coordinator,
+                    precip_description,
+                    device_unique_id,
+                    device_info,
+                    station_name=runtime.precip_station_name,
+                )
+            ]
+        )
     async_add_entities(
         ForecastSensor(
             runtime.forecast_coordinator, description, device_unique_id, device_info
@@ -506,7 +533,13 @@ async def async_setup_entry(
 
 
 class MeteoSwissSensor(CoordinatorEntity[StationCoordinator], SensorEntity):
-    """One observation field from the configured SwissMetNet station."""
+    """One observation field from the configured SwissMetNet station.
+
+    When ``station_name`` is given the sensor reads from a different station
+    than the entry's main one (the optional precipitation station, ADR-0006):
+    the attribution then names that station and it is exposed as a ``station``
+    state attribute, so a dashboard shows where the value comes from.
+    """
 
     _attr_has_entity_name = True
     _attr_attribution = ATTRIBUTION
@@ -517,12 +550,17 @@ class MeteoSwissSensor(CoordinatorEntity[StationCoordinator], SensorEntity):
         description: MeteoSwissSensorDescription,
         device_unique_id: str,
         device_info: DeviceInfo,
+        *,
+        station_name: str | None = None,
     ) -> None:
         super().__init__(coordinator)
         self.entity_description = description
         self._observation_key = description.observation_key
         self._attr_unique_id = f"{device_unique_id}_{description.key}"
         self._attr_device_info = device_info
+        if station_name:
+            self._attr_attribution = f"{ATTRIBUTION} ({station_name})"
+            self._attr_extra_state_attributes = {"station": station_name}
 
     @property
     def native_value(self) -> float | None:

@@ -11,6 +11,10 @@
     "parse_error_pollen": {
       "title": "MeteoSwiss : format du fichier pollen modifié",
       "description": "Le fichier d'observations de pollen n'a pas pu être analysé. Le format en amont a peut-être changé. Consultez `docs/ogd.md` dans le dépôt de l'intégration pour le format actuel et ouvrez un issue de dérive si la structure ne correspond plus."
+    },
+    "parse_error_precip": {
+      "title": "Le format du fichier de la station de précipitations MeteoSwiss a changé",
+      "description": "Le fichier d'observation de la station de précipitations n'a pas pu être analysé. Le format des données source a peut-être changé. Consultez `docs/ogd.md` dans le dépôt de l'intégration pour le format actuel et ouvrez un ticket de dérive si la structure ne correspond plus."
     }
   },
   "entity": {
@@ -88,7 +92,11 @@
         "title": "Sélectionner une station météorologique",
         "description": "Choisissez la station SwissMetNet pour les conditions actuelles. La station la plus proche est présélectionnée.{radar_hint}",
         "data": {
-          "station_abbr": "Station météorologique"
+          "station_abbr": "Station météorologique",
+          "precip_station_abbr": "Station de précipitations (facultatif)"
+        },
+        "data_description": {
+          "precip_station_abbr": "Les précipitations sont très locales et SwissMetNet est clairsemé. Choisissez éventuellement une station plus proche dans le réseau automatique de mesure des précipitations ; si elle est définie, seules les précipitations actuelles en sont lues. Laissez « None » pour utiliser la station principale."
         }
       },
       "reconfigure": {
