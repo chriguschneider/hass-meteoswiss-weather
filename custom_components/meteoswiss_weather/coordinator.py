@@ -57,6 +57,7 @@ from .const import (
     FORECAST_CHECK_INTERVAL,
     HOURLY_FAR_MAX_AGE,
     HOURLY_FAR_RUN_HOURS,
+    HOURLY_HORIZON_FULL_RUN,
     HOURLY_NEAR_HORIZON_DAYS,
     HOURLY_NEAR_MAX_AGE,
     HOURLY_NEAR_RUN_HOURS,
@@ -183,6 +184,20 @@ class HourlyForecastProvider:
         self._date_major_params = hourly_date_major_params(
             cloud_layers=cloud_layers, temp_percentiles=temp_percentiles
         )
+        # The near tier is a cheap prefix of the far window, so it must never
+        # reach past the configured horizon: a user who narrows the horizon
+        # below the near default (only horizon 0, "today only") would otherwise
+        # see the near fetch leak tomorrow's temperature-only hours — with no
+        # symbol/precip/wind, since the point-major group stays trimmed to the
+        # configured horizon — that flicker in and out as near and far alternate.
+        self._near_horizon_days = (
+            self._horizon_days
+            if (
+                self._horizon_days != HOURLY_HORIZON_FULL_RUN
+                and self._horizon_days < HOURLY_NEAR_HORIZON_DAYS
+            )
+            else HOURLY_NEAR_HORIZON_DAYS
+        )
         self._lock = asyncio.Lock()
         # The merged forecast last built from the groups below.
         self._hourly: list[HourlyForecast] | None = None
@@ -301,7 +316,7 @@ class HourlyForecastProvider:
         ):
             near = await self._backend.fetch_hourly(
                 self._point,
-                horizon_days=HOURLY_NEAR_HORIZON_DAYS,
+                horizon_days=self._near_horizon_days,
                 params=self._date_major_params,
             )
             # Overwrite only the near-window hours; keep the far-window values

@@ -320,6 +320,75 @@ async def test_provider_near_fallback_refetches_near_only(
     assert [_tier_of(c) for c in backend.calls] == ["near"]
 
 
+class _TrimmingBackend:
+    """A backend that trims its synthetic run to the requested horizon.
+
+    Unlike :class:`_RecordingBackend` (which returns a fixed window whatever the
+    caller asks), this honours ``horizon_days`` so the test can see the near
+    tier's horizon, not just its param set.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[tuple[str, ...], int]] = []
+
+    async def fetch_daily(self, point):  # pragma: no cover - unused here
+        return []
+
+    async def fetch_hourly(self, point, *, horizon_days=-1, params=()):
+        self.calls.append((tuple(params), horizon_days))
+        from custom_components.meteoswiss_weather.ogd.hourly import horizon_end_utc
+
+        base = datetime(2026, 8, 27, 0, 0, tzinfo=UTC)
+        end = horizon_end_utc(horizon_days, datetime.now(UTC))
+        return [
+            HourlyForecast(
+                time=base + timedelta(hours=h),
+                temperature=float(h),
+                precipitation=0.0,
+                symbol=1,
+                wind_speed_kmh=1.0,
+                gust_kmh=2.0,
+                wind_bearing=90,
+            )
+            for h in range(72)
+            if end is None or base + timedelta(hours=h) < end
+        ]
+
+
+async def test_near_tier_never_overshoots_configured_horizon(
+    hass: HomeAssistant,
+) -> None:
+    """A near-only refresh must not leak hours past a narrowed horizon.
+
+    With ``horizon_days=0`` (today only) the near tier's default reach (end of
+    tomorrow) would otherwise add temperature-only hours with no point-major
+    fields, flickering in and out as near and far alternate. The near horizon is
+    capped at the configured horizon, so the forecast length stays stable.
+    """
+    backend = _TrimmingBackend()
+    provider = HourlyForecastProvider(
+        hass, backend, _POINT, enabled=True, horizon_days=0
+    )
+    start = datetime(2026, 8, 27, 5, 0, tzinfo=UTC)  # far landing hour
+    with freeze_time(start) as frozen:
+        after_far = await provider.async_get_hourly(start)
+        assert after_far is not None
+
+        # A near-only landing run (08 UTC) an hour later.
+        frozen.move_to(start + timedelta(hours=1))
+        after_near = await provider.async_get_hourly(
+            datetime(2026, 8, 27, 8, 0, tzinfo=UTC)
+        )
+
+    assert after_near is not None
+    # No growth and no temperature-only leak past the point-major window.
+    assert len(after_near) == len(after_far)
+    assert all(h.symbol is not None for h in after_near)
+    # The near fetch used the capped horizon, not the default reach of 1.
+    near_calls = [c for c in backend.calls if c[0] == tuple(HOURLY_DATE_MAJOR_PARAMS)]
+    assert near_calls[-1][1] == 0
+
+
 async def test_provider_disabled_never_fetches(hass: HomeAssistant) -> None:
     """With the option off the provider returns None and never fetches."""
     backend = _RecordingBackend()
