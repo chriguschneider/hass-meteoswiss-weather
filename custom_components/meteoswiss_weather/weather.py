@@ -10,6 +10,10 @@ day/night variant chosen from ``sun.sun`` (ADR-0001/0002).
 
 from __future__ import annotations
 
+import logging
+from datetime import datetime
+from typing import Literal
+
 from homeassistant.components.sun import STATE_ABOVE_HORIZON
 from homeassistant.components.weather import (
     Forecast,
@@ -36,6 +40,8 @@ from .symbols import condition_for_symbol
 
 # Home Assistant's well-known sun entity; its state is the day/night flag.
 _SUN_ENTITY_ID = "sun.sun"
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -74,9 +80,18 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
         # when the option is on, so HA never asks for hourly data we do not fetch.
         # The entry reloads on an options change, so this is read once at build.
         features = WeatherEntityFeature.FORECAST_DAILY
-        if entry.options.get(CONF_HOURLY_FORECAST, False):
+        self._hourly_enabled = bool(entry.options.get(CONF_HOURLY_FORECAST, False))
+        if self._hourly_enabled:
             features |= WeatherEntityFeature.FORECAST_HOURLY
         self._attr_supported_features = features
+
+        # Whether a card or automation currently subscribes to the hourly
+        # forecast, tracked via the subscription hooks below. It gates the lazy
+        # download: a new run with no subscriber must not fetch (issue #54).
+        self._hourly_subscribed = False
+        # The run stamp last turned into an hourly listener push, so a run that
+        # has not changed does not re-trigger a fetch.
+        self._last_hourly_run: datetime | None = None
 
         unique_id = f"{point.point_type_id}-{point.point_id}"
         self._attr_unique_id = unique_id
@@ -91,10 +106,11 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
     async def async_added_to_hass(self) -> None:
         """Subscribe to the forecast coordinator in addition to the station one."""
         await super().async_added_to_hass()
+        # Seed the run watermark with the run already loaded so the first
+        # coordinator tick does not look like a change.
+        self._last_hourly_run = self._forecast_coordinator.last_run
         self.async_on_remove(
-            self._forecast_coordinator.async_add_listener(
-                self._handle_coordinator_update
-            )
+            self._forecast_coordinator.async_add_listener(self._handle_forecast_update)
         )
 
     @property
@@ -165,12 +181,18 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
         return condition_for_symbol(today.symbol, is_daytime=self._is_daytime())
 
     def _current_hour_symbol(self) -> int | None:
-        """The hourly symbol for the current UTC hour, if hourly data is here."""
-        data = self._forecast_coordinator.data
-        if data is None or not data.hourly:
+        """The hourly symbol for the current UTC hour, if hourly data is cached.
+
+        Reads only what the lazy provider already downloaded — computing the
+        condition never triggers the bulk hourly fetch (issue #54). With no
+        hourly subscriber the cache is empty and the condition falls back to the
+        daily symbol.
+        """
+        hourly = self._forecast_coordinator.hourly_provider.cached_hourly
+        if not hourly:
             return None
         this_hour = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
-        for hour in data.hourly:
+        for hour in hourly:
             if hour.time == this_hour:
                 return hour.symbol
         return None
@@ -225,12 +247,17 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
         """Return the hourly forecast as HA ``Forecast`` dicts, or ``None``.
 
         Only reachable when ``FORECAST_HOURLY`` is advertised, i.e. the option
-        is on; ``None`` until the first throttled hourly download completes.
+        is on. This is the lazy download point (issue #54): HA calls it while a
+        card or automation subscribes or on a ``weather.get_forecasts`` call, and
+        the provider fetches the bulk hourly files only when the run changed and
+        its cache is stale. ``None`` until the first fetch completes.
         """
-        data = self._forecast_coordinator.data
-        if data is None or not data.hourly:
+        hourly = await self._forecast_coordinator.hourly_provider.async_get_hourly(
+            self._forecast_coordinator.last_run
+        )
+        if not hourly:
             return None
-        return [self._as_hourly_forecast(hour) for hour in data.hourly]
+        return [self._as_hourly_forecast(hour) for hour in hourly]
 
     @staticmethod
     def _as_hourly_forecast(hour: HourlyForecast) -> Forecast:
@@ -247,5 +274,49 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Write state on a refresh of either coordinator."""
+        """Write state on a refresh of the station coordinator."""
         self.async_write_ha_state()
+
+    @callback
+    def _handle_forecast_update(self) -> None:
+        """Write state on a forecast refresh and, on a new run, refresh hourly.
+
+        The coordinator only tracks the run stamp; the bulk hourly download is
+        lazy. When the run changes we push the ``hourly`` forecast to its
+        listeners, which downloads *only* if a card or automation is subscribed
+        (ADR-0002 revision 2, issue #54). With no subscriber the run change is
+        logged and nothing is fetched.
+        """
+        self.async_write_ha_state()
+        if not self._hourly_enabled:
+            return
+        run = self._forecast_coordinator.last_run
+        if run is None or run == self._last_hourly_run:
+            return
+        self._last_hourly_run = run
+        if not self._hourly_subscribed:
+            _LOGGER.debug(
+                "hourly forecast: run %s changed but nothing subscribes; "
+                "skipping the bulk download",
+                run.isoformat(),
+            )
+            return
+        # A subscriber exists: HA calls async_forecast_hourly, which pulls the
+        # new run lazily through the provider.
+        self.hass.async_create_task(self.async_update_listeners(["hourly"]))
+
+    @callback
+    def _async_subscription_started(
+        self, forecast_type: Literal["daily", "hourly", "twice_daily"]
+    ) -> None:
+        """Track the first hourly subscriber (a card open, an automation)."""
+        if forecast_type == "hourly":
+            self._hourly_subscribed = True
+
+    @callback
+    def _async_subscription_ended(
+        self, forecast_type: Literal["daily", "hourly", "twice_daily"]
+    ) -> None:
+        """Track the last hourly subscriber going away."""
+        if forecast_type == "hourly":
+            self._hourly_subscribed = False
