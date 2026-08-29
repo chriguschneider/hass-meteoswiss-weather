@@ -9,6 +9,25 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+## [v0.2.1] — 2026-08-29
+
+### Fixed
+
+- **The hourly forecast no longer starts in the past, and no longer
+  shows blank leading hours** (#92). The hourly parser bounded only the
+  end of the window, so every refresh delivered the hours the model run
+  covers *before* now — up to a full day of them — and the first hours
+  came out ragged, because the parameter files do not all begin at the
+  same hour: an entry would carry a temperature but no icon, no
+  precipitation and no wind, and a weather card rendered it as a blank
+  slot. Hours before the current hour are now discarded at parse time
+  (the running hour is kept), and an hour is only delivered when it
+  carries temperature, symbol, precipitation and wind speed. The
+  precipitation-probability, zero-degree-level, radiation, cloud-layer
+  and temperature-percentile fields stay optional, so a disabled option
+  never drops an otherwise good hour. Present since v0.1.1 and made more
+  visible by the extra parameter files v0.2.0 added.
+
 ## [v0.2.0] — 2026-08-28
 
 ### Added
@@ -205,7 +224,8 @@ integration produces a weather entity (see the tracking issue in the README).
   tag-triggered release gate with a zip asset, and the opt-in Claude agent
   workflows (label, mention, autopilot, reviewer)
 
-[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.2.1...HEAD
+[v0.2.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.2.0...v0.2.1
 [v0.2.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.1.1...v0.2.0
 [v0.1.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.1.0...v0.1.1
 [v0.1.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.0.1...v0.1.0
