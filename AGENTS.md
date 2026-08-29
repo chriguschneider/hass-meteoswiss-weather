@@ -137,6 +137,23 @@ CI (hassfest + HACS + ruff + pytest) runs on every push. If you iterate
 with several pushes, open the PR as a **draft** until you expect CI to
 pass, then mark ready. Direct push to `master` is not the flow; open a PR.
 
+### Changelog entries
+
+Every PR that changes user-visible behavior adds an entry to `CHANGELOG.md`
+under the `## [Unreleased]` section in the appropriate subsection
+(Added/Changed/Deprecated/Removed/Fixed/Security, per
+[Keep a Changelog](https://keepachangelog.com/en/1.0.0/)).
+
+**Exemption:** a fix for a feature that never appeared in a released version
+needs no entry — it has no user-visible before-state. This applies to fixes
+to features landed in the same release cycle (before a version tag is cut).
+The exemption is a judgment call made at review time and committed to in the
+PR comment thread, not a mechanical gate.
+
+The release commit (`chore(release): vX.Y.Z`) renames `## [Unreleased]` to
+`## [vX.Y.Z] — YYYY-MM-DD`, and `.github/workflows/release.yml` extracts
+that section verbatim as the GitHub release notes.
+
 ### Automation
 
 Opt-in, draft-PR-only (see [`docs/agent-automation.md`](docs/agent-automation.md)):
