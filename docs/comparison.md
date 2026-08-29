@@ -47,7 +47,7 @@ a thousand posts. That is the risk being traded away here — see
 | Third-party services | none | Nominatim (OpenStreetMap) for the postal code | none known |
 | Setup | 3 steps, pre-filled from the HA location | UI, coordinates + postal code | UI, station codes by hand |
 | Default traffic | ~5 MB per new forecast run; 304s in between | negligible | negligible |
-| Maturity | young, `0.2.0`, small install base | established, `quality_scale: silver` | established |
+| Maturity | young, `0.2.1`, small install base | established, `quality_scale: silver` | established |
 
 ## What this integration gains
 
@@ -83,7 +83,7 @@ a thousand posts. That is the risk being traded away here — see
   entry for now.
 - **Not every station measures everything.** Sensors a station does not
   carry stay `unknown`.
-- **Young.** Version 0.2.0, custom HACS repository, few installs, so
+- **Young.** Version 0.2.1, custom HACS repository, few installs, so
   correspondingly little field hardening.
 
 ## What the alternatives do better
