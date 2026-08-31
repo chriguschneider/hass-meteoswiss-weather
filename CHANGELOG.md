@@ -9,6 +9,16 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`cloud_coverage` and the cloud-layer attributes now carry correct
+  percentages** (#97). MeteoSwiss silently changed the three cloud-cover
+  files (`nprohihs`, `npromths`, `nprolohs`) from percent (0–100) to fraction
+  (0–1) between 2026-08-27 and 2026-08-31. The parser now applies a tolerant
+  per-file heuristic: if every non-`None` value is ≤ 1.0 the file is treated
+  as fraction-encoded and multiplied by 100, so a future silent revert to
+  percent encoding is also handled correctly.
+
 ## [v0.2.1] — 2026-08-29
 
 ### Fixed

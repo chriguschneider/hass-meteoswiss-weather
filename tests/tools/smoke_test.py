@@ -84,7 +84,14 @@ HOURLY_EXPECTED_LAYOUT = {
     "fu3010h0": "point",
     "fu3010h1": "point",
     "dkl010h0": "point",
+    # Cloud files are date-major (docs/ogd.md §E4, row-order table).
+    "nprohihs": "date",
+    "npromths": "date",
+    "nprolohs": "date",
 }
+
+# Cloud parameters to sanity-check for value range (issue #97).
+CLOUD_PARAMS = ("nprohihs", "npromths", "nprolohs")
 
 # Forecast point checked in the data files (postal code 3098 Köniz, n=00).
 FORECAST_POINT_ID = "309800"
@@ -422,6 +429,72 @@ def check_station_meta() -> None:
         _report(label, False, str(exc))
 
 
+def _fetch_cloud_values(href: str) -> list[float]:
+    """Fetch a small prefix of a date-major cloud file and extract the point's values.
+
+    Date-major files start with the earliest hours for all points. The first
+    200 KB covers several hours of all ~5,600 points, which is enough to extract
+    several rows for our forecast point.
+    """
+    param = href.rsplit(".", 2)[-2]  # e.g. "nprohihs" from "...nprohihs.csv"
+    body, _ = _range_get(href, 0, 200 * 1024 - 1)
+    text = body.decode("iso-8859-1", errors="replace")
+    reader = csv.DictReader(io.StringIO(text), delimiter=";")
+    vals: list[float] = []
+    for row in reader:
+        if (
+            row.get("point_id") == FORECAST_POINT_ID
+            and row.get("point_type_id") == FORECAST_POINT_TYPE_ID
+        ):
+            raw = row.get(param, "").strip()
+            try:
+                vals.append(float(raw))
+            except ValueError:
+                pass
+    return vals
+
+
+def check_cloud_value_range(hrefs: dict[str, str]) -> None:
+    """Check: cloud-layer values for the forecast point are in [0, 100] after scaling.
+
+    MeteoSwiss silently changed nprohihs/npromths/nprolohs from percent (0–100)
+    to fraction (0–1) on 2026-08-31 (issue #97). The integration applies a
+    per-file heuristic: if max ≤ 1.0 → fraction → ×100. This check fetches a
+    small prefix of each cloud file, applies the same heuristic, and verifies
+    the scaled values land in [0, 100]. It also reports which format was detected
+    so a future format change is visible in the CI log.
+    """
+    label = "Cloud-layer values in [0, 100] after unit heuristic (issue #97)"
+    problems: list[str] = []
+    for param in CLOUD_PARAMS:
+        href = hrefs.get(param)
+        if not href:
+            problems.append(f"{param}: no href in run")
+            continue
+        try:
+            vals = _fetch_cloud_values(href)
+        except Exception as exc:  # noqa: BLE001
+            problems.append(f"{param}: fetch error: {exc}")
+            continue
+        if not vals:
+            problems.append(
+                f"{param}: no rows for {FORECAST_POINT_ID};{FORECAST_POINT_TYPE_ID}"
+            )
+            continue
+        fmt = "fraction" if max(vals) <= 1.0 else "percent"
+        scaled = [v * 100 if fmt == "fraction" else v for v in vals]
+        out_of_range = [v for v in scaled if not 0.0 <= v <= 100.0]
+        if out_of_range:
+            problems.append(
+                f"{param}: {len(out_of_range)} value(s) outside [0,100] "
+                f"after {fmt} scaling: e.g. {out_of_range[0]}"
+            )
+        else:
+            print(f"   {param}: {fmt} format, {len(vals)} rows, "
+                  f"range [{min(scaled):.1f}, {max(scaled):.1f}]%")
+    _report(label, not problems, "; ".join(problems))
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -435,6 +508,7 @@ def main() -> None:
     if hrefs:
         check_daily_files(hrefs)
         check_hourly_layouts(hrefs)
+        check_cloud_value_range(hrefs)
     else:
         _report(_DAILY_LABEL, False, "skipped — STAC check failed")
 

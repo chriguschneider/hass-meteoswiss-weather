@@ -234,6 +234,15 @@ Sampling rows at fixed byte offsets across each file shows two layouts:
 | **point-major** (one point's ~220 rows contiguous, ~5 KB) | `(point_type_id, point_id, Date)` — ends with type-3 rows | `rre150h0`, `rre003i0`, `rp0003i0`, `fu3010h0`, `fu3010h1`, `dkl010h0`, `zprfr0hs`, `gre000h0`, `sre000h0` |
 | **point-major, id-sorted** (types mixed) | `(point_id, Date)` | `jww003i0` (`834;3` at 3 MB, `5025;1` at 6 MB) |
 
+**Cloud-layer unit change (issue #97):** `nprohihs`, `npromths`, `nprolohs`
+changed from **percent (0–100)** to **fraction (0–1, two decimal places)**
+between the runs of 2026-08-27 and 2026-08-31. The change was not announced;
+`ogd-local-forecasting_meta_parameters.csv` declares the unit as `-`. The
+integration applies a per-file heuristic: if `max(values for point) ≤ 1.0`
+the file is fraction-encoded and is multiplied by 100 before storage, so Home
+Assistant always receives percent values. A file with any value > 1.0 is
+already in percent and is left unchanged.
+
 - The origin is **CloudFront over S3**. `Range` is answered with 206 and
   `Accept-Ranges: bytes`; `If-None-Match` **plus** `Range` answers 304 when
   unchanged; `If-Range` with a matching ETag answers 206, a mismatch 200 with
@@ -289,7 +298,7 @@ This is the basis of the tiered refresh (ADR-0002, revision 2; #54).
 | `dkl010h0` | wind direction ° |
 | `sre000h0` | sunshine duration |
 | `gre000h0`, `ods000h0` | global / diffuse radiation |
-| `nprohihs`, `npromths`, `nprolohs` | high / mid / low cloud cover |
+| `nprohihs`, `npromths`, `nprolohs` | high / mid / low cloud cover (%; fraction 0–1 since 2026-08-31, scaled ×100 by the integration — issue #97) |
 | `zprfr0hs` | zero-degree level |
 
 | daily | meaning |
