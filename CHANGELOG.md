@@ -9,6 +9,8 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+## [v0.2.2] — 2026-08-31
+
 ### Fixed
 
 - **`cloud_coverage` and the cloud-layer attributes now carry correct
@@ -234,7 +236,8 @@ integration produces a weather entity (see the tracking issue in the README).
   tag-triggered release gate with a zip asset, and the opt-in Claude agent
   workflows (label, mention, autopilot, reviewer)
 
-[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.2.2...HEAD
+[v0.2.2]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.2.1...v0.2.2
 [v0.2.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.2.0...v0.2.1
 [v0.2.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.1.1...v0.2.0
 [v0.1.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.1.0...v0.1.1
