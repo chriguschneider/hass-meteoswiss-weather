@@ -109,6 +109,34 @@ def _to_float(value: str | None) -> float | None:
         return None
 
 
+# Cloud-layer fields that may arrive as 0–1 fractions after the 2026-08-31
+# upstream unit change (issue #97).
+_CLOUD_FIELDS: frozenset[str] = frozenset({"cloud_high", "cloud_mid", "cloud_low"})
+
+
+def _scale_cloud_fractions(
+    by_time: dict[datetime, dict[str, float | int | None]],
+) -> None:
+    """Scale cloud-layer fields from 0–1 fractions to 0–100 percent if needed.
+
+    MeteoSwiss silently changed nprohihs/npromths/nprolohs from percent to
+    fraction between 2026-08-27 and 2026-08-31 (issue #97). Per-field
+    heuristic: if every non-None value is ≤ 1.0, the file is fraction-encoded
+    and is multiplied by 100. A file with any value > 1.0 is already in percent
+    and is left alone, so a future silent upstream revert is also handled.
+    """
+    for field in _CLOUD_FIELDS:
+        vals = [
+            v
+            for entry in by_time.values()
+            if (v := entry.get(field)) is not None
+        ]
+        if vals and max(vals) <= 1.0:
+            for entry in by_time.values():
+                if field in entry and entry[field] is not None:
+                    entry[field] = round(entry[field] * 100, 2)  # type: ignore[operator]
+
+
 def _to_int(value: str | None) -> int | None:
     """Parse an integer cell (point/type ids, symbol codes)."""
     number = _to_float(value)
@@ -291,6 +319,8 @@ def parse_hourly(
             if horizon_end is not None and when >= horizon_end:
                 continue
             by_time.setdefault(when, {})[field] = cast(row.get(param))
+
+    _scale_cloud_fractions(by_time)
 
     return [
         HourlyForecast(time=when, **values)

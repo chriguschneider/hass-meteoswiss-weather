@@ -514,9 +514,12 @@ def test_parse_hourly_b7_b8_b10_merged_with_full_set() -> None:
 
 
 def test_parse_hourly_b9_cloud_layers() -> None:
-    """B9: the three cloud files map to cloud_high/mid/low on HourlyForecast.
+    """B9: fraction-format cloud files are scaled to percent (issue #97).
 
-    Fixture for 309800;2: high = 20 + 2*h, mid = 40 (const), low = 10 (const).
+    Fixture for 309800;2 uses 0–1 fractions (current upstream format since
+    2026-08-31): high = 0.20 + 0.02*h, mid = 0.40, low = 0.10. After the
+    heuristic scales them ×100 the expected percent values are:
+    high = 20 + 2*h, mid = 40 (const), low = 10 (const).
     """
     texts = {
         param: _fixture_text(f"vnut12.lssw.{RUN_TS}.{param}.csv")
@@ -533,6 +536,23 @@ def test_parse_hourly_b9_cloud_layers() -> None:
     assert h12.cloud_mid == 40.0
     # Fields from files not in this set stay None.
     assert all(h.temperature is None for h in hourly)
+
+
+def test_parse_hourly_b9_cloud_layers_percent_format_not_rescaled() -> None:
+    """Percent-format cloud files (max > 1.0) are not rescaled (issue #97).
+
+    Verifies the heuristic leaves already-percent files alone, so a silent
+    upstream revert back to percent encoding would still produce correct values.
+    """
+    csv_body = (
+        "point_id;point_type_id;Date;nprohihs\n"
+        "309800;2;202608270000;30.0\n"
+        "309800;2;202608270100;45.0\n"
+    )
+    hourly = parse_hourly({"nprohihs": csv_body}, _koeniz_point())
+    assert len(hourly) == 2
+    assert hourly[0].cloud_high == 30.0
+    assert hourly[1].cloud_high == 45.0
 
 
 def test_parse_hourly_b11_temperature_percentiles() -> None:
