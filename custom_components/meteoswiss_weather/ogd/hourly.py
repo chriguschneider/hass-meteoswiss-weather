@@ -5,13 +5,14 @@ points (docs/ogd.md §E4). Downloading the full set every refresh is the whole
 traffic budget (ADR-0002). Measured on 2026-08-28, the files have **two**
 layouts, and each admits a cheaper Range fetch:
 
-- **date-major** files (`tre200h0`, the `treq*`/`npro*` group) are sorted by
+- **date-major** files (`tre200h0`, the `treq*` group) are sorted by
   `Date`, so the earliest hours of all points lead the file — a prefix
   ``Range: bytes=0-<budget>`` covers the wanted horizon;
-- **point-major** files (symbol, precipitation, wind, gust, direction, …) are
-  sorted so one point's ~220 rows form a contiguous ~5 KB block — a binary
-  search over byte offsets with tiny Range probes locates it, then one Range
-  GET fetches it.
+- **point-major** files (symbol, precipitation, wind, gust, direction, and —
+  since a silent upstream re-sort on 2026-08-31 (issue #100) — the `npro*`
+  cloud group) are sorted so one point's ~220 rows form a contiguous ~5 KB
+  block — a binary search over byte offsets with tiny Range probes locates
+  it, then one Range GET fetches it.
 
 The layout is **detected at runtime** (byte-offset probes), never hard-coded;
 anything unrecognised falls back to the full download. All of this is pure

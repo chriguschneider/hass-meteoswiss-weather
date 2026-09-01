@@ -72,22 +72,27 @@ DAILY_PARAMS = set(_OGD_CONST.DAILY_REQUIRED_PARAMS)
 # Hourly params the integration fetches for the opt-in hourly forecast.
 HOURLY_PARAMS = set(_OGD_CONST.HOURLY_REQUIRED_PARAMS)
 
-# Expected byte-order layout of each hourly file the integration reads (issue
-# #50). The Range strategy in ogd/hourly.py detects this at runtime, but the
-# smoke test pins it so an upstream re-sort is caught before it degrades the
-# integration to full downloads. "date" = sorted by Date (horizon prefix works);
-# "point" = one point's rows contiguous (block Range works).
+# Accepted byte-order layouts of each hourly file the integration reads (issue
+# #50). The Range strategy in ogd/hourly.py detects the layout at runtime, so
+# either known layout stays cheap; only "other" degrades the integration to a
+# full download. "date" = sorted by Date (horizon prefix works); "point" = one
+# point's rows contiguous (block Range works).
+#
+# The cloud files accept both layouts: upstream re-sorted them from date-major
+# to point-major without announcement on 2026-08-31 (issues #97/#100), so a
+# flip back would be another false alarm, not a degradation. The observed
+# layout is printed by the cloud value-range check so drift stays visible in
+# the CI log.
 HOURLY_EXPECTED_LAYOUT = {
-    "tre200h0": "date",
-    "rre150h0": "point",
-    "jww003i0": "point",
-    "fu3010h0": "point",
-    "fu3010h1": "point",
-    "dkl010h0": "point",
-    # Cloud files are date-major (docs/ogd.md §E4, row-order table).
-    "nprohihs": "date",
-    "npromths": "date",
-    "nprolohs": "date",
+    "tre200h0": {"date"},
+    "rre150h0": {"point"},
+    "jww003i0": {"point"},
+    "fu3010h0": {"point"},
+    "fu3010h1": {"point"},
+    "dkl010h0": {"point"},
+    "nprohihs": {"date", "point"},
+    "npromths": {"date", "point"},
+    "nprolohs": {"date", "point"},
 }
 
 # Cloud parameters to sanity-check for value range (issue #97).
@@ -197,32 +202,43 @@ def _row_after(url: str, offset: int, total: int) -> tuple[int, int, str] | None
         return None
 
 
-def _classify_layout_live(url: str) -> str:
-    """Classify an hourly file as "date", "point" or "other" via offset probes."""
+def _nondec(seq) -> bool:
+    return all(a <= b for a, b in zip(seq, seq[1:], strict=False))
+
+
+def _probe_rows(url: str) -> tuple[list[tuple[int, int, str]], int]:
+    """Sample one row at each of 9 evenly spaced byte offsets."""
     _, total = _range_get(url, 0, 1023)
     if not total:
-        return "other"
-    rows = []
+        return [], 0
+    rows: list[tuple[int, int, str]] = []
     for i in range(9):
         row = _row_after(url, total * i // 9, total)
         if row is not None and (not rows or row != rows[-1]):
             rows.append(row)
+    return rows, total
+
+
+def _classify_rows(rows: list[tuple[int, int, str]]) -> str:
+    """Classify probed rows as a "date", "point" or "other" layout."""
     if len(rows) < 3:
         return "other"
     dates = [r[2] for r in rows]
     type_keys = [(r[1], r[0]) for r in rows]
     ids = [r[0] for r in rows]
-
-    def nondec(seq):
-        return all(a <= b for a, b in zip(seq, seq[1:], strict=False))
-
-    if nondec(dates) and len(set(dates)) > 1:
+    if _nondec(dates) and len(set(dates)) > 1:
         return "date"
-    if (nondec(type_keys) and len(set(type_keys)) > 1) or (
-        nondec(ids) and len(set(ids)) > 1
+    if (_nondec(type_keys) and len(set(type_keys)) > 1) or (
+        _nondec(ids) and len(set(ids)) > 1
     ):
         return "point"
     return "other"
+
+
+def _classify_layout_live(url: str) -> str:
+    """Classify an hourly file as "date", "point" or "other" via offset probes."""
+    rows, _ = _probe_rows(url)
+    return _classify_rows(rows)
 
 
 def _report(label: str, ok: bool, detail: str = "") -> None:
@@ -341,7 +357,7 @@ def check_hourly_layouts(hrefs: dict[str, str]) -> None:
     """
     label = "Hourly files have their expected Range layout (issue #50)"
     problems: list[str] = []
-    for param, expected in sorted(HOURLY_EXPECTED_LAYOUT.items()):
+    for param, allowed in sorted(HOURLY_EXPECTED_LAYOUT.items()):
         href = hrefs.get(param)
         if not href:
             problems.append(f"{param}: no href in run")
@@ -350,8 +366,10 @@ def check_hourly_layouts(hrefs: dict[str, str]) -> None:
             got = _classify_layout_live(href)
         except Exception as exc:  # noqa: BLE001 - report, keep checking others
             got = f"error: {exc}"
-        if got != expected:
-            problems.append(f"{param}: expected {expected}, got {got}")
+        if got not in allowed:
+            problems.append(
+                f"{param}: expected {'/'.join(sorted(allowed))}, got {got}"
+            )
     _report(label, not problems, "; ".join(problems))
 
 
@@ -429,29 +447,84 @@ def check_station_meta() -> None:
         _report(label, False, str(exc))
 
 
-def _fetch_cloud_values(href: str) -> list[float]:
-    """Fetch a small prefix of a date-major cloud file and extract the point's values.
+def _fetch_cloud_values(href: str) -> tuple[list[float], str]:
+    """Extract the forecast point's values from a cloud file, layout-aware.
 
-    Date-major files start with the earliest hours for all points. The first
-    200 KB covers several hours of all ~5,600 points, which is enough to extract
-    several rows for our forecast point.
+    Returns (values, layout). Upstream re-sorted the cloud files from
+    date-major to point-major on 2026-08-31 (issue #100), so the fetch mirrors
+    the runtime's two strategies instead of assuming a prefix works:
+
+    - date-major: the earliest hours of all points lead the file, so a 200 KB
+      prefix carries several rows for our point;
+    - point-major: binary-search the point's contiguous ~5 KB block via tiny
+      Range probes (same idea as ogd/hourly.py), then read one block.
     """
     param = href.rsplit(".", 2)[-2]  # e.g. "nprohihs" from "...nprohihs.csv"
-    body, _ = _range_get(href, 0, 200 * 1024 - 1)
-    text = body.decode("iso-8859-1", errors="replace")
-    reader = csv.DictReader(io.StringIO(text), delimiter=";")
-    vals: list[float] = []
-    for row in reader:
-        if (
-            row.get("point_id") == FORECAST_POINT_ID
-            and row.get("point_type_id") == FORECAST_POINT_TYPE_ID
-        ):
-            raw = row.get(param, "").strip()
-            try:
-                vals.append(float(raw))
-            except ValueError:
-                pass
-    return vals
+    rows, total = _probe_rows(href)
+    layout = _classify_rows(rows)
+
+    if layout == "date":
+        body, _ = _range_get(href, 0, 200 * 1024 - 1)
+        text = body.decode("iso-8859-1", errors="replace")
+        reader = csv.DictReader(io.StringIO(text), delimiter=";")
+        vals: list[float] = []
+        for row in reader:
+            if (
+                row.get("point_id") == FORECAST_POINT_ID
+                and row.get("point_type_id") == FORECAST_POINT_TYPE_ID
+            ):
+                raw = row.get(param, "").strip()
+                try:
+                    vals.append(float(raw))
+                except ValueError:
+                    pass
+        return vals, layout
+
+    if layout == "point":
+        # The block is parsed positionally, so pin the column order first.
+        head, _ = _range_get(href, 0, 255)
+        if not head.startswith(b"point_id;point_type_id;Date;"):
+            raise ValueError(f"unexpected header: {head[:40]!r}")
+        # Sort variant: (point_type_id, point_id) for most point-major files,
+        # bare point_id with types mixed for the jww003i0 style (docs/ogd.md
+        # §E4) — the cloud files arrived in the latter (issue #100).
+        type_keys = [(r[1], r[0]) for r in rows]
+        if _nondec(type_keys) and len(set(type_keys)) > 1:
+            target = (int(FORECAST_POINT_TYPE_ID), int(FORECAST_POINT_ID))
+
+            def key(r: tuple[int, int, str]) -> tuple[int, ...]:
+                return (r[1], r[0])
+        else:
+            target = (int(FORECAST_POINT_ID),)
+
+            def key(r: tuple[int, int, str]) -> tuple[int, ...]:
+                return (r[0],)
+
+        lo, hi = 0, total
+        while lo < hi:
+            mid = (lo + hi) // 2
+            row = _row_after(href, mid, total)
+            if row is None or key(row) >= target:
+                hi = mid
+            else:
+                lo = mid + 1
+        # ~220 rows x ~25 bytes per point; 64 KB covers the block comfortably.
+        body, _ = _range_get(href, lo, min(lo + 64 * 1024, total) - 1)
+        vals = []
+        for line in body.split(b"\n")[1:]:  # first fragment may be partial
+            parts = line.decode("iso-8859-1", errors="replace").split(";")
+            if (
+                len(parts) >= 4
+                and parts[0] == FORECAST_POINT_ID
+                and parts[1] == FORECAST_POINT_TYPE_ID
+            ):
+                try:
+                    vals.append(float(parts[3].strip()))
+                except ValueError:
+                    pass
+        return vals, layout
+
+    return [], layout
 
 
 def check_cloud_value_range(hrefs: dict[str, str]) -> None:
@@ -459,10 +532,10 @@ def check_cloud_value_range(hrefs: dict[str, str]) -> None:
 
     MeteoSwiss silently changed nprohihs/npromths/nprolohs from percent (0–100)
     to fraction (0–1) on 2026-08-31 (issue #97). The integration applies a
-    per-file heuristic: if max ≤ 1.0 → fraction → ×100. This check fetches a
-    small prefix of each cloud file, applies the same heuristic, and verifies
-    the scaled values land in [0, 100]. It also reports which format was detected
-    so a future format change is visible in the CI log.
+    per-file heuristic: if max ≤ 1.0 → fraction → ×100. This check fetches the
+    point's rows from each cloud file, applies the same heuristic, and verifies
+    the scaled values land in [0, 100]. It also reports the detected format and
+    layout so a future format change is visible in the CI log.
     """
     label = "Cloud-layer values in [0, 100] after unit heuristic (issue #97)"
     problems: list[str] = []
@@ -472,13 +545,14 @@ def check_cloud_value_range(hrefs: dict[str, str]) -> None:
             problems.append(f"{param}: no href in run")
             continue
         try:
-            vals = _fetch_cloud_values(href)
+            vals, layout = _fetch_cloud_values(href)
         except Exception as exc:  # noqa: BLE001
             problems.append(f"{param}: fetch error: {exc}")
             continue
         if not vals:
             problems.append(
-                f"{param}: no rows for {FORECAST_POINT_ID};{FORECAST_POINT_TYPE_ID}"
+                f"{param}: no rows for {FORECAST_POINT_ID};"
+                f"{FORECAST_POINT_TYPE_ID} ({layout} layout)"
             )
             continue
         fmt = "fraction" if max(vals) <= 1.0 else "percent"
@@ -490,8 +564,8 @@ def check_cloud_value_range(hrefs: dict[str, str]) -> None:
                 f"after {fmt} scaling: e.g. {out_of_range[0]}"
             )
         else:
-            print(f"   {param}: {fmt} format, {len(vals)} rows, "
-                  f"range [{min(scaled):.1f}, {max(scaled):.1f}]%")
+            print(f"   {param}: {layout} layout, {fmt} format, {len(vals)} "
+                  f"rows, range [{min(scaled):.1f}, {max(scaled):.1f}]%")
     _report(label, not problems, "; ".join(problems))
 
 
