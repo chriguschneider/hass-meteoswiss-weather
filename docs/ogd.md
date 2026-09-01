@@ -222,17 +222,17 @@ on 2026-08-27: `tre200px=29.1`, `tre200pn=16.7`, `rka150p0=0.1`, `jp2000d0=2`.
 - 220 hourly timestamps per point = 9 days + a few hours.
 - Daily files are cheap; hourly files are the whole budget. See ADR-0002.
 
-#### Row order — two layouts (measured 2026-08-28, run `202608280400`)
+#### Row order — two layouts (measured 2026-08-28 run `202608280400`; cloud files re-measured 2026-09-01 run `202609010800`)
 
 An earlier note here claimed rows are always sorted by `Date`, so a `Range`
-request "cannot help". That is true for only **6 of the 16** hourly files.
-Sampling rows at fixed byte offsets across each file shows two layouts:
+request "cannot help". That is true for only a minority of the 16 hourly
+files. Sampling rows at fixed byte offsets across each file shows two layouts:
 
 | layout | sort key | files |
 |---|---|---|
-| **date-major** (all points per hour block, ~150 KB/h) | `Date`, then point | `tre200h0`, `treq10h0`, `treq90h0`, `nprohihs`, `npromths`, `nprolohs` |
+| **date-major** (all points per hour block, ~150 KB/h) | `Date`, then point | `tre200h0`, `treq10h0`, `treq90h0` |
 | **point-major** (one point's ~220 rows contiguous, ~5 KB) | `(point_type_id, point_id, Date)` — ends with type-3 rows | `rre150h0`, `rre003i0`, `rp0003i0`, `fu3010h0`, `fu3010h1`, `dkl010h0`, `zprfr0hs`, `gre000h0`, `sre000h0` |
-| **point-major, id-sorted** (types mixed) | `(point_id, Date)` | `jww003i0` (`834;3` at 3 MB, `5025;1` at 6 MB) |
+| **point-major, id-sorted** (types mixed) | `(point_id, Date)` | `jww003i0` (`834;3` at 3 MB, `5025;1` at 6 MB); `nprohihs`, `npromths`, `nprolohs` since 2026-08-31 (see below) |
 
 **Cloud-layer unit change (issue #97):** `nprohihs`, `npromths`, `nprolohs`
 changed from **percent (0–100)** to **fraction (0–1, two decimal places)**
@@ -242,6 +242,13 @@ integration applies a per-file heuristic: if `max(values for point) ≤ 1.0`
 the file is fraction-encoded and is multiplied by 100 before storage, so Home
 Assistant always receives percent values. A file with any value > 1.0 is
 already in percent and is left unchanged.
+
+**Cloud-layer row-order change (issues #97/#100):** the same silent 2026-08-31
+change also re-sorted the three cloud files from date-major to point-major
+(id-sorted, `jww003i0` style). The runtime layout detection absorbed it, but
+these files have now demonstrably flipped layout once, so the weekly smoke
+test accepts **either** layout for them (failing only on "other") and prints
+the observed layout instead of pinning one.
 
 - The origin is **CloudFront over S3**. `Range` is answered with 206 and
   `Accept-Ranges: bytes`; `If-None-Match` **plus** `Range` answers 304 when
