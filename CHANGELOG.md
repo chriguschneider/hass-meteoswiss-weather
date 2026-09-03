@@ -9,6 +9,18 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The condition no longer stays on the night variant after sunrise**
+  (#103). MeteoSwiss keeps the night variant of the hourly symbol
+  (`jww003i0`) for a couple of hours past sunrise, so the entity reported
+  `clear-night` in broad daylight. The current condition is now reconciled
+  with `sun.sun` in both directions: a night code with the sun up renders as
+  its day counterpart, a day code with the sun down as its night counterpart
+  (the latter already applied to the daily symbol). The per-hour conditions
+  in the hourly forecast are unchanged — those are future hours, which
+  `sun.sun` cannot answer for.
+
 ## [v0.2.2] — 2026-08-31
 
 ### Fixed
