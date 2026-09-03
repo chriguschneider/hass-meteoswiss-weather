@@ -112,6 +112,25 @@ def test_is_daytime_true_keeps_the_day_code() -> None:
     assert condition_for_symbol(26, is_daytime=True) == "sunny"
 
 
+def test_is_daytime_true_uses_the_day_counterpart() -> None:
+    # An hourly night symbol still in the feed after sunrise takes its own day
+    # code (#103): 101 → 1 is ``sunny``, 126 → 26 is ``sunny`` (not ``cloudy``).
+    assert condition_for_symbol(101, is_daytime=True) == "sunny"
+    assert condition_for_symbol(126, is_daytime=True) == "sunny"
+    assert condition_for_symbol(105, is_daytime=True) == "cloudy"
+
+
+def test_is_daytime_true_does_not_shift_an_already_day_code() -> None:
+    # The hint must not subtract 100 from a day code.
+    assert condition_for_symbol(1, is_daytime=True) == "sunny"
+    assert condition_for_symbol(42, is_daytime=True) == "snowy"
+
+
+def test_is_daytime_none_keeps_the_night_code() -> None:
+    assert condition_for_symbol(101, is_daytime=None) == "clear-night"
+    assert condition_for_symbol(126, is_daytime=None) == "cloudy"
+
+
 def test_is_daytime_none_keeps_the_day_code() -> None:
     assert condition_for_symbol(1, is_daytime=None) == "sunny"
     assert condition_for_symbol(26, is_daytime=None) == "sunny"
