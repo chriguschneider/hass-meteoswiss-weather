@@ -595,3 +595,89 @@ async def test_forecast_sensors_not_removed_by_reduced_inventory(
         assert entity_reg.async_get(entity_id) is not None, (
             f"{entity_id!r} was incorrectly removed by inventory cleanup"
         )
+
+
+# ---------------------------------------------------------------------------
+# B9 — measurement time sensor (issue #105)
+# ---------------------------------------------------------------------------
+
+
+async def test_measurement_time_sensor_value(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Measurement time sensor reports the observation timestamp from the fixture."""
+    await _setup(hass, config_entry)
+    entity_reg = er.async_get(hass)
+    # Entity is disabled by default; verify it is registered.
+    entry = entity_reg.async_get("sensor.koniz_measurement_time")
+    assert entry is not None
+    assert entry.disabled_by is not None  # disabled by default
+
+    # Enable the entity and reload so we can read its state.
+    entity_reg.async_update_entity(
+        "sensor.koniz_measurement_time", disabled_by=None
+    )
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    # BER fixture last valid row: 26.08.2026 00:40 UTC → ISO timestamp.
+    state = hass.states.get("sensor.koniz_measurement_time")
+    assert state is not None
+    assert state.state == "2026-08-26T00:40:00+00:00"
+
+
+async def test_measurement_time_sensor_unknown_when_no_data(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Measurement time sensor is ``unknown`` when the coordinator has no data."""
+    from homeassistant.const import STATE_UNKNOWN
+
+    await _setup(hass, config_entry)
+
+    entity_reg = er.async_get(hass)
+    entity_reg.async_update_entity(
+        "sensor.koniz_measurement_time", disabled_by=None
+    )
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    coordinator = config_entry.runtime_data.station_coordinator
+    coordinator.async_set_updated_data(None)
+    await hass.async_block_till_done()
+
+    state = hass.states.get("sensor.koniz_measurement_time")
+    assert state is not None
+    assert state.state == STATE_UNKNOWN
+
+
+async def test_measurement_time_sensor_is_diagnostic(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Measurement time sensor has entity_category=DIAGNOSTIC."""
+    from homeassistant.const import EntityCategory
+
+    await _setup(hass, config_entry)
+    entity_reg = er.async_get(hass)
+    entry = entity_reg.async_get("sensor.koniz_measurement_time")
+    assert entry is not None
+    assert entry.entity_category == EntityCategory.DIAGNOSTIC
+
+
+async def test_measurement_time_sensor_survives_reduced_inventory(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd_reduced: AiohttpClientMocker,
+) -> None:
+    """Measurement time sensor is not removed by the station-inventory cleanup."""
+    await _setup(hass, config_entry)
+    entity_reg = er.async_get(hass)
+    entry = entity_reg.async_get("sensor.koniz_measurement_time")
+    assert entry is not None, (
+        "measurement_time entity was incorrectly removed by inventory cleanup"
+    )

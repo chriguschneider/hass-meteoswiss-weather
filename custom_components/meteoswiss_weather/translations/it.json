@@ -43,6 +43,7 @@
       "temp_min_today": { "name": "Temperatura minima oggi" },
       "precipitation_today": { "name": "Precipitazioni oggi" },
       "zero_degree_level": { "name": "Limite dello zero gradi" },
+      "measurement_time": { "name": "Orario di misurazione" },
       "pollen_grasses": { "name": "Pollini di graminacee" },
       "pollen_birch": { "name": "Pollini di betulla" },
       "pollen_alder": { "name": "Pollini di ontano" },

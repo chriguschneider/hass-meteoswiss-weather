@@ -9,6 +9,14 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Measurement time sensor** (#105). A new `sensor.<name>_measurement_time`
+  entity (`device_class: timestamp`, `entity_category: diagnostic`) exposes the
+  `reference_timestamp` of the latest station observation. Disabled by default;
+  enable it to build automations that detect a stale or dead station (e.g. raise
+  an alert when the measurement time has not advanced for more than an hour).
+
 ### Fixed
 
 - **The condition no longer stays on the night variant after sunrise**
