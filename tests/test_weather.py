@@ -203,12 +203,16 @@ async def test_device_info(
     assert device.configuration_url == "https://opendatadocs.meteoswiss.ch"
 
 
-async def test_unavailable_when_station_fails(
+async def test_transient_station_failure_keeps_entity_available(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """A later station failure flips the entity to ``unavailable``."""
+    """A transient station 500 does not flip the entity to ``unavailable`` (issue #108).
+
+    The coordinator retains the last good observation on a failed refresh, so
+    current conditions remain available to automations across a brief outage.
+    """
     await _setup(hass, config_entry)
     assert hass.states.get(_ENTITY_ID).state != "unavailable"
 
@@ -219,7 +223,84 @@ async def test_unavailable_when_station_fails(
     await coordinator.async_refresh()
     await hass.async_block_till_done()
 
-    assert hass.states.get(_ENTITY_ID).state == "unavailable"
+    # The coordinator still holds data from the previous successful update.
+    assert coordinator.data is not None
+    assert hass.states.get(_ENTITY_ID).state != "unavailable"
+
+
+async def test_transient_forecast_failure_keeps_entity_available(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A transient forecast 500 does not flip the entity to ``unavailable`` (#108).
+
+    The forecast coordinator retains the previous run's data so a brief STAC
+    outage does not silence current conditions from the station coordinator.
+    """
+    from custom_components.meteoswiss_weather.ogd.const import stac_items_url
+
+    await _setup(hass, config_entry)
+    assert hass.states.get(_ENTITY_ID).state != "unavailable"
+
+    forecast_coordinator = config_entry.runtime_data.forecast_coordinator
+    mock_ogd.clear_requests()
+    # Fail the STAC run-discovery call so _async_update_data raises UpdateFailed.
+    mock_ogd.get(stac_items_url("ch.meteoschweiz.ogd-local-forecasting"), status=503)
+
+    await forecast_coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    # The coordinator still holds data from the previous successful update.
+    assert forecast_coordinator.data is not None
+    assert hass.states.get(_ENTITY_ID).state != "unavailable"
+
+
+async def test_unavailable_when_coordinators_have_no_data(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Entity goes unavailable when a coordinator has no data (issue #108).
+
+    Tests the ``available`` property directly: after setup, clearing a
+    coordinator's data simulates "never succeeded" and the property returns
+    ``False``; restoring the data makes it ``True`` again.
+    """
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.meteoswiss_weather.weather import MeteoSwissWeather
+
+    await _setup(hass, config_entry)
+
+    entity_reg = er.async_get(hass)
+    entry_entity = entity_reg.async_get(_ENTITY_ID)
+    assert entry_entity is not None
+
+    # Reach the live entity object from the platform.
+    platform = hass.data["entity_components"]["weather"]
+    entity_obj: MeteoSwissWeather = platform.get_entity(_ENTITY_ID)
+    assert entity_obj is not None
+    assert entity_obj.available
+
+    orig_station = entity_obj.coordinator.data
+    orig_forecast = entity_obj._forecast_coordinator.data
+
+    # No station data → not available.
+    entity_obj.coordinator.data = None
+    assert not entity_obj.available
+
+    # Both missing → not available.
+    entity_obj._forecast_coordinator.data = None
+    assert not entity_obj.available
+
+    # Station restored, forecast still missing → not available.
+    entity_obj.coordinator.data = orig_station
+    assert not entity_obj.available
+
+    # Both restored → available again.
+    entity_obj._forecast_coordinator.data = orig_forecast
+    assert entity_obj.available
 
 
 # --- hourly forecast (opt-in, ADR-0002) ------------------------------------
