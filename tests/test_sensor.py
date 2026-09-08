@@ -681,3 +681,78 @@ async def test_measurement_time_sensor_survives_reduced_inventory(
     assert entry is not None, (
         "measurement_time entity was incorrectly removed by inventory cleanup"
     )
+
+
+# ---------------------------------------------------------------------------
+# B8 — zero-degree level sensor, ungated from the hourly opt-in (issue #107)
+# ---------------------------------------------------------------------------
+
+
+async def test_zero_degree_sensor_value_without_hourly_opt_in(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """The zero-degree sensor shows a value with the hourly option OFF.
+
+    The config entry has no options (hourly off). The zprfr0hs block is fetched
+    with the default daily refresh (issue #107), so the current UTC hour has a
+    value right after the first forecast-coordinator refresh — no card open and
+    no get_forecasts call. Fixture value for 309800;2 is 2500 + h*5 m.
+    """
+    with freeze_time(datetime(2026, 8, 27, 10, 0, tzinfo=UTC)):
+        await _setup(hass, config_entry)
+
+        entity_reg = er.async_get(hass)
+        entry = entity_reg.async_get("sensor.koniz_zero_degree_level")
+        assert entry is not None
+        assert entry.disabled_by is not None  # disabled by default
+
+        # Enable and reload so the state is written (still within the freeze).
+        entity_reg.async_update_entity(
+            "sensor.koniz_zero_degree_level", disabled_by=None
+        )
+        await hass.config_entries.async_reload(config_entry.entry_id)
+        await hass.async_block_till_done()
+
+        # Hourly opt-in is off, yet the sensor has the hour-10 value (2550 m).
+        runtime = config_entry.runtime_data
+        assert runtime.forecast_coordinator.hourly_provider.enabled is False
+        assert runtime.forecast_coordinator.hourly_provider.last_fetch is None
+        state = hass.states.get("sensor.koniz_zero_degree_level")
+        assert state is not None
+        assert float(state.state) == 2550.0
+
+
+async def test_zero_degree_sensor_unknown_when_series_empty(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """The sensor is ``unknown`` when the zero-degree series is empty.
+
+    This is the guardrail outcome (source file missing or not point-major): the
+    coordinator carries no zero-degree data and the sensor degrades to unknown
+    rather than the integration downloading the whole file.
+    """
+    with freeze_time(datetime(2026, 8, 27, 10, 0, tzinfo=UTC)):
+        await _setup(hass, config_entry)
+        entity_reg = er.async_get(hass)
+        entity_reg.async_update_entity(
+            "sensor.koniz_zero_degree_level", disabled_by=None
+        )
+        await hass.config_entries.async_reload(config_entry.entry_id)
+        await hass.async_block_till_done()
+
+        # Simulate the guardrail: push forecast data with an empty series.
+        from custom_components.meteoswiss_weather.coordinator import ForecastData
+
+        coordinator = config_entry.runtime_data.forecast_coordinator
+        coordinator.async_set_updated_data(
+            ForecastData(daily=coordinator.data.daily, zero_degree_by_hour={})
+        )
+        await hass.async_block_till_done()
+
+        state = hass.states.get("sensor.koniz_zero_degree_level")
+        assert state is not None
+        assert state.state == STATE_UNKNOWN

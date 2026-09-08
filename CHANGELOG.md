@@ -19,6 +19,17 @@ using the matching section below as release notes.
 
 ### Fixed
 
+- **The zero-degree level sensor no longer depends on the hourly opt-in**
+  (#107). `sensor.<name>_zero_degree_level` was only ever populated when the
+  hourly forecast option was on *and* a card or `weather.get_forecasts` call had
+  already filled the hourly cache; for everyone else it stayed permanently
+  `unknown`. The zero-degree file (`zprfr0hs`) is point-major, so its ~5 KB point
+  block is now fetched with the default daily refresh — the same mechanism the
+  daily wind fields use — and the sensor reads the forecast coordinator's own
+  data. It shows the current hour's value right after the first refresh, with no
+  card open, no service call and the hourly option off. If the file is ever not
+  point-major the value degrades to `unknown` rather than pulling the whole
+  30 MB file, and it is not downloaded twice when the hourly option is on.
 - **The condition no longer stays on the night variant after sunrise**
   (#103). MeteoSwiss keeps the night variant of the hourly symbol
   (`jww003i0`) for a couple of hours past sunrise, so the entity reported

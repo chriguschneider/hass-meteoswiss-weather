@@ -6,6 +6,7 @@
 - **Revised again:** 2026-08-28 (issue #54) — see [Revision 2](#revision-2-2026-08-28-issue-54)
 - **Revised again:** 2026-08-28 (issue #60) — see [Revision 3](#revision-3-2026-08-28-issue-60)
 - **Revised again:** 2026-08-28 (issue #55) — see [Revision 4](#revision-4-2026-08-28-issue-55)
+- **Revised again:** 2026-09-08 (issue #107) — see [Revision 5](#revision-5-2026-09-08-issue-107)
 
 ## Context
 
@@ -204,6 +205,38 @@ The date-major temperature file and the near/far tier schedule are unchanged.
 - `zero_degree_level` (B8): m above sea level; additionally exposed as a sensor
   showing the current hour's value (snow-line material; hourly opt-in required).
 - `radiation` (B10): global radiation (W/m²); hourly forecast attribute only.
+
+The decisions above — daily stays default, hourly stays opt-in, every request
+stays conditional, parsing stays in the executor — are unchanged.
+
+## Revision 5 (2026-09-08, issue #107)
+
+**Zero-degree level joins the default daily refresh.** Revision 4 exposed the
+zero-degree sensor but sourced it from the hourly cache, so it only ever showed
+a value when the hourly opt-in was on **and** something had already subscribed
+to the hourly forecast to populate that cache. For every user without the
+opt-in it was a permanently `unknown` entity, and even with it on its value was
+decided by a race between the coordinator tick and an unrelated consumer
+(issue #107).
+
+`zprfr0hs` is the only zero-degree parameter MeteoSwiss publishes and it is
+**point-major** (docs/ogd.md §E4), so the point's ~220-row block is **~5 KB**
+via a binary-searched Range request. It is therefore fetched with every default
+daily refresh — the same mechanism the daily wind fields already use
+(Revision 3) — and the `ZeroDegreeSensor` reads the coordinator's own
+`ForecastData.zero_degree_by_hour` instead of `hourly_provider.cached_hourly`.
+The hourly opt-in is no longer a precondition.
+
+**Cost per run:** one point block at ~5 KB added to the default daily refresh,
+alongside the three wind blocks (Revision 3) — negligible next to the ~5 MB of
+daily files.
+
+**Guardrail (unchanged shape):** `fetch_point_block()` (the renamed generic of
+Revision 3's `fetch_wind_block()`) returns `None` for any file that is not
+point-major; the backend then leaves the zero-degree series empty and logs a
+warning, so the full 30 MB download is never triggered for a default feature.
+The block text is cached by run stamp and reused by the lazy hourly fetch, so
+`zprfr0hs` is not downloaded twice when the hourly option is on.
 
 The decisions above — daily stays default, hourly stays opt-in, every request
 stays conditional, parsing stays in the executor — are unchanged.

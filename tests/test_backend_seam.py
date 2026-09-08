@@ -108,6 +108,11 @@ class FakeBackend:
         for h in range(4)
     ]
 
+    # Zero-degree level per UTC hour, as fetch_daily would populate it (issue #107).
+    ZERO_DEGREE: dict[datetime, float | None] = {
+        datetime(2026, 8, 27, h, tzinfo=UTC): 2500.0 + h for h in range(4)
+    }
+
     async def fetch_daily(self, point: ForecastPoint) -> list[DailyForecast]:
         return self.DAILY
 
@@ -122,6 +127,9 @@ class FakeBackend:
         # point-major group on separate schedules; this in-memory backend
         # returns the same fixed hours regardless, and the provider merges them.
         return self.HOURLY
+
+    def latest_zero_degree(self) -> dict[datetime, float | None]:
+        return self.ZERO_DEGREE
 
 
 # FakeBackend satisfies the ForecastBackend protocol.

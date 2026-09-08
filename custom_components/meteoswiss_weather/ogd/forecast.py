@@ -328,6 +328,23 @@ def parse_hourly(
     ]
 
 
+def zero_degree_by_hour(
+    text: str, point: ForecastPoint
+) -> dict[datetime, float | None]:
+    """Parse a ``zprfr0hs`` point block into ``{hour (UTC): zero-degree level (m)}``.
+
+    A **plain function** so the backend can hand it to an executor (ADR-0002).
+    Fetched with the default daily refresh so the zero-degree sensor works
+    without the hourly opt-in (issue #107); the sensor reads the current UTC
+    hour from the returned mapping. Reuses the shared hourly parser so the
+    column handling lives in one place; ``time`` is the top-of-hour UTC stamp.
+    """
+    return {
+        hour.time: hour.zero_degree_level
+        for hour in parse_hourly({HOURLY_ZERO_DEGREE: text}, point)
+    }
+
+
 def aggregate_daily_wind(
     text_by_param: dict[str, str],
     point: ForecastPoint,

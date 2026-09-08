@@ -29,6 +29,7 @@ from custom_components.meteoswiss_weather.ogd import (
     parse_daily,
     parse_hourly,
     points_for_postal_code,
+    zero_degree_by_hour,
 )
 from custom_components.meteoswiss_weather.ogd.const import (
     COLLECTION_FORECAST,
@@ -908,3 +909,118 @@ async def test_bulk_backend_fetch_hourly_reuses_daily_wind_cache(session) -> Non
     # Hourly wind comes from the reused cache; full 24 hours returned.
     assert len(hourly) == 24
     assert hourly[0].wind_speed_kmh == pytest.approx(5.0)
+
+
+# --- daily zero-degree level (issue #107) ----------------------------------
+
+
+def test_zero_degree_by_hour_parses_point_block() -> None:
+    """The zprfr0hs block parses into a {UTC hour: level} mapping for the point.
+
+    The fixture uses 2500 + h*5 for point 309800;2, so hour 0 = 2500 m.
+    """
+    text = _fixture_text(f"vnut12.lssw.{RUN_TS}.{HOURLY_ZERO_DEGREE}.csv")
+    by_hour = zero_degree_by_hour(text, _koeniz_point())
+
+    assert len(by_hour) == 24
+    assert by_hour[datetime(2026, 8, 27, 0, tzinfo=UTC)] == 2500.0
+    assert by_hour[datetime(2026, 8, 27, 10, tzinfo=UTC)] == 2550.0
+    assert all(v is not None for v in by_hour.values())
+
+
+async def test_bulk_backend_fetch_daily_populates_zero_degree(session) -> None:
+    """A point-major zprfr0hs file → fetch_daily fills the zero-degree series.
+
+    This is what lets the zero-degree sensor work with the hourly option off
+    (issue #107): the block is fetched with the default daily refresh.
+    """
+    with aioresponses() as mock:
+        mock.get(ITEMS_URL, status=200,
+                 body=_fixture_bytes("ogd-local-forecasting_items.json"))
+        for param in DAILY_REQUIRED_PARAMS:
+            mock.get(_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        # Wind (date-major fixtures) degrade to None — irrelevant here.
+        for param in DAILY_WIND_PARAMS:
+            mock.get(_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        # The re-sorted zprfr0hs fixture is point-major (docs/ogd.md §E4).
+        mock.get(_asset_url(HOURLY_ZERO_DEGREE), status=200,
+                 body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{HOURLY_ZERO_DEGREE}.csv"))
+        backend = BulkCsvBackend(session)
+        daily = await backend.fetch_daily(_koeniz_point())
+
+    # Daily forecast itself is intact.
+    assert daily[0].temp_max == 29.3
+    # Zero-degree series populated from the point block.
+    by_hour = backend.latest_zero_degree()
+    assert by_hour[datetime(2026, 8, 27, 0, tzinfo=UTC)] == 2500.0
+    assert by_hour[datetime(2026, 8, 27, 10, tzinfo=UTC)] == 2550.0
+
+
+async def test_bulk_backend_zero_degree_not_point_major_degrades_to_empty(
+    session,
+) -> None:
+    """A non-point-major zprfr0hs file → guardrail fires, series is empty.
+
+    No full download is attempted: fetch_point_block returns None on a
+    date-major layout, so the zero-degree sensor degrades to unknown rather
+    than the integration pulling the whole 30 MB file (ADR-0002 guardrail).
+    """
+    # A date-major CSV (rows sorted by Date across points) for zprfr0hs.
+    date_major = "point_id;point_type_id;Date;zprfr0hs\n" + "".join(
+        f"{pid};{ptype};2026082700{h:02d};{2000 + h}\n"
+        for h in range(24)
+        for pid, ptype in ((1, 1), (309800, 2), (5000, 3))
+    )
+    with aioresponses() as mock:
+        mock.get(ITEMS_URL, status=200,
+                 body=_fixture_bytes("ogd-local-forecasting_items.json"))
+        for param in DAILY_REQUIRED_PARAMS:
+            mock.get(_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        for param in DAILY_WIND_PARAMS:
+            mock.get(_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        mock.get(_asset_url(HOURLY_ZERO_DEGREE), status=200,
+                 body=date_major.encode("iso-8859-1"))
+        backend = BulkCsvBackend(session)
+        daily = await backend.fetch_daily(_koeniz_point())
+
+    # Daily forecast intact; zero-degree series empty (sensor → unknown).
+    assert daily[0].temp_max == 29.3
+    assert backend.latest_zero_degree() == {}
+
+
+@freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC))
+async def test_bulk_backend_fetch_hourly_reuses_daily_zero_cache(session) -> None:
+    """fetch_daily's zprfr0hs block is reused by fetch_hourly on the same run.
+
+    The zero-degree URL is registered once; if fetch_hourly re-fetched it the
+    second request would fail. Proves the file is not downloaded twice when the
+    hourly option is on (issue #107 acceptance).
+    """
+    with aioresponses() as mock:
+        # STAC and every non-zero file are repeatable, so the test isolates the
+        # single assertion that matters: zprfr0hs is fetched exactly once.
+        mock.get(ITEMS_URL, status=200, repeat=True,
+                 body=_fixture_bytes("ogd-local-forecasting_items.json"))
+        for param in DAILY_REQUIRED_PARAMS:
+            mock.get(_asset_url(param), status=200, repeat=True,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        others = [p for p in HOURLY_REQUIRED_PARAMS if p != HOURLY_ZERO_DEGREE]
+        for param in others:
+            mock.get(_asset_url(param), status=200, repeat=True,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        # zprfr0hs registered *once*: a second fetch would raise here.
+        mock.get(_asset_url(HOURLY_ZERO_DEGREE), status=200,
+                 body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{HOURLY_ZERO_DEGREE}.csv"))
+
+        backend = BulkCsvBackend(session)
+        point = _koeniz_point()
+        await backend.fetch_daily(point)
+        hourly = await backend.fetch_hourly(point)
+
+    # Zero-degree carried into the hourly forecast from the reused block.
+    assert hourly[0].zero_degree_level == 2500.0
+    assert backend.latest_zero_degree()[datetime(2026, 8, 27, 0, tzinfo=UTC)] == 2500.0

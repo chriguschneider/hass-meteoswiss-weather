@@ -31,8 +31,14 @@ from custom_components.meteoswiss_weather.ogd.const import (
     DAILY_REQUIRED_PARAMS,
     DAILY_WIND_PARAMS,
     HOURLY_REQUIRED_PARAMS,
+    HOURLY_ZERO_DEGREE,
     station_now_url,
 )
+
+# Point-major files fetched on every daily refresh, not only behind the hourly
+# opt-in: the three wind files (issue #60) and the zero-degree level (issue #107).
+# Excluded from _hourly_calls() so the lazy-hourly tests are not confused by them.
+_DAILY_POINT_MAJOR_PARAMS = (*DAILY_WIND_PARAMS, HOURLY_ZERO_DEGREE)
 
 # The fixture run (conftest) and the station whose ``now`` file it serves.
 _RUN_TS = "202608270200"
@@ -87,21 +93,21 @@ def _daily_calls(aioclient_mock: AiohttpClientMocker) -> int:
     )
 
 
-# Hourly-only params: the three non-wind files (temperature, precipitation,
-# symbol) that are fetched exclusively by the opt-in hourly forecast and never
-# by the default daily refresh. Wind files (fu3010h0, fu3010h1, dkl010h0) are
-# point-major block-fetched on every daily refresh (issue #60) so they are
-# tracked separately by _wind_calls() below.
+# Hourly-only params: the files fetched exclusively by the opt-in hourly
+# forecast and never by the default daily refresh. The wind files (issue #60)
+# and the zero-degree file (issue #107) are point-major block-fetched on every
+# daily refresh, so they are excluded here and tracked separately below.
 _HOURLY_ONLY_PARAMS = tuple(
-    p for p in HOURLY_REQUIRED_PARAMS if p not in DAILY_WIND_PARAMS
+    p for p in HOURLY_REQUIRED_PARAMS if p not in _DAILY_POINT_MAJOR_PARAMS
 )
 
 
 def _hourly_calls(aioclient_mock: AiohttpClientMocker) -> int:
-    """Opt-in hourly-forecast file downloads (excludes daily-wind files).
+    """Opt-in hourly-forecast file downloads (excludes daily point-major files).
 
-    Counts only the three non-wind hourly parameters so tests that verify the
-    lazy hourly behaviour are not confused by the daily wind fetch (issue #60).
+    Counts only the hourly-exclusive parameters so tests that verify the lazy
+    hourly behaviour are not confused by the daily wind (issue #60) or
+    zero-degree (issue #107) block fetches.
     """
     suffixes = tuple(f"{_RUN_TS}.{param}.csv" for param in _HOURLY_ONLY_PARAMS)
     return sum(
@@ -111,9 +117,11 @@ def _hourly_calls(aioclient_mock: AiohttpClientMocker) -> int:
     )
 
 
-def _wind_calls(aioclient_mock: AiohttpClientMocker) -> int:
-    """Number of wind-block file downloads (daily wind fetch, issue #60)."""
-    suffixes = tuple(f"{_RUN_TS}.{param}.csv" for param in DAILY_WIND_PARAMS)
+def _daily_point_major_calls(aioclient_mock: AiohttpClientMocker) -> int:
+    """Wind + zero-degree block downloads (daily refresh, issues #60/#107)."""
+    suffixes = tuple(
+        f"{_RUN_TS}.{param}.csv" for param in _DAILY_POINT_MAJOR_PARAMS
+    )
     return sum(
         1
         for _method, url, *_ in aioclient_mock.mock_calls

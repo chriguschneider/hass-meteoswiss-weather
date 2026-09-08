@@ -17,13 +17,14 @@ from .forecast import (
     parse_daily,
     parse_hourly,
     points_for_postal_code,
+    zero_degree_by_hour,
 )
 from .history import fetch_station_history, select_history_files
 from .hourly import (
     AiohttpRangeReader,
     classify_layout,
     fetch_hourly_file,
-    fetch_wind_block,
+    fetch_point_block,
     horizon_end_utc,
 )
 from .http import CachedResponse, get_text
@@ -84,7 +85,7 @@ __all__ = [
     "fetch_current",
     "fetch_datainventory",
     "fetch_hourly_file",
-    "fetch_wind_block",
+    "fetch_point_block",
     "fetch_points",
     "mountain_points",
     "fetch_pollen_current",
@@ -108,4 +109,5 @@ __all__ = [
     "parse_hourly",
     "points_for_postal_code",
     "select_history_files",
+    "zero_degree_by_hour",
 ]

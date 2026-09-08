@@ -23,9 +23,15 @@ from .const import (
     FORECAST_ENCODING,
     HOURLY_HORIZON_FULL_RUN,
     HOURLY_REQUIRED_PARAMS,
+    HOURLY_ZERO_DEGREE,
 )
-from .forecast import aggregate_daily_wind, parse_daily, parse_hourly
-from .hourly import fetch_hourly_file, fetch_wind_block, horizon_end_utc
+from .forecast import (
+    aggregate_daily_wind,
+    parse_daily,
+    parse_hourly,
+    zero_degree_by_hour,
+)
+from .hourly import fetch_hourly_file, fetch_point_block, horizon_end_utc
 from .http import get_text
 from .models import (
     DailyForecast,
@@ -51,16 +57,25 @@ class ForecastBackend(Protocol):
         params: tuple[str, ...] = HOURLY_REQUIRED_PARAMS,
     ) -> list[HourlyForecast]: ...
 
+    def latest_zero_degree(self) -> dict[datetime, float | None]:
+        """Zero-degree level (m) per UTC hour from the last :meth:`fetch_daily`.
+
+        Populated alongside the daily refresh so the zero-degree sensor has a
+        value without the hourly opt-in (issue #107). Empty when the source
+        file was missing or not point-major (the ADR-0002 guardrail).
+        """
+
 
 class BulkCsvBackend:
     """Assembles the forecast from the bulk per-parameter CSV files.
 
     Discovers the newest complete run (STAC), downloads its small daily files
-    and parses them off the event loop (ADR-0002). The three point-major wind
-    files are also fetched with each daily refresh (~5 KB each via the #50
-    block strategy) to populate daily wind fields; their blocks are cached by
-    run stamp so the lazy hourly fetch reuses them without a second download
-    (issue #60, ADR-0002 revision 3).
+    and parses them off the event loop (ADR-0002). Two point-major groups are
+    also fetched with each daily refresh (~5 KB each via the #50 block strategy):
+    the three wind files that populate the daily wind fields (issue #60), and
+    the zero-degree level that backs the zero-degree sensor without the hourly
+    opt-in (issue #107). Their blocks are cached by run stamp so the lazy hourly
+    fetch reuses them without a second download (ADR-0002 revision 3/5).
     """
 
     def __init__(self, session: aiohttp.ClientSession) -> None:
@@ -68,13 +83,19 @@ class BulkCsvBackend:
         # Byte offset of the point's block in each point-major hourly file,
         # remembered across runs so the next fetch verifies it with one probe
         # instead of a fresh binary search (issue #50). Keyed by parameter code.
-        # Shared between the daily wind fetch and the lazy hourly fetch.
+        # Shared between the daily block fetch and the lazy hourly fetch.
         self._block_starts: dict[str, int] = {}
         # Cached wind block texts from the most recent successful fetch, keyed
         # by run stamp so the daily and hourly paths never download them twice
         # for the same run (issue #60).
         self._wind_texts: dict[str, str] | None = None
         self._wind_run: datetime | None = None
+        # Same pattern for the zero-degree block (issue #107): the fetched text
+        # and the parsed per-hour series, keyed by run so the hourly path reuses
+        # the text and the coordinator reads the series via latest_zero_degree().
+        self._zero_text: str | None = None
+        self._zero_by_hour: dict[datetime, float | None] = {}
+        self._zero_run: datetime | None = None
 
     async def _get_wind_texts(
         self, point: ForecastPoint, run: Run
@@ -115,7 +136,7 @@ class BulkCsvBackend:
         try:
             results = await asyncio.gather(
                 *(
-                    fetch_wind_block(
+                    fetch_point_block(
                         self._session,
                         run.asset_url(param),
                         point,
@@ -157,14 +178,86 @@ class BulkCsvBackend:
         self._wind_run = run.timestamp
         return texts
 
+    async def _get_zero_text(
+        self, point: ForecastPoint, run: Run
+    ) -> str | None:
+        """Return the ``zprfr0hs`` block text for ``run``, fetching only if needed.
+
+        The zero-degree level is a point-major file (docs/ogd.md §E4), so its
+        block is ~5 KB — cheap enough to fetch with every default daily refresh
+        (issue #107). It degrades exactly like the wind blocks: ``None`` when the
+        file is absent from the run or not point-major, so the full 30 MB
+        download is never triggered for a default feature (ADR-0002 guardrail).
+        The text is cached by run so the lazy hourly path reuses it.
+        """
+        # _zero_run set means we already tried this run; _zero_text is the result
+        # (populated str on success, None when the guardrail fired).
+        if self._zero_run == run.timestamp:
+            return self._zero_text
+
+        # Like the wind blocks: the run is selected on DAILY_REQUIRED_PARAMS, so
+        # the ~30 MB zprfr0hs file of the same run may not have landed yet. A
+        # missing asset degrades to None, never a KeyError from asset_url().
+        if HOURLY_ZERO_DEGREE not in run.assets:
+            _LOGGER.warning(
+                "daily zero-degree skipped for run %s: the file is not published "
+                "yet; the zero-degree sensor stays unknown this run",
+                run.timestamp.isoformat(),
+            )
+            self._zero_text = None
+            self._zero_run = run.timestamp
+            return None
+
+        # A transient connection error must degrade zero-degree to None, never
+        # fail the default daily refresh (same contract as the wind guardrails).
+        try:
+            result = await fetch_point_block(
+                self._session,
+                run.asset_url(HOURLY_ZERO_DEGREE),
+                point,
+                cached_start=self._block_starts.get(HOURLY_ZERO_DEGREE),
+            )
+        except OgdConnectionError as err:
+            _LOGGER.warning(
+                "daily zero-degree skipped for run %s: %s; the zero-degree "
+                "sensor stays unknown this run",
+                run.timestamp.isoformat(),
+                err,
+            )
+            self._zero_text = None
+            self._zero_run = run.timestamp
+            return None
+
+        if result is None:
+            _LOGGER.warning(
+                "daily zero-degree skipped for run %s: the file is not "
+                "point-major; the zero-degree sensor stays unknown this run",
+                run.timestamp.isoformat(),
+            )
+            self._zero_text = None
+            self._zero_run = run.timestamp
+            return None
+
+        if result.block_start is not None:
+            self._block_starts[HOURLY_ZERO_DEGREE] = result.block_start
+        self._zero_text = result.text
+        self._zero_run = run.timestamp
+        return result.text
+
+    def latest_zero_degree(self) -> dict[datetime, float | None]:
+        """Zero-degree level (m) per UTC hour from the last :meth:`fetch_daily`."""
+        return self._zero_by_hour
+
     async def fetch_daily(self, point: ForecastPoint) -> list[DailyForecast]:
         run = await latest_run(
             self._session, COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS
         )
         # Daily files are small; fetch them concurrently, one per parameter.
-        # Fetch wind blocks concurrently with the daily files (each ~5 KB via
-        # the point-major block strategy — well inside the daily budget).
-        bodies, wind_texts = await asyncio.gather(
+        # Fetch the wind and zero-degree blocks concurrently with them (each
+        # ~5 KB via the point-major block strategy — well inside the daily
+        # budget). Zero-degree backs a sensor that no longer needs the hourly
+        # opt-in (issue #107).
+        bodies, wind_texts, zero_text = await asyncio.gather(
             asyncio.gather(
                 *(
                     get_text(
@@ -174,6 +267,7 @@ class BulkCsvBackend:
                 )
             ),
             self._get_wind_texts(point, run),
+            self._get_zero_text(point, run),
         )
         text_by_param = {
             param: response.body
@@ -182,6 +276,15 @@ class BulkCsvBackend:
         # Parsing scans several MB per file; keep it off the event loop.
         loop = asyncio.get_running_loop()
         daily = await loop.run_in_executor(None, parse_daily, text_by_param, point)
+
+        # Parse the zero-degree block into the per-hour series the sensor reads;
+        # keep the (cheap) scan off the event loop like the other parses. Empty
+        # when the guardrail fired above.
+        self._zero_by_hour = (
+            await loop.run_in_executor(None, zero_degree_by_hour, zero_text, point)
+            if zero_text is not None
+            else {}
+        )
 
         if wind_texts:
             wind_by_day = await loop.run_in_executor(
@@ -219,27 +322,25 @@ class BulkCsvBackend:
         # point-major group on independent schedules, so this fetches only what a
         # given tier needs rather than the whole set every time.
         #
-        # When fetch_daily() has already fetched the three point-major wind blocks
-        # for this run, reuse their cached texts without a second download
-        # (issue #60, ADR-0002 revision 3). When the cache is absent (no prior
-        # daily call, or a different run), the requested params are fetched the
-        # normal way — the same as before issue #60.
+        # When fetch_daily() has already fetched a point-major block for this run
+        # — the three wind files (issue #60) or the zero-degree file (issue #107)
+        # — reuse its cached text without a second download (ADR-0002 revision
+        # 3/5). When no cache exists (no prior daily call, or a different run),
+        # the requested params are fetched the normal way.
         run = await latest_run(self._session, COLLECTION_FORECAST, params)
         now = datetime.now(UTC)
         horizon_end = horizon_end_utc(horizon_days, now)
         horizon_start = now.replace(minute=0, second=0, microsecond=0)
 
-        # Direct cache check (no re-probe): only hit if daily already ran.
-        wind_cache = (
-            self._wind_texts
-            if (self._wind_run == run.timestamp and self._wind_texts)
-            else None
-        )
-        params_to_fetch = (
-            [p for p in params if p not in DAILY_WIND_PARAMS]
-            if wind_cache is not None
-            else list(params)
-        )
+        # Direct cache checks (no re-probe): only hit if daily already ran for
+        # this same run. Collected into one map keyed by parameter code.
+        reuse_texts: dict[str, str] = {}
+        if self._wind_run == run.timestamp and self._wind_texts:
+            reuse_texts.update(self._wind_texts)
+        if self._zero_run == run.timestamp and self._zero_text is not None:
+            reuse_texts[HOURLY_ZERO_DEGREE] = self._zero_text
+
+        params_to_fetch = [p for p in params if p not in reuse_texts]
 
         results = await asyncio.gather(
             *(
@@ -259,12 +360,11 @@ class BulkCsvBackend:
             if result.block_start is not None:
                 self._block_starts[param] = result.block_start
 
-        if wind_cache is not None:
-            # Only fold in cached wind texts for wind params this call requested,
-            # so a temperature-only (near/far) fetch stays temperature-only.
-            text_by_param.update(
-                {p: t for p, t in wind_cache.items() if p in params}
-            )
+        # Only fold in cached texts for params this call requested, so a
+        # temperature-only (near/far) fetch stays temperature-only.
+        text_by_param.update(
+            {p: t for p, t in reuse_texts.items() if p in params}
+        )
 
         # The download is the cost this option pays for; record it so a user can
         # see what enabling the hourly forecast actually spends (ADR-0002).

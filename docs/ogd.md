@@ -274,6 +274,12 @@ each file's layout at runtime from offset probes, then
 For the minimum set at the default horizon this is **~7–11 MB per refresh**
 instead of ~125 MB. See ADR-0002 (revised) for the budget and the option.
 
+The point-major block fetch is also used **outside** the hourly opt-in for two
+default features: the three wind files feed the daily wind fields (issue #60)
+and `zprfr0hs` feeds the zero-degree sensor (issue #107). Both are fetched with
+the default daily refresh at ~5 KB per block; a file that is not point-major
+degrades those fields to `None` rather than pulling the whole 30 MB file.
+
 #### Change rhythm across runs (measured 2026-08-27, all 24 runs, `tre200h0`)
 
 A new file is published every hour, but the content of one point moves in

@@ -42,7 +42,7 @@ from homeassistant.util import dt as dt_util
 from . import MeteoSwissConfigEntry
 from .const import ATTRIBUTION, DOMAIN
 from .coordinator import ForecastCoordinator, PollenCoordinator, StationCoordinator
-from .ogd import DailyForecast, HourlyForecast, Observation, PollenObservation
+from .ogd import DailyForecast, Observation, PollenObservation
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,9 +321,10 @@ _FORECAST_SENSORS: tuple[ForecastSensorDescription, ...] = (
     ),
 )
 
-# B8 — zero-degree level sensor (issue #55): the current hour's zero-degree
-# level from the hourly forecast cache. Requires hourly opt-in; shows
-# ``unknown`` when hourly data has not yet been fetched.
+# B8 — zero-degree level sensor (issue #55, issue #107): the current hour's
+# zero-degree level. Fetched with the daily refresh as a cheap point-major block
+# (issue #107), so it no longer depends on the hourly opt-in; shows ``unknown``
+# only when the source file was missing or not point-major.
 _ZERO_DEGREE_DESCRIPTION = SensorEntityDescription(
     key="zero_degree_level",
     translation_key="zero_degree_level",
@@ -687,13 +688,16 @@ class PollenSensor(CoordinatorEntity[PollenCoordinator], SensorEntity):
 
 
 class ZeroDegreeSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
-    """Current hour's zero-degree level from the hourly forecast cache (B8, issue #55).
+    """Current hour's zero-degree level from the daily forecast refresh (B8).
 
-    Requires the hourly opt-in: shows ``unknown`` (``None``) until the first
-    hourly fetch completes. Once populated the value is the zero-degree level
-    (m) for the current UTC hour from the ``zprfr0hs`` point-major block.
-    Updates when the forecast coordinator fires (every hour), at which point
-    the hourly provider may have refreshed the cache from a new run.
+    The zero-degree level (``zprfr0hs``) is a point-major file, so its ~220-hour
+    block is fetched with every daily refresh at ~5 KB (issue #107) — the sensor
+    no longer depends on the hourly opt-in or on a card subscribing. It reads the
+    current UTC hour from ``ForecastData.zero_degree_by_hour`` and re-writes state
+    on each coordinator refresh and at the top of every hour, so it advances
+    through the cached series between runs (like the today-forecast sensors flip
+    at midnight, issue #48). ``unknown`` only when the source file was missing or
+    not point-major (the ADR-0002 guardrail leaves the series empty).
     """
 
     _attr_has_entity_name = True
@@ -711,19 +715,28 @@ class ZeroDegreeSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
         self._attr_unique_id = f"{device_unique_id}_{description.key}"
         self._attr_device_info = device_info
 
+    async def async_added_to_hass(self) -> None:
+        """Re-write state at the top of every hour so the value tracks the clock."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_time_change(
+                self.hass, self._handle_hour_rollover, minute=0, second=0
+            )
+        )
+
+    @callback
+    def _handle_hour_rollover(self, _now: datetime) -> None:
+        """Re-write state when the hour advances, without waiting for a fetch."""
+        self.async_write_ha_state()
+
     @property
     def native_value(self) -> float | None:
         """Return the current hour's zero-degree level, or ``None`` when absent."""
-        hourly: list[HourlyForecast] | None = (
-            self.coordinator.hourly_provider.cached_hourly
-        )
-        if not hourly:
+        data = self.coordinator.data
+        if data is None:
             return None
         this_hour = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
-        for hour in hourly:
-            if hour.time == this_hour:
-                return hour.zero_degree_level
-        return None
+        return data.zero_degree_by_hour.get(this_hour)
 
 
 class MeasurementTimeSensor(CoordinatorEntity[StationCoordinator], SensorEntity):
