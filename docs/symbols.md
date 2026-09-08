@@ -17,10 +17,19 @@ from `code − 100`.  The clearest example: day code `26` is *high clouds* →
 `sunny`, but night code `126` is *high cloud* → `cloudy`; day `1` is `sunny`
 while night `101` is `clear-night`.  Each code is mapped from its own entry.
 
-**`is_daytime` hint:** a *daily* symbol (a day code 1–42) shown at night is
-substituted by its night counterpart `code + 100` when the table has one, so
-the night meaning above is honoured.  The hourly symbol (`jww003i0`) already
-carries the day/night variant and is looked up directly.
+**`is_daytime` hint:** the hint says where the sun actually is (`sun.sun`) and
+makes the code agree with it, in either direction.  A *daily* symbol (a day
+code 1–42) shown at night is substituted by its night counterpart
+`code + 100`; a *night* code 101–142 rendered while the sun is up is
+substituted by its day counterpart `code − 100`.  Either way the substituted
+code is looked up on its own entry, so the night meaning above is honoured.
+
+The mirror direction matters for the hourly symbol (`jww003i0`): it carries
+its own day/night variant, but MeteoSwiss keeps sending the night variant for
+a couple of hours past sunrise, which used to leave the entity on
+`clear-night` in broad daylight (#103).  The per-hour conditions in the
+*hourly forecast* are not corrected — those are future hours, and `sun.sun` is
+a now-only flag.
 
 **Unknown codes:** `condition_for_symbol()` returns `None` and emits one
 `DEBUG`-level log per unique unknown code.

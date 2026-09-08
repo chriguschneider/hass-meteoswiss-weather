@@ -231,7 +231,7 @@ The forecast point is determined by your postal code. If your postal code has mu
 
 The condition comes from the MeteoSwiss weather symbol code (`jp2000d0` from the daily forecast, or `jww003i0` from hourly data when available). The integration maps these codes to Home Assistant's standard conditions: `sunny`, `partlycloudy`, `cloudy`, `rainy`, `snowy`, `lightning-rainy`, etc.
 
-The daily forecast uses the daytime symbol variant for consistency. The hourly condition, when available, uses the actual time-of-day symbol from MeteoSwiss (which already accounts for day/night).
+The daily forecast uses the daytime symbol variant for consistency. The hourly condition, when available, uses the actual time-of-day symbol from MeteoSwiss. Whichever symbol is used, the entity's current condition is reconciled with `sun.sun`: with the sun up you get the day variant (`sunny`), with the sun down the night one (`clear-night`), even when the MeteoSwiss symbol still says otherwise. The conditions inside the *hourly forecast list* are left as MeteoSwiss sends them, since those are future hours.
 
 ### Can I change the station after setup?
 

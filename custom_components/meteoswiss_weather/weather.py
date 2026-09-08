@@ -205,19 +205,23 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
         """HA condition, preferring the current hour's symbol when available.
 
         The station reports no weather symbol. When the hourly forecast is on,
-        the current hour's symbol (``jww003i0``, which already carries the
-        day/night variant) gives the sharpest condition; otherwise it falls
-        back to today's daily symbol (``jp2000d0``) with the day/night variant
-        chosen from the sun's position (ADR-0002).
+        the current hour's symbol (``jww003i0``) gives the sharpest condition;
+        otherwise it falls back to today's daily symbol (``jp2000d0``). Both
+        are reconciled with the sun's position (ADR-0002): the hourly symbol
+        carries its own day/night variant, but upstream keeps sending the night
+        one for a couple of hours past sunrise (issue #103), so ``sun.sun``
+        decides which variant is rendered.
         """
+        is_daytime = self._is_daytime()
+
         hourly_symbol = self._current_hour_symbol()
         if hourly_symbol is not None:
-            return condition_for_symbol(hourly_symbol)
+            return condition_for_symbol(hourly_symbol, is_daytime=is_daytime)
 
         today = self._today_forecast()
         if today is None:
             return None
-        return condition_for_symbol(today.symbol, is_daytime=self._is_daytime())
+        return condition_for_symbol(today.symbol, is_daytime=is_daytime)
 
     def _current_hour_symbol(self) -> int | None:
         """The hourly symbol for the current UTC hour, if hourly data is cached.
@@ -307,6 +311,9 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
     @staticmethod
     def _as_hourly_forecast(hour: HourlyForecast) -> Forecast:
         # The hourly symbol (jww003i0) already encodes the day/night variant.
+        # Unlike `condition`, these are future hours, so `sun.sun` (a now-only
+        # flag) cannot correct a variant that outlives sunrise (issue #103);
+        # the upstream variant is reported as sent.
         forecast: Forecast = {
             "datetime": hour.time.isoformat(),
             "condition": condition_for_symbol(hour.symbol),

@@ -127,11 +127,18 @@ def condition_for_symbol(
     """Return the HA ``ATTR_CONDITION_*`` string for a MeteoSwiss symbol code.
 
     Day codes (1–42) and night codes (101–142) are looked up directly from
-    their own table entries.  ``is_daytime=False`` is a hint used only for a
-    *daily* symbol (a day code) rendered at night: the code's night
-    counterpart (``code + 100``) is substituted when the table has one, so the
-    icon set's independent night meaning is honoured (e.g. ``26`` → ``sunny``
-    by day but ``126`` → ``cloudy`` at night).
+    their own table entries.  ``is_daytime`` says where the sun actually is
+    and makes the code agree with it, in either direction:
+
+    - ``False`` with a day code substitutes the night counterpart
+      (``code + 100``) — the daily symbol rendered after sunset.
+    - ``True`` with a night code substitutes the day counterpart
+      (``code - 100``) — an hourly symbol whose night variant outlives
+      sunrise (issue #103).
+
+    Either way the substituted code is looked up on its own entry, so the icon
+    set's independent night meaning is honoured (e.g. ``26`` → ``sunny`` by day
+    but ``126`` → ``cloudy`` at night).  ``None`` leaves the code as sent.
 
     Returns ``None`` for ``None`` input or unknown codes; unknown codes are
     logged once per unique value at ``DEBUG`` level.
@@ -142,6 +149,10 @@ def condition_for_symbol(
     # A daytime daily symbol shown at night takes its own night counterpart.
     if is_daytime is False and 1 <= code <= 42 and (code + 100) in _CONDITIONS:
         code += 100
+    # ...and the mirror: a night symbol still in the feed after sunrise takes
+    # its day counterpart (issue #103).
+    elif is_daytime is True and 101 <= code <= 142 and (code - 100) in _CONDITIONS:
+        code -= 100
 
     condition = _CONDITIONS.get(code)
     if condition is None:
