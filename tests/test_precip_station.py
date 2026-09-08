@@ -334,6 +334,18 @@ async def test_weather_current_precipitation_from_precip_station(
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
+    # Availability now keys on data age (issue #108); the trimmed fixtures
+    # predate the bounds, so anchor the main station and forecast to 'now'. The
+    # precipitation station is independent and never gates availability.
+    from dataclasses import replace
+
+    from homeassistant.util import dt as dt_util
+
+    entry.runtime_data.forecast_coordinator.last_run = dt_util.utcnow()
+    station = entry.runtime_data.station_coordinator
+    station.async_set_updated_data(replace(station.data, timestamp=dt_util.utcnow()))
+    await hass.async_block_till_done()
+
     weather = hass.states.get("weather.koniz")
     assert weather is not None
     assert weather.attributes.get("current_precipitation") == 0.5

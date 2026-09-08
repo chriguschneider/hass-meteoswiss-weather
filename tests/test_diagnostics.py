@@ -8,11 +8,15 @@ recover on the next successful update. Also covers repair-issue creation on
 
 from __future__ import annotations
 
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
+from freezegun import freeze_time
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
@@ -24,6 +28,7 @@ from custom_components.meteoswiss_weather.const import (
     CONF_STATION_ABBR,
     CONF_STATION_NAME,
     DOMAIN,
+    STATION_MAX_AGE,
 )
 from custom_components.meteoswiss_weather.ogd import OgdConnectionError, OgdParseError
 from custom_components.meteoswiss_weather.ogd.const import station_now_url
@@ -132,22 +137,69 @@ async def test_diagnostics_after_station_failure(
 # ---------------------------------------------------------------------------
 
 
-async def test_weather_unavailable_after_station_failure(
+# A moment within both staleness bounds of the fixture forecast run
+# (2026-08-27 02:00 UTC): 10 h after the run, and the anchor for the freshly
+# poked station observation.
+_NOW = datetime(2026, 8, 27, 12, 0, tzinfo=UTC)
+
+
+def _freshen(entry: MockConfigEntry) -> None:
+    """Anchor both coordinators to 'now' so the age-based guard (#108) sees
+    freshly-fetched data: run stamp first, then the observation poke re-renders."""
+    runtime = entry.runtime_data
+    runtime.forecast_coordinator.last_run = dt_util.utcnow()
+    station = runtime.station_coordinator
+    if station.data is not None:
+        station.async_set_updated_data(
+            replace(station.data, timestamp=dt_util.utcnow())
+        )
+
+
+async def test_weather_survives_transient_station_failure(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """Weather entity becomes ``unavailable`` when the station coordinator fails."""
-    await _setup(hass, config_entry)
-    assert hass.states.get(_WEATHER_ENTITY).state != "unavailable"
+    """A transient station failure no longer takes the weather entity down (#108).
 
-    coordinator = config_entry.runtime_data.station_coordinator
-    mock_ogd.clear_requests()
-    mock_ogd.get(station_now_url(_STATION_ABBR), status=503)
-    await coordinator.async_refresh()
-    await hass.async_block_till_done()
+    With a fresh cached observation the entity degrades rather than fails: the
+    station-sourced current conditions survive a single failed poll. Contrast
+    the station *sensors* (below), which keep stock CoordinatorEntity semantics
+    and do go unavailable.
+    """
+    with freeze_time(_NOW):
+        await _setup(hass, config_entry)
+        _freshen(config_entry)
+        assert hass.states.get(_WEATHER_ENTITY).state != "unavailable"
 
-    assert hass.states.get(_WEATHER_ENTITY).state == "unavailable"
+        coordinator = config_entry.runtime_data.station_coordinator
+        mock_ogd.clear_requests()
+        mock_ogd.get(station_now_url(_STATION_ABBR), status=503)
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        assert coordinator.last_update_success is False
+
+        # The cached observation is still fresh, so the entity stays available.
+        assert hass.states.get(_WEATHER_ENTITY).state != "unavailable"
+
+
+async def test_weather_unavailable_once_station_data_is_stale(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A genuinely broken station path (data aged past the bound) goes down."""
+    with freeze_time(_NOW):
+        await _setup(hass, config_entry)
+        _freshen(config_entry)
+        assert hass.states.get(_WEATHER_ENTITY).state != "unavailable"
+
+        coordinator = config_entry.runtime_data.station_coordinator
+        stale = _NOW - STATION_MAX_AGE - timedelta(minutes=1)
+        coordinator.async_set_updated_data(replace(coordinator.data, timestamp=stale))
+        await hass.async_block_till_done()
+
+        assert hass.states.get(_WEATHER_ENTITY).state == "unavailable"
 
 
 async def test_weather_recovers_after_station_failure(
@@ -155,30 +207,30 @@ async def test_weather_recovers_after_station_failure(
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """Weather entity becomes available again after the station coordinator recovers."""
-    from datetime import UTC, datetime
-
+    """Weather entity becomes available again after a fresh observation lands."""
     from custom_components.meteoswiss_weather.ogd import Observation
 
-    await _setup(hass, config_entry)
+    with freeze_time(_NOW):
+        await _setup(hass, config_entry)
+        _freshen(config_entry)
 
-    coordinator = config_entry.runtime_data.station_coordinator
-    mock_ogd.clear_requests()
-    mock_ogd.get(station_now_url(_STATION_ABBR), status=503)
-    await coordinator.async_refresh()
-    await hass.async_block_till_done()
-    assert hass.states.get(_WEATHER_ENTITY).state == "unavailable"
+        # Drive the station stale: the entity drops out.
+        coordinator = config_entry.runtime_data.station_coordinator
+        stale = _NOW - STATION_MAX_AGE - timedelta(minutes=1)
+        coordinator.async_set_updated_data(replace(coordinator.data, timestamp=stale))
+        await hass.async_block_till_done()
+        assert hass.states.get(_WEATHER_ENTITY).state == "unavailable"
 
-    # Inject a successful observation directly to confirm recovery.
-    obs = Observation(
-        station_abbr=_STATION_ABBR,
-        timestamp=datetime(2026, 8, 27, 0, 40, tzinfo=UTC),
-        temperature=19.5,
-    )
-    coordinator.async_set_updated_data(obs)
-    await hass.async_block_till_done()
+        # A fresh observation restores availability.
+        obs = Observation(
+            station_abbr=_STATION_ABBR,
+            timestamp=_NOW,
+            temperature=19.5,
+        )
+        coordinator.async_set_updated_data(obs)
+        await hass.async_block_till_done()
 
-    assert hass.states.get(_WEATHER_ENTITY).state != "unavailable"
+        assert hass.states.get(_WEATHER_ENTITY).state != "unavailable"
 
 
 # ---------------------------------------------------------------------------

@@ -104,3 +104,25 @@ HOURLY_FAR_MAX_AGE = timedelta(hours=6)
 # Pollen data is published hourly; one request per hour per station is enough
 # (ADR-0005). Conditional requests (If-None-Match) keep most polls to a 304.
 POLLEN_UPDATE_INTERVAL = timedelta(hours=1)
+
+# Availability staleness bounds (issue #108). The weather entity stays available
+# on a transient refresh failure as long as the cached data is still young
+# enough to trust; only genuinely stale data (a persistently broken fetch path)
+# makes it unavailable. Availability follows data *age*, not last-update success,
+# so a single 5xx/DNS blip no longer takes the station-sourced current conditions
+# down with it.
+#
+# Station observations are 10-minute values that go genuinely stale after a
+# missed poll: an hour is six missed polls, well past any transient blip while
+# still catching an upstream that quietly stopped publishing new rows. Measured
+# against Observation.timestamp (the row's own time, exposed since #106 as the
+# measurement_time sensor), so the guard is observable to the user.
+STATION_MAX_AGE = timedelta(hours=1)
+# The forecast run only changes every 3 h (ICON-CH1) or 6 h (ICON-CH2), and the
+# data is a 9-day forecast that is *designed* to be hours old, so a failed hourly
+# check says nothing about the validity of a run fetched recently. Twelve hours
+# covers a fully missed ICON-CH2 cycle with margin; a run older than that means
+# the check has been failing long enough to call the forecast genuinely broken.
+# Measured against the run stamp (ForecastCoordinator.last_run), not the last
+# successful check.
+FORECAST_MAX_AGE = timedelta(hours=12)

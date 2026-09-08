@@ -33,7 +33,13 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from . import MeteoSwissConfigEntry
-from .const import ATTRIBUTION, CONF_HOURLY_FORECAST, DOMAIN
+from .const import (
+    ATTRIBUTION,
+    CONF_HOURLY_FORECAST,
+    DOMAIN,
+    FORECAST_MAX_AGE,
+    STATION_MAX_AGE,
+)
 from .coordinator import (
     ForecastCoordinator,
     PrecipStationCoordinator,
@@ -135,11 +141,50 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
 
     @property
     def available(self) -> bool:
-        """Available only while both coordinators are succeeding."""
-        return (
-            self.coordinator.last_update_success
-            and self._forecast_coordinator.last_update_success
-        )
+        """Available while both coordinators hold data young enough to trust.
+
+        The station coordinator backs ``CoordinatorEntity``; stock
+        ``CoordinatorEntity.available`` would consider only that one. This
+        entity deliberately ANDs the forecast coordinator in too, because its
+        *state* — ``condition`` — is derived from the forecast symbol, so an
+        entity with no forecast is only half a weather entity. That coupling is
+        intentional and kept.
+
+        What changed (issue #108) is that availability follows data *presence
+        and age*, not ``last_update_success``. A transient refresh failure — a
+        5xx from ``data.geo.admin.ch``, a DNS blip, a slow run rollover — leaves
+        the previous data in place, so the entity keeps serving it rather than
+        dropping the perfectly good station-sourced current conditions with it.
+        This mirrors the repo's degrade-don't-fail stance (#83).
+
+        Each coordinator is still bounded by its own staleness horizon so a
+        genuinely broken fetch path goes unavailable rather than serving ever
+        older values under a healthy-looking entity: the station observation
+        must be no older than ``STATION_MAX_AGE`` and the forecast run no older
+        than ``FORECAST_MAX_AGE`` (both justified in const.py). Before the first
+        successful fetch there is no data and the entity is unavailable, as
+        before — including the brief flap during a config-entry reload.
+        """
+        return self._station_fresh() and self._forecast_fresh()
+
+    def _station_fresh(self) -> bool:
+        """Whether the cached station observation is present and recent enough.
+
+        Keyed on the observation's own timestamp (docs/ogd.md §A1), not the
+        coordinator's last-success time, so an upstream that keeps serving the
+        same old row on a 200 still ages out.
+        """
+        obs = self.coordinator.data
+        if obs is None:
+            return False
+        return dt_util.utcnow() - obs.timestamp <= STATION_MAX_AGE
+
+    def _forecast_fresh(self) -> bool:
+        """Whether the cached forecast is present and its run recent enough."""
+        coordinator = self._forecast_coordinator
+        if coordinator.data is None or coordinator.last_run is None:
+            return False
+        return dt_util.utcnow() - coordinator.last_run <= FORECAST_MAX_AGE
 
     # -- current conditions (station observation) ---------------------------
 

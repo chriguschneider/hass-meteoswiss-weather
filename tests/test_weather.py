@@ -10,13 +10,14 @@ and the availability contract across the two coordinators.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from freezegun import freeze_time
 from homeassistant.components.sun import STATE_ABOVE_HORIZON, STATE_BELOW_HORIZON
 from homeassistant.components.weather import WeatherEntityFeature
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
@@ -31,8 +32,14 @@ from custom_components.meteoswiss_weather.const import (
     CONF_STATION_ABBR,
     CONF_STATION_NAME,
     DOMAIN,
+    FORECAST_MAX_AGE,
+    STATION_MAX_AGE,
 )
-from custom_components.meteoswiss_weather.ogd.const import station_now_url
+from custom_components.meteoswiss_weather.ogd.const import (
+    COLLECTION_FORECAST,
+    stac_items_url,
+    station_now_url,
+)
 
 _STATION_ABBR = "BER"
 _ENTITY_ID = "weather.koniz"
@@ -88,14 +95,54 @@ def hourly_gated_config_entry() -> MockConfigEntry:
     )
 
 
+def _freshen_station(entry: MockConfigEntry) -> None:
+    """Anchor the station observation to 'now' and re-render the entity.
+
+    Availability now keys on the observation's own timestamp (issue #108): the
+    trimmed fixtures are older than the 1 h staleness bound, so a test that
+    wants the entity available anchors the cached observation to the (possibly
+    frozen) current time. Only the timestamp moves — every measured value is
+    preserved via ``replace`` — and ``async_set_updated_data`` doubles as the
+    listener push that re-renders the entity state.
+    """
+    coordinator = entry.runtime_data.station_coordinator
+    if coordinator.data is not None:
+        coordinator.async_set_updated_data(
+            replace(coordinator.data, timestamp=dt_util.utcnow())
+        )
+
+
+def _freshen_forecast(entry: MockConfigEntry) -> None:
+    """Anchor the forecast run stamp to 'now' for the age-based guard (#108).
+
+    Used by tests frozen well past the fixture run (the daily-symbol tests read
+    a forecast day days ahead of the run); the daily forecast is served from the
+    coordinator's cached data, so only ``last_run`` — which availability reads —
+    needs to move, never the request URLs the hourly path would build from it.
+    """
+    entry.runtime_data.forecast_coordinator.last_run = dt_util.utcnow()
+
+
 async def _setup(
-    hass: HomeAssistant, entry: MockConfigEntry, *, sun: str = STATE_ABOVE_HORIZON
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    *,
+    sun: str = STATE_ABOVE_HORIZON,
+    freshen: bool = True,
 ) -> None:
-    """Set the sun state, add the entry and run setup to completion."""
+    """Set the sun state, add the entry and run setup to completion.
+
+    ``freshen`` anchors the station observation to 'now' after setup so the
+    age-based availability guard (issue #108) treats the older fixtures as
+    freshly fetched; availability-focused tests pass ``freshen=False`` to drive
+    the timestamps themselves.
+    """
     hass.states.async_set("sun.sun", sun)
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
+    if freshen:
+        _freshen_station(entry)
 
 
 async def test_current_conditions_from_station(
@@ -104,7 +151,11 @@ async def test_current_conditions_from_station(
     mock_ogd: AiohttpClientMocker,
 ) -> None:
     """Current-condition attributes come from the latest station row."""
-    await _setup(hass, config_entry)
+    await _setup(hass, config_entry, freshen=False)
+    # Anchor the run stamp before the observation poke re-renders the entity, so
+    # the age-based availability guard (#108) sees both coordinators fresh.
+    _freshen_forecast(config_entry)
+    _freshen_station(config_entry)
 
     state = hass.states.get(_ENTITY_ID)
     assert state is not None
@@ -128,7 +179,11 @@ async def test_condition_from_daily_symbol_daytime(
 ) -> None:
     """With the sun up, 2026-08-29's daily symbol (code 1) becomes ``sunny``."""
     with freeze_time(datetime(2026, 8, 29, 12, 0, tzinfo=UTC)):
-        await _setup(hass, config_entry, sun=STATE_ABOVE_HORIZON)
+        await _setup(hass, config_entry, sun=STATE_ABOVE_HORIZON, freshen=False)
+        # Frozen days ahead of the fixture run: anchor the run stamp first, then
+        # the observation, whose poke re-renders the now-available entity (#108).
+        _freshen_forecast(config_entry)
+        _freshen_station(config_entry)
         assert hass.states.get(_ENTITY_ID).state == "sunny"
 
 
@@ -143,7 +198,9 @@ async def test_condition_from_daily_symbol_nighttime(
     counterpart (code + 100); 1 → 101 is ``clear-night``.
     """
     with freeze_time(datetime(2026, 8, 29, 23, 0, tzinfo=UTC)):
-        await _setup(hass, config_entry, sun=STATE_BELOW_HORIZON)
+        await _setup(hass, config_entry, sun=STATE_BELOW_HORIZON, freshen=False)
+        _freshen_forecast(config_entry)
+        _freshen_station(config_entry)
         assert hass.states.get(_ENTITY_ID).state == "clear-night"
 
 
@@ -153,7 +210,9 @@ async def test_daily_forecast_service(
     mock_ogd: AiohttpClientMocker,
 ) -> None:
     """``weather.get_forecasts`` (daily) returns the 9 fixture days."""
-    await _setup(hass, config_entry)
+    await _setup(hass, config_entry, freshen=False)
+    _freshen_forecast(config_entry)
+    _freshen_station(config_entry)
 
     response = await hass.services.async_call(
         "weather",
@@ -203,23 +262,124 @@ async def test_device_info(
     assert device.configuration_url == "https://opendatadocs.meteoswiss.ch"
 
 
-async def test_unavailable_when_station_fails(
+# --- availability: degrade-don't-fail on a transient blip (issue #108) -----
+
+# A moment comfortably within both staleness bounds of the fixture forecast run
+# (2026-08-27 02:00 UTC): 10 h after the run (< FORECAST_MAX_AGE) and used as the
+# anchor for the freshly-poked station observation.
+_NOW = datetime(2026, 8, 27, 12, 0, tzinfo=UTC)
+
+
+async def test_available_survives_a_transient_forecast_failure(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """A later station failure flips the entity to ``unavailable``."""
-    await _setup(hass, config_entry)
-    assert hass.states.get(_ENTITY_ID).state != "unavailable"
+    """A failed forecast refresh with cached data leaves the entity available.
 
-    coordinator = config_entry.runtime_data.station_coordinator
-    mock_ogd.clear_requests()
-    mock_ogd.get(station_now_url(_STATION_ABBR), status=500)
+    The whole point of issue #108: the station-sourced current conditions must
+    not vanish because a forecast file could not be fetched.
+    """
+    with freeze_time(_NOW):
+        await _setup(hass, config_entry)
+        assert hass.states.get(_ENTITY_ID).state != "unavailable"
 
-    await coordinator.async_refresh()
-    await hass.async_block_till_done()
+        # A transient upstream error on the hourly forecast check: run discovery
+        # (a STAC call) 500s. last_update_success flips false, but the cached
+        # daily data and run stamp are untouched.
+        mock_ogd.clear_requests()
+        mock_ogd.get(stac_items_url(COLLECTION_FORECAST), status=500)
+        forecast = config_entry.runtime_data.forecast_coordinator
+        await forecast.async_refresh()
+        await hass.async_block_till_done()
+        assert forecast.last_update_success is False
 
-    assert hass.states.get(_ENTITY_ID).state == "unavailable"
+        state = hass.states.get(_ENTITY_ID)
+        assert state.state != "unavailable"
+        # Current conditions from the station are intact.
+        assert state.attributes["temperature"] == 19.5
+
+
+async def test_available_survives_a_transient_station_failure(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A failed station refresh with fresh cached data likewise stays available."""
+    with freeze_time(_NOW):
+        await _setup(hass, config_entry)
+        assert hass.states.get(_ENTITY_ID).state != "unavailable"
+
+        station = config_entry.runtime_data.station_coordinator
+        mock_ogd.clear_requests()
+        mock_ogd.get(station_now_url(_STATION_ABBR), status=500)
+        await station.async_refresh()
+        await hass.async_block_till_done()
+        assert station.last_update_success is False
+
+        assert hass.states.get(_ENTITY_ID).state != "unavailable"
+
+
+async def test_unavailable_when_station_observation_goes_stale(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Once the observation is older than STATION_MAX_AGE the entity drops out."""
+    with freeze_time(_NOW):
+        await _setup(hass, config_entry)
+        assert hass.states.get(_ENTITY_ID).state != "unavailable"
+
+        # An observation just past the bound (the forecast is still fresh, so
+        # this isolates the station guard).
+        station = config_entry.runtime_data.station_coordinator
+        stale = _NOW - STATION_MAX_AGE - timedelta(minutes=1)
+        station.async_set_updated_data(replace(station.data, timestamp=stale))
+        await hass.async_block_till_done()
+
+        assert hass.states.get(_ENTITY_ID).state == "unavailable"
+
+
+async def test_unavailable_when_forecast_run_goes_stale(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Once the run is older than FORECAST_MAX_AGE the entity drops out."""
+    with freeze_time(_NOW):
+        await _setup(hass, config_entry)
+        assert hass.states.get(_ENTITY_ID).state != "unavailable"
+
+        # Age the run past the bound; keep the station fresh so this isolates the
+        # forecast guard. Poking the station also re-renders the entity.
+        forecast = config_entry.runtime_data.forecast_coordinator
+        forecast.last_run = _NOW - FORECAST_MAX_AGE - timedelta(hours=1)
+        _freshen_station(config_entry)
+        await hass.async_block_till_done()
+
+        assert hass.states.get(_ENTITY_ID).state == "unavailable"
+
+
+async def test_unavailable_before_first_forecast_fetch(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """With no forecast data yet (cold start) the entity is unavailable.
+
+    Data presence is required regardless of age: a coordinator that has never
+    delivered data cannot make the entity available.
+    """
+    with freeze_time(_NOW):
+        await _setup(hass, config_entry)
+        assert hass.states.get(_ENTITY_ID).state != "unavailable"
+
+        # Simulate "no forecast fetched yet": drop the cached data and re-render.
+        config_entry.runtime_data.forecast_coordinator.data = None
+        _freshen_station(config_entry)
+        await hass.async_block_till_done()
+
+        assert hass.states.get(_ENTITY_ID).state == "unavailable"
 
 
 # --- hourly forecast (opt-in, ADR-0002) ------------------------------------
@@ -359,7 +519,9 @@ async def test_condition_prefers_current_hour_symbol(
             blocking=True,
             return_response=True,
         )
-        await hourly_config_entry.runtime_data.station_coordinator.async_refresh()
+        # Re-render the entity while keeping the observation fresh (#108): a real
+        # station re-fetch would replay the older fixture row and stale the guard.
+        _freshen_station(hourly_config_entry)
         await hass.async_block_till_done()
 
         assert hass.states.get(_ENTITY_ID).state == "snowy-rainy"
@@ -395,7 +557,9 @@ async def test_condition_corrects_a_night_symbol_after_sunrise(
             for hour in provider.cached_hourly
         ]
 
-        await hourly_config_entry.runtime_data.station_coordinator.async_refresh()
+        # Re-render the entity while keeping the observation fresh (#108): a real
+        # station re-fetch would replay the older fixture row and stale the guard.
+        _freshen_station(hourly_config_entry)
         await hass.async_block_till_done()
 
         assert hass.states.get(_ENTITY_ID).state == "sunny"
@@ -424,7 +588,9 @@ async def test_condition_keeps_a_night_symbol_while_the_sun_is_down(
             for hour in provider.cached_hourly
         ]
 
-        await hourly_config_entry.runtime_data.station_coordinator.async_refresh()
+        # Re-render the entity while keeping the observation fresh (#108): a real
+        # station re-fetch would replay the older fixture row and stale the guard.
+        _freshen_station(hourly_config_entry)
         await hass.async_block_till_done()
 
         assert hass.states.get(_ENTITY_ID).state == "clear-night"

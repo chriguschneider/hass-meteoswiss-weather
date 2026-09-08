@@ -19,6 +19,17 @@ using the matching section below as release notes.
 
 ### Fixed
 
+- **A transient forecast (or station) failure no longer takes the whole
+  weather entity down** (#108). Availability now follows data *presence and
+  age* instead of both coordinators' last-update success: a single failed
+  forecast check — a 5xx from `data.geo.admin.ch`, a DNS blip, a slow run
+  rollover — leaves the cached data in place, so the station-sourced current
+  conditions (temperature, humidity, pressure, wind, gusts, dew point,
+  `current_precipitation`) stay available instead of vanishing with it. The
+  entity still goes `unavailable` when a fetch path is genuinely broken: the
+  station observation must be no older than 1 h and the forecast run no older
+  than 12 h, and both must have delivered data at least once. This mirrors the
+  integration's existing degrade-don't-fail stance (#83).
 - **The condition no longer stays on the night variant after sunrise**
   (#103). MeteoSwiss keeps the night variant of the hourly symbol
   (`jww003i0`) for a couple of hours past sunrise, so the entity reported

@@ -212,6 +212,20 @@ async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
+    # Availability now keys on data age (issue #108); the trimmed fixtures
+    # predate the staleness bounds, so anchor both coordinators to 'now'. The
+    # run stamp moves first, then the observation poke re-renders the entity.
+    from dataclasses import replace
+
+    from homeassistant.util import dt as dt_util
+
+    runtime = entry.runtime_data
+    runtime.forecast_coordinator.last_run = dt_util.utcnow()
+    station = runtime.station_coordinator
+    if station.data is not None:
+        station.async_set_updated_data(
+            replace(station.data, timestamp=dt_util.utcnow())
+        )
 
 
 # ---------------------------------------------------------------------------
