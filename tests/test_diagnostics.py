@@ -1,8 +1,11 @@
 """Tests for diagnostics (issue #15).
 
 Covers the config-entry diagnostics payload and the availability/resilience
-contracts: entities flip to ``unavailable`` after a coordinator failure and
-recover on the next successful update. Also covers repair-issue creation on
+contracts. Sensor entities flip to ``unavailable`` after a coordinator
+failure and recover on the next successful update (standard
+``CoordinatorEntity`` behaviour). The weather entity uses a data-presence
+check (issue #108) so it stays available across transient failures as long
+as it has previously fetched data. Also covers repair-issue creation on
 :class:`~ogd.OgdParseError` and deletion on the subsequent successful parse.
 """
 
@@ -132,12 +135,16 @@ async def test_diagnostics_after_station_failure(
 # ---------------------------------------------------------------------------
 
 
-async def test_weather_unavailable_after_station_failure(
+async def test_weather_stays_available_after_transient_station_failure(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """Weather entity becomes ``unavailable`` when the station coordinator fails."""
+    """Weather entity stays available on a transient station failure (issue #108).
+
+    The coordinator retains last-good data so the entity reports its previous
+    state; only ``last_update_success`` flips to ``False``.
+    """
     await _setup(hass, config_entry)
     assert hass.states.get(_WEATHER_ENTITY).state != "unavailable"
 
@@ -147,29 +154,35 @@ async def test_weather_unavailable_after_station_failure(
     await coordinator.async_refresh()
     await hass.async_block_till_done()
 
-    assert hass.states.get(_WEATHER_ENTITY).state == "unavailable"
+    # The coordinator data is intact even though last_update_success is False.
+    assert coordinator.last_update_success is False
+    assert coordinator.data is not None
+    assert hass.states.get(_WEATHER_ENTITY).state != "unavailable"
 
 
-async def test_weather_recovers_after_station_failure(
+async def test_weather_still_available_after_station_failure_and_recovery(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """Weather entity becomes available again after the station coordinator recovers."""
+    """Weather entity stays available through failure and on recovery."""
     from datetime import UTC, datetime
 
     from custom_components.meteoswiss_weather.ogd import Observation
 
     await _setup(hass, config_entry)
+    initial_state = hass.states.get(_WEATHER_ENTITY).state
+    assert initial_state != "unavailable"
 
     coordinator = config_entry.runtime_data.station_coordinator
     mock_ogd.clear_requests()
     mock_ogd.get(station_now_url(_STATION_ABBR), status=503)
     await coordinator.async_refresh()
     await hass.async_block_till_done()
-    assert hass.states.get(_WEATHER_ENTITY).state == "unavailable"
+    # Still not unavailable during the failure window.
+    assert hass.states.get(_WEATHER_ENTITY).state != "unavailable"
 
-    # Inject a successful observation directly to confirm recovery.
+    # Inject a new successful observation to confirm the entity refreshes.
     obs = Observation(
         station_abbr=_STATION_ABBR,
         timestamp=datetime(2026, 8, 27, 0, 40, tzinfo=UTC),

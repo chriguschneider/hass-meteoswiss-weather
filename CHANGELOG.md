@@ -19,6 +19,15 @@ using the matching section below as release notes.
 
 ### Fixed
 
+- **A transient forecast failure no longer makes the weather entity
+  unavailable** (#108). The entity's availability is now derived from
+  whether each coordinator *has data* rather than whether its most recent
+  refresh succeeded. Station observations and automations that depend on the
+  weather entity survive a brief forecast outage (a STAC hiccup, a slow run
+  rollover, a 5xx from `data.geo.admin.ch`) without going `unavailable`.
+  A coordinator that has never succeeded (no data at all) still causes the
+  entity to report `unavailable`.
+
 - **The condition no longer stays on the night variant after sunrise**
   (#103). MeteoSwiss keeps the night variant of the hourly symbol
   (`jww003i0`) for a couple of hours past sunrise, so the entity reported

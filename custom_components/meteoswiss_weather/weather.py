@@ -135,10 +135,21 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
 
     @property
     def available(self) -> bool:
-        """Available only while both coordinators are succeeding."""
+        """Available when both coordinators have data (issue #108).
+
+        Uses data presence rather than last-update success: a transient fetch
+        failure leaves the coordinator's previous data intact, so the entity
+        stays available across a hiccup. It goes unavailable only when a
+        coordinator has never succeeded (its ``.data`` is still ``None``).
+
+        The AND with the forecast coordinator is a deliberate extension of the
+        standard ``CoordinatorEntity.available`` (which only considers its own
+        coordinator): a forecast outage should not silence current conditions
+        that come from the station coordinator and are perfectly intact.
+        """
         return (
-            self.coordinator.last_update_success
-            and self._forecast_coordinator.last_update_success
+            self.coordinator.data is not None
+            and self._forecast_coordinator.data is not None
         )
 
     # -- current conditions (station observation) ---------------------------
