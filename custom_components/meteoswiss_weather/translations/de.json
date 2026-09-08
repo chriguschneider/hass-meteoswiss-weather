@@ -43,6 +43,7 @@
       "temp_min_today": { "name": "Tiefsttemperatur heute" },
       "precipitation_today": { "name": "Niederschlag heute" },
       "zero_degree_level": { "name": "Nullgradgrenze" },
+      "measurement_time": { "name": "Messzeitpunkt" },
       "pollen_grasses": { "name": "Graspollen" },
       "pollen_birch": { "name": "Birkenpollen" },
       "pollen_alder": { "name": "Erlenpollen" },

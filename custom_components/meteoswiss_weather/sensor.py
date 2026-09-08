@@ -11,7 +11,7 @@ keyed on the forecast point, not the station abbreviation).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -335,6 +335,18 @@ _ZERO_DEGREE_DESCRIPTION = SensorEntityDescription(
 )
 
 
+# B9 — station observation timestamp sensor (issue #105): the reference_timestamp
+# of the last delivered observation. Not a measured parameter, so it is never in
+# the inventory set; it therefore lives outside _SENSORS and uses its own class.
+_MEASUREMENT_TIME_DESCRIPTION = SensorEntityDescription(
+    key="measurement_time",
+    translation_key="measurement_time",
+    device_class=SensorDeviceClass.TIMESTAMP,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    entity_registry_enabled_default=False,
+)
+
+
 # Pollen sensors (ADR-0005): one per taxon the station measures. Taxon codes
 # match the column names in the upstream ``_h_now.csv`` file header. Grasses
 # and birch are the most relevant allergens and are enabled by default; the
@@ -468,6 +480,7 @@ async def async_setup_entry(
             {f"{device_unique_id}_{desc.key}" for desc in supported}
             | {f"{device_unique_id}_{desc.key}" for desc in _FORECAST_SENSORS}
             | {f"{device_unique_id}_{_ZERO_DEGREE_DESCRIPTION.key}"}
+            | {f"{device_unique_id}_{_MEASUREMENT_TIME_DESCRIPTION.key}"}
             | {f"{device_unique_id}_{desc.key}" for desc in _POLLEN_SENSORS}
         )
         # The precipitation sensor is created from the precip station below and
@@ -517,6 +530,12 @@ async def async_setup_entry(
     async_add_entities([
         ZeroDegreeSensor(
             runtime.forecast_coordinator, _ZERO_DEGREE_DESCRIPTION,
+            device_unique_id, device_info,
+        )
+    ])
+    async_add_entities([
+        MeasurementTimeSensor(
+            runtime.station_coordinator, _MEASUREMENT_TIME_DESCRIPTION,
             device_unique_id, device_info,
         )
     ])
@@ -705,3 +724,40 @@ class ZeroDegreeSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
             if hour.time == this_hour:
                 return hour.zero_degree_level
         return None
+
+
+class MeasurementTimeSensor(CoordinatorEntity[StationCoordinator], SensorEntity):
+    """The reference_timestamp of the latest station observation (issue #105).
+
+    Returns the observation timestamp as an aware UTC datetime, giving users a
+    staleness signal: when the station stops delivering new rows the coordinator
+    keeps the last good Observation, so ``last_updated`` on the measurement
+    sensors does not change — but this sensor still shows when the observation
+    was actually taken.
+
+    Disabled by default; entity_category=DIAGNOSTIC keeps it out of the main
+    entity list.
+    """
+
+    _attr_has_entity_name = True
+    _attr_attribution = ATTRIBUTION
+
+    def __init__(
+        self,
+        coordinator: StationCoordinator,
+        description: SensorEntityDescription,
+        device_unique_id: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{device_unique_id}_{description.key}"
+        self._attr_device_info = device_info
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return the observation timestamp, or ``None`` (→ ``unknown``)."""
+        obs: Observation | None = self.coordinator.data
+        if obs is None:
+            return None
+        return obs.timestamp
