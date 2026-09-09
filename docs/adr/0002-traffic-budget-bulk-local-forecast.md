@@ -231,6 +231,27 @@ The hourly opt-in is no longer a precondition.
 alongside the three wind blocks (Revision 3) — negligible next to the ~5 MB of
 daily files.
 
+**Three details the guardrail needs to stay honest:**
+
+- **The block is retried within a run.** The run is selected on
+  `DAILY_REQUIRED_PARAMS`, and the ~30 MB `zprfr0hs` of that run often lands a
+  few minutes after those small files. Since the daily files are fetched once
+  per run, memoising that miss would leave the sensor `unknown` until the next
+  run. Only the *stable* outcomes are cached by run stamp — a success, and a
+  file that turned out not to be point-major. A missing asset and a connection
+  error are retried on the next forecast check (one ~5 KB block, and only while
+  the series is empty).
+- **The reuse is two-directional.** Both the daily and the hourly path reach
+  `zprfr0hs` through the same point-major block fetch, so whichever runs first
+  for a run fills the cache and the other skips the download. Fetching it once
+  per run no longer depends on the daily refresh happening to go first.
+- **The sensor still falls back to the hourly cache.** When the daily block is
+  empty — not published yet, or the layout guardrail fired — an opt-in user's
+  hourly cache may hold the same parameter, fetched by a path that *may* fall
+  back to a whole-file read. Reading it there costs nothing (no fetch is ever
+  triggered) and keeps those users from losing a value they had before this
+  revision.
+
 **Guardrail (unchanged shape):** `fetch_point_block()` (the renamed generic of
 Revision 3's `fetch_wind_block()`) returns `None` for any file that is not
 point-major; the backend then leaves the zero-degree series empty and logs a

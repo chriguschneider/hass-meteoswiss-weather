@@ -40,6 +40,7 @@ from custom_components.meteoswiss_weather.ogd import (
     ForecastBackend,
     ForecastPoint,
     HourlyForecast,
+    Run,
 )
 from custom_components.meteoswiss_weather.ogd.const import (
     COLLECTION_FORECAST,
@@ -128,8 +129,21 @@ class FakeBackend:
         # returns the same fixed hours regardless, and the provider merges them.
         return self.HOURLY
 
+    def __init__(self) -> None:
+        # Set by the retry test: the series fetch_daily produced, and how often
+        # the coordinator came back for the zero-degree block on its own.
+        self.zero_degree: dict[datetime, float | None] = dict(self.ZERO_DEGREE)
+        self.zero_degree_fetches = 0
+
     def latest_zero_degree(self) -> dict[datetime, float | None]:
-        return self.ZERO_DEGREE
+        return self.zero_degree
+
+    async def fetch_zero_degree(
+        self, point: ForecastPoint, run: Run
+    ) -> dict[datetime, float | None]:
+        self.zero_degree_fetches += 1
+        self.zero_degree = dict(self.ZERO_DEGREE)
+        return self.zero_degree
 
 
 # FakeBackend satisfies the ForecastBackend protocol.
@@ -355,3 +369,41 @@ async def test_current_conditions_unchanged_with_fake_backend(
     assert attrs["temperature"] == 19.5
     assert attrs["humidity"] == 88.0
     assert attrs["attribution"] == "Source: MeteoSwiss"
+
+
+async def test_empty_zero_degree_is_retried_on_an_unchanged_run(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_station_and_stac: AiohttpClientMocker,
+) -> None:
+    """An unchanged run with no zero-degree series comes back for that block.
+
+    The ~30 MB zprfr0hs can land minutes after the small daily files of the
+    same run, and the daily files are fetched once per run — so without this
+    retry the sensor would stay unknown for the rest of the run (issue #107).
+    The retry costs one ~5 KB point block, and only while the series is empty.
+    """
+    fake = FakeBackend()
+    # The first refresh sees no zero-degree data: the file had not landed.
+    fake.zero_degree = {}
+    with patch(
+        "custom_components.meteoswiss_weather._backend_factory",
+        return_value=fake,
+    ):
+        await _setup(hass, config_entry)
+
+        coordinator = config_entry.runtime_data.forecast_coordinator
+        assert coordinator.data.zero_degree_by_hour == {}
+        assert fake.zero_degree_fetches == 0
+
+        # Same run on the next check: the daily files are not re-fetched, but
+        # the missing block is.
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        assert fake.zero_degree_fetches == 1
+        assert coordinator.data.zero_degree_by_hour == FakeBackend.ZERO_DEGREE
+
+        # With the series populated there is nothing left to retry.
+        await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        assert fake.zero_degree_fetches == 1

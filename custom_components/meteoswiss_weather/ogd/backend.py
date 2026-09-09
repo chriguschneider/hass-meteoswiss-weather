@@ -65,6 +65,17 @@ class ForecastBackend(Protocol):
         file was missing or not point-major (the ADR-0002 guardrail).
         """
 
+    async def fetch_zero_degree(
+        self, point: ForecastPoint, run: Run
+    ) -> dict[datetime, float | None]:
+        """Fetch just the zero-degree series for ``run``, without the daily files.
+
+        The retry path for a run whose daily files arrived before its zprfr0hs
+        did (issue #107): one ~5 KB point block, no re-download of the daily
+        files. Returns the same shape as :meth:`latest_zero_degree`, empty when
+        the guardrail fired.
+        """
+
 
 class BulkCsvBackend:
     """Assembles the forecast from the bulk per-parameter CSV files.
@@ -189,9 +200,18 @@ class BulkCsvBackend:
         file is absent from the run or not point-major, so the full 30 MB
         download is never triggered for a default feature (ADR-0002 guardrail).
         The text is cached by run so the lazy hourly path reuses it.
+
+        Only the two *stable* outcomes are memoised by run stamp: a successful
+        fetch, and a file that turned out not to be point-major (a property of
+        the file, which will not change within a run). A missing asset and a
+        connection error are deliberately not memoised — the ~30 MB zprfr0hs
+        often lands a few minutes after the small daily files it shares a run
+        with, so a later call in the same run must be free to try again
+        (issue #107). The caller controls how often that happens.
         """
-        # _zero_run set means we already tried this run; _zero_text is the result
-        # (populated str on success, None when the guardrail fired).
+        # _zero_run set means we already have a settled answer for this run;
+        # _zero_text is the result (populated str on success, None when the
+        # point-major guardrail fired).
         if self._zero_run == run.timestamp:
             return self._zero_text
 
@@ -201,11 +221,11 @@ class BulkCsvBackend:
         if HOURLY_ZERO_DEGREE not in run.assets:
             _LOGGER.warning(
                 "daily zero-degree skipped for run %s: the file is not published "
-                "yet; the zero-degree sensor stays unknown this run",
+                "yet; retrying on the next forecast check",
                 run.timestamp.isoformat(),
             )
+            # Not memoised: the file may still land within this run.
             self._zero_text = None
-            self._zero_run = run.timestamp
             return None
 
         # A transient connection error must degrade zero-degree to None, never
@@ -219,13 +239,13 @@ class BulkCsvBackend:
             )
         except OgdConnectionError as err:
             _LOGGER.warning(
-                "daily zero-degree skipped for run %s: %s; the zero-degree "
-                "sensor stays unknown this run",
+                "daily zero-degree skipped for run %s: %s; retrying on the next "
+                "forecast check",
                 run.timestamp.isoformat(),
                 err,
             )
+            # Not memoised: a transient error says nothing about the next try.
             self._zero_text = None
-            self._zero_run = run.timestamp
             return None
 
         if result is None:
@@ -246,6 +266,23 @@ class BulkCsvBackend:
 
     def latest_zero_degree(self) -> dict[datetime, float | None]:
         """Zero-degree level (m) per UTC hour from the last :meth:`fetch_daily`."""
+        return self._zero_by_hour
+
+    async def _parse_zero_text(
+        self, text: str | None, point: ForecastPoint
+    ) -> dict[datetime, float | None]:
+        """Parse a zero-degree block into the per-hour series, off the event loop."""
+        if text is None:
+            return {}
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, zero_degree_by_hour, text, point)
+
+    async def fetch_zero_degree(
+        self, point: ForecastPoint, run: Run
+    ) -> dict[datetime, float | None]:
+        """Fetch and parse the zero-degree block for ``run`` on its own."""
+        text = await self._get_zero_text(point, run)
+        self._zero_by_hour = await self._parse_zero_text(text, point)
         return self._zero_by_hour
 
     async def fetch_daily(self, point: ForecastPoint) -> list[DailyForecast]:
@@ -280,11 +317,7 @@ class BulkCsvBackend:
         # Parse the zero-degree block into the per-hour series the sensor reads;
         # keep the (cheap) scan off the event loop like the other parses. Empty
         # when the guardrail fired above.
-        self._zero_by_hour = (
-            await loop.run_in_executor(None, zero_degree_by_hour, zero_text, point)
-            if zero_text is not None
-            else {}
-        )
+        self._zero_by_hour = await self._parse_zero_text(zero_text, point)
 
         if wind_texts:
             wind_by_day = await loop.run_in_executor(
@@ -359,6 +392,17 @@ class BulkCsvBackend:
             text_by_param[param] = result.text
             if result.block_start is not None:
                 self._block_starts[param] = result.block_start
+                # A block_start means the point-major strategy ran, so this text
+                # is exactly what _get_zero_text would have fetched (both go
+                # through _fetch_point_major, neither trims by horizon). Feeding
+                # the cache here makes the reuse two-directional: whichever path
+                # runs first for a run, the other one skips the download
+                # (ADR-0002 revision 5). Without it the "never twice per run"
+                # guarantee only held when the daily refresh happened to go
+                # first.
+                if param == HOURLY_ZERO_DEGREE:
+                    self._zero_text = result.text
+                    self._zero_run = run.timestamp
 
         # Only fold in cached texts for params this call requested, so a
         # temperature-only (near/far) fetch stays temperature-only.
@@ -370,13 +414,16 @@ class BulkCsvBackend:
         # see what enabling the hourly forecast actually spends (ADR-0002).
         total_bytes = sum(len(text.encode(FORECAST_ENCODING)) for text in
                           text_by_param.values())
+        # Reused blocks are counted in too, so this is the size of the assembled
+        # data, not of the traffic — the reuse is what keeps the two apart.
         _LOGGER.debug(
-            "hourly forecast run %s (horizon_days=%s): fetched %d bytes across "
-            "%d files",
+            "hourly forecast run %s (horizon_days=%s): %d bytes across "
+            "%d files (%d fetched, the rest reused)",
             run.timestamp.isoformat(),
             horizon_days,
             total_bytes,
             len(text_by_param),
+            len(params_to_fetch),
         )
         # Parsing keeps only the point's rows; keep it off the event loop.
         loop = asyncio.get_running_loop()

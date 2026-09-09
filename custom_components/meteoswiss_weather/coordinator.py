@@ -74,6 +74,7 @@ from .ogd import (
     OgdConnectionError,
     OgdParseError,
     PollenObservation,
+    Run,
     fetch_current,
     fetch_pollen_current,
     fetch_precip_current,
@@ -571,6 +572,8 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         ):
             daily = self.data.daily
             zero_degree = self.data.zero_degree_by_hour
+            if not zero_degree:
+                zero_degree = await self._retry_zero_degree(run)
         else:
             try:
                 # The backend downloads the small daily files and parses them
@@ -595,6 +598,26 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         async_delete_issue(self.hass, DOMAIN, _ISSUE_FORECAST_PARSE)
         self.last_success = dt_util.utcnow()
         return ForecastData(daily=daily, zero_degree_by_hour=zero_degree)
+
+    async def _retry_zero_degree(self, run: Run) -> dict[datetime, float | None]:
+        """Re-try the zero-degree block for a run whose daily files we already have.
+
+        The ~30 MB zprfr0hs often lands a few minutes after the small daily
+        files of the same run, and the run is only fetched once — so without a
+        retry the sensor would stay ``unknown`` for the rest of the run even
+        though the file showed up minutes later (issue #107). One ~5 KB point
+        block per check, and only while the series is actually empty. A failure
+        here must never fail the daily refresh: the forecast itself is fine.
+        """
+        try:
+            return await self._backend.fetch_zero_degree(self._point, run)
+        except (OgdConnectionError, OgdParseError) as err:
+            _LOGGER.debug(
+                "zero-degree retry for run %s failed: %s",
+                run.timestamp.isoformat(),
+                err,
+            )
+            return {}
 
 
 class PollenCoordinator(DataUpdateCoordinator[PollenObservation]):

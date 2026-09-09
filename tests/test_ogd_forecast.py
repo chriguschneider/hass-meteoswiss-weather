@@ -992,6 +992,130 @@ async def test_bulk_backend_zero_degree_not_point_major_degrades_to_empty(
     assert backend.latest_zero_degree() == {}
 
 
+async def test_bulk_backend_zero_degree_missing_asset_is_retried(session) -> None:
+    """A zprfr0hs that has not published yet is retried, not written off.
+
+    The daily run is chosen on DAILY_REQUIRED_PARAMS, and the ~30 MB zprfr0hs
+    often lands minutes after those small files. Memoising that miss for the
+    whole run would keep the sensor unknown for an hour even though the file
+    showed up right after (issue #107), so the miss is deliberately not cached.
+    """
+    from custom_components.meteoswiss_weather.ogd.stac import Run
+
+    run = Run(
+        timestamp=datetime(2026, 8, 27, 3, 0, tzinfo=UTC),
+        assets={param: _asset_url(param) for param in DAILY_REQUIRED_PARAMS},
+    )
+    backend = BulkCsvBackend(session)
+
+    # No mock registered: the guardrail returns before touching the network.
+    assert await backend._get_zero_text(_koeniz_point(), run) is None
+    # Crucially *not* stamped, so the next call re-probes the run.
+    assert backend._zero_run is None
+
+    # The file lands; the same run now yields the series.
+    run_with_asset = Run(
+        timestamp=run.timestamp,
+        assets={**run.assets, HOURLY_ZERO_DEGREE: _asset_url(HOURLY_ZERO_DEGREE)},
+    )
+    with aioresponses() as mock:
+        mock.get(_asset_url(HOURLY_ZERO_DEGREE), status=200, repeat=True,
+                 body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{HOURLY_ZERO_DEGREE}.csv"))
+        by_hour = await backend.fetch_zero_degree(_koeniz_point(), run_with_asset)
+
+    assert by_hour[datetime(2026, 8, 27, 0, tzinfo=UTC)] == 2500.0
+    # A success *is* memoised: the run is settled now.
+    assert backend._zero_run == run.timestamp
+
+
+async def test_bulk_backend_zero_degree_connection_error_is_retried(session) -> None:
+    """A transient error on the zero-degree block is retried within the run."""
+    from custom_components.meteoswiss_weather.ogd.stac import Run
+
+    run = Run(
+        timestamp=datetime(2026, 8, 27, 3, 0, tzinfo=UTC),
+        assets={
+            **{param: _asset_url(param) for param in DAILY_REQUIRED_PARAMS},
+            HOURLY_ZERO_DEGREE: _asset_url(HOURLY_ZERO_DEGREE),
+        },
+    )
+    backend = BulkCsvBackend(session)
+    point = _koeniz_point()
+
+    with aioresponses() as mock:
+        mock.get(_asset_url(HOURLY_ZERO_DEGREE), status=503, repeat=True)
+        assert await backend.fetch_zero_degree(point, run) == {}
+    assert backend._zero_run is None
+
+    with aioresponses() as mock:
+        mock.get(_asset_url(HOURLY_ZERO_DEGREE), status=200, repeat=True,
+                 body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{HOURLY_ZERO_DEGREE}.csv"))
+        by_hour = await backend.fetch_zero_degree(point, run)
+
+    assert by_hour[datetime(2026, 8, 27, 0, tzinfo=UTC)] == 2500.0
+
+
+async def test_bulk_backend_zero_degree_not_point_major_is_not_retried(
+    session,
+) -> None:
+    """The point-major verdict *is* memoised: it cannot change within a run."""
+    date_major = "point_id;point_type_id;Date;zprfr0hs\n" + "".join(
+        f"{pid};{ptype};2026082700{h:02d};{2000 + h}\n"
+        for h in range(24)
+        for pid, ptype in ((1, 1), (309800, 2), (5000, 3))
+    )
+    from custom_components.meteoswiss_weather.ogd.stac import Run
+
+    run = Run(
+        timestamp=datetime(2026, 8, 27, 3, 0, tzinfo=UTC),
+        assets={HOURLY_ZERO_DEGREE: _asset_url(HOURLY_ZERO_DEGREE)},
+    )
+    backend = BulkCsvBackend(session)
+    with aioresponses() as mock:
+        mock.get(_asset_url(HOURLY_ZERO_DEGREE), status=200, repeat=True,
+                 body=date_major.encode("iso-8859-1"))
+        assert await backend.fetch_zero_degree(_koeniz_point(), run) == {}
+    assert backend._zero_run == run.timestamp
+
+    # No mock registered: a second call must not touch the network at all.
+    assert await backend._get_zero_text(_koeniz_point(), run) is None
+
+
+@freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC))
+async def test_bulk_backend_fetch_daily_reuses_hourly_zero_cache(session) -> None:
+    """The reuse works in the other order too: hourly first, then daily.
+
+    Both paths reach zprfr0hs through the same point-major block fetch, so
+    whichever runs first for a run, the other must not download it again
+    (ADR-0002 revision 5). zprfr0hs is registered once; a second fetch fails.
+    """
+    with aioresponses() as mock:
+        mock.get(ITEMS_URL, status=200, repeat=True,
+                 body=_fixture_bytes("ogd-local-forecasting_items.json"))
+        for param in DAILY_REQUIRED_PARAMS:
+            mock.get(_asset_url(param), status=200, repeat=True,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        for param in DAILY_WIND_PARAMS:
+            mock.get(_asset_url(param), status=200, repeat=True,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        others = [p for p in HOURLY_REQUIRED_PARAMS if p != HOURLY_ZERO_DEGREE]
+        for param in others:
+            mock.get(_asset_url(param), status=200, repeat=True,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        # zprfr0hs registered *once*: the daily refresh must reuse the hourly
+        # path's block instead of fetching it again.
+        mock.get(_asset_url(HOURLY_ZERO_DEGREE), status=200,
+                 body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{HOURLY_ZERO_DEGREE}.csv"))
+
+        backend = BulkCsvBackend(session)
+        point = _koeniz_point()
+        hourly = await backend.fetch_hourly(point)
+        await backend.fetch_daily(point)
+
+    assert hourly[0].zero_degree_level == 2500.0
+    assert backend.latest_zero_degree()[datetime(2026, 8, 27, 0, tzinfo=UTC)] == 2500.0
+
+
 @freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC))
 async def test_bulk_backend_fetch_hourly_reuses_daily_zero_cache(session) -> None:
     """fetch_daily's zprfr0hs block is reused by fetch_hourly on the same run.

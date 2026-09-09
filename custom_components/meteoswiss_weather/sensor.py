@@ -696,8 +696,9 @@ class ZeroDegreeSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
     current UTC hour from ``ForecastData.zero_degree_by_hour`` and re-writes state
     on each coordinator refresh and at the top of every hour, so it advances
     through the cached series between runs (like the today-forecast sensors flip
-    at midnight, issue #48). ``unknown`` only when the source file was missing or
-    not point-major (the ADR-0002 guardrail leaves the series empty).
+    at midnight, issue #48). When that series has nothing for the hour it falls
+    back to the hourly cache, which carries the same parameter for opt-in users
+    (see :meth:`_cached_hourly_value`); ``unknown`` only when neither has it.
     """
 
     _attr_has_entity_name = True
@@ -732,11 +733,34 @@ class ZeroDegreeSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
     @property
     def native_value(self) -> float | None:
         """Return the current hour's zero-degree level, or ``None`` when absent."""
-        data = self.coordinator.data
-        if data is None:
-            return None
         this_hour = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
-        return data.zero_degree_by_hour.get(this_hour)
+        data = self.coordinator.data
+        if data is not None:
+            value = data.zero_degree_by_hour.get(this_hour)
+            if value is not None:
+                return value
+        return self._cached_hourly_value(this_hour)
+
+    def _cached_hourly_value(self, this_hour: datetime) -> float | None:
+        """The hour's value from the hourly cache, when the daily block has none.
+
+        The daily block can come up empty — the file had not landed yet, or it
+        was served date-major and the ADR-0002 guardrail refused the 30 MB
+        download — while an opt-in user's hourly cache holds the very same
+        parameter, fetched by a path that *may* fall back to a whole-file read.
+        Without this the #107 change would be a regression for exactly those
+        users: a value they used to see would read ``unknown``.
+
+        Reads only what is already cached, so the guardrail still holds: nothing
+        here can trigger a download (issue #54).
+        """
+        hourly = self.coordinator.hourly_provider.cached_hourly
+        if not hourly:
+            return None
+        for hour in hourly:
+            if hour.time == this_hour:
+                return hour.zero_degree_level
+        return None
 
 
 class MeasurementTimeSensor(CoordinatorEntity[StationCoordinator], SensorEntity):

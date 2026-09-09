@@ -29,7 +29,13 @@ using the matching section below as release notes.
   data. It shows the current hour's value right after the first refresh, with no
   card open, no service call and the hourly option off. If the file is ever not
   point-major the value degrades to `unknown` rather than pulling the whole
-  30 MB file, and it is not downloaded twice when the hourly option is on.
+  30 MB file, and it is not downloaded twice when the hourly option is on —
+  whichever of the two paths fetches it first, the other reuses that block. A
+  file that has not been published yet (it is large and can lag the small daily
+  files of the same run by minutes) is retried on the next hourly check instead
+  of being written off for the whole run, and with the hourly option on the
+  sensor still falls back to the hourly cache, so it never shows less than it
+  did before.
 - **The condition no longer stays on the night variant after sunrise**
   (#103). MeteoSwiss keeps the night variant of the hourly symbol
   (`jww003i0`) for a couple of hours past sunrise, so the entity reported

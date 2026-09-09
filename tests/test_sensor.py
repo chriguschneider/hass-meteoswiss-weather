@@ -724,6 +724,54 @@ async def test_zero_degree_sensor_value_without_hourly_opt_in(
         assert float(state.state) == 2550.0
 
 
+async def test_zero_degree_sensor_falls_back_to_the_hourly_cache(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """An empty daily series falls back to the hourly cache when one exists.
+
+    The daily block can be missing (not published yet, or served date-major)
+    while an opt-in user's hourly cache holds the same parameter — the hourly
+    path reads zprfr0hs too, with a whole-file fallback the daily path refuses.
+    Before #107 those users read the value from that cache, so losing it would
+    be a regression.
+    """
+    from custom_components.meteoswiss_weather.coordinator import ForecastData
+    from custom_components.meteoswiss_weather.ogd import HourlyForecast
+
+    this_hour = datetime(2026, 8, 27, 10, 0, tzinfo=UTC)
+    with freeze_time(this_hour):
+        await _setup(hass, config_entry)
+        entity_reg = er.async_get(hass)
+        entity_reg.async_update_entity(
+            "sensor.koniz_zero_degree_level", disabled_by=None
+        )
+        await hass.config_entries.async_reload(config_entry.entry_id)
+        await hass.async_block_till_done()
+
+        coordinator = config_entry.runtime_data.forecast_coordinator
+        # Seed the lazy provider's cache the way an hourly fetch would have,
+        # then fire the guardrail on the daily series.
+        coordinator.hourly_provider._hourly = [
+            HourlyForecast(
+                time=this_hour,
+                temperature=18.0,
+                precipitation=0.0,
+                symbol=1,
+                zero_degree_level=3100.0,
+            )
+        ]
+        coordinator.async_set_updated_data(
+            ForecastData(daily=coordinator.data.daily, zero_degree_by_hour={})
+        )
+        await hass.async_block_till_done()
+
+        state = hass.states.get("sensor.koniz_zero_degree_level")
+        assert state is not None
+        assert float(state.state) == 3100.0
+
+
 async def test_zero_degree_sensor_unknown_when_series_empty(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,

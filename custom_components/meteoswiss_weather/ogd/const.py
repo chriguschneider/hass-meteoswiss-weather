@@ -189,6 +189,10 @@ def hourly_date_major_params(
         params.extend(HOURLY_TEMP_PERCENTILE_PARAMS)
     return tuple(params)
 
+# The wind half of what the daily refresh folds in from the point-major hourly
+# files; the zero-degree level (HOURLY_ZERO_DEGREE) is fetched the same way and
+# on the same schedule since issue #107 (ADR-0002 revision 5).
+#
 # The three point-major hourly wind files fetched with every daily refresh to
 # populate ``native_wind_speed``, ``native_wind_gust_speed``, and
 # ``wind_bearing`` on each ``DailyForecast`` entry (issue #60, ADR-0002
