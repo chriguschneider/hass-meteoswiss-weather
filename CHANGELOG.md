@@ -28,7 +28,10 @@ using the matching section below as release notes.
   `current_precipitation`) stay available instead of vanishing with it. The
   entity still goes `unavailable` when a fetch path is genuinely broken: the
   station observation must be no older than 1 h and the forecast run no older
-  than 12 h, and both must have delivered data at least once. This mirrors the
+  than 12 h, and both must have delivered data at least once. Those bounds are
+  re-checked on a five-minute tick of the entity's own, so a sustained outage —
+  where the coordinators stop notifying listeners entirely — still ages the
+  entity out instead of serving frozen values forever. This mirrors the
   integration's existing degrade-don't-fail stance (#83).
 - **The condition no longer stays on the night variant after sunrise**
   (#103). MeteoSwiss keeps the night variant of the hourly symbol

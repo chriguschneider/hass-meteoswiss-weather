@@ -29,12 +29,14 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from . import MeteoSwissConfigEntry
 from .const import (
     ATTRIBUTION,
+    AVAILABILITY_CHECK_INTERVAL,
     CONF_HOURLY_FORECAST,
     DOMAIN,
     FORECAST_MAX_AGE,
@@ -109,6 +111,9 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
         # The run stamp last turned into an hourly listener push, so a run that
         # has not changed does not re-trigger a fetch.
         self._last_hourly_run: datetime | None = None
+        # The availability last written to the state machine, so the staleness
+        # tick can tell a real transition from a no-op.
+        self._available_written: bool | None = None
 
         unique_id = f"{point.point_type_id}-{point.point_id}"
         self._attr_unique_id = unique_id
@@ -126,8 +131,21 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
         # Seed the run watermark with the run already loaded so the first
         # coordinator tick does not look like a change.
         self._last_hourly_run = self._forecast_coordinator.last_run
+        self._available_written = self.available
         self.async_on_remove(
             self._forecast_coordinator.async_add_listener(self._handle_forecast_update)
+        )
+        # Availability is age-based, but both coordinators only push state on a
+        # *successful* refresh — and DataUpdateCoordinator suppresses even that
+        # push once a failure follows a failure. Without a clock of its own the
+        # entity would sit on frozen values indefinitely during an outage, past
+        # both age bounds, which is exactly what those bounds exist to catch.
+        self.async_on_remove(
+            async_track_time_interval(
+                self.hass,
+                self._handle_staleness_tick,
+                AVAILABILITY_CHECK_INTERVAL,
+            )
         )
         # A precipitation-station refresh must re-write the current precipitation
         # attribute too (ADR-0006). Its failure never affects availability —
@@ -401,9 +419,26 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
         return forecast
 
     @callback
+    def _handle_staleness_tick(self, _now: datetime) -> None:
+        """Re-render when cached data ages past its bound with no refresh due.
+
+        Cheap by construction: it writes state only when availability actually
+        flips, so a healthy entity never touches the state machine from here.
+        """
+        if self.available == self._available_written:
+            return
+        self._write_state()
+
+    @callback
+    def _write_state(self) -> None:
+        """Write state, recording the availability that went with it."""
+        self._available_written = self.available
+        self.async_write_ha_state()
+
+    @callback
     def _handle_coordinator_update(self) -> None:
         """Write state on a refresh of the station coordinator."""
-        self.async_write_ha_state()
+        self._write_state()
 
     @callback
     def _handle_forecast_update(self) -> None:
@@ -415,7 +450,7 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
         (ADR-0002 revision 2, issue #54). With no subscriber the run change is
         logged and nothing is fetched.
         """
-        self.async_write_ha_state()
+        self._write_state()
         if not self._hourly_enabled:
             return
         run = self._forecast_coordinator.last_run

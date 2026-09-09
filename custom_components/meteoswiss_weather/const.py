@@ -126,3 +126,11 @@ STATION_MAX_AGE = timedelta(hours=1)
 # Measured against the run stamp (ForecastCoordinator.last_run), not the last
 # successful check.
 FORECAST_MAX_AGE = timedelta(hours=12)
+# How often the weather entity re-evaluates those bounds on its own. Both
+# coordinators only push on a *successful* refresh, and Home Assistant suppresses
+# the push entirely once a failure follows a failure, so during a sustained
+# outage nothing would ever re-render the entity and the age bounds above would
+# never be reached. Five minutes is well below STATION_MAX_AGE (the tighter of
+# the two) and costs nothing: the tick writes state only when availability
+# actually flips.
+AVAILABILITY_CHECK_INTERVAL = timedelta(minutes=5)

@@ -18,10 +18,14 @@ from homeassistant.components.sun import STATE_ABOVE_HORIZON, STATE_BELOW_HORIZO
 from homeassistant.components.weather import WeatherEntityFeature
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
 from custom_components.meteoswiss_weather.const import (
+    AVAILABILITY_CHECK_INTERVAL,
     CONF_HOURLY_CLOUD_LAYERS,
     CONF_HOURLY_FORECAST,
     CONF_HOURLY_TEMP_PERCENTILES,
@@ -355,6 +359,48 @@ async def test_unavailable_when_forecast_run_goes_stale(
         forecast = config_entry.runtime_data.forecast_coordinator
         forecast.last_run = _NOW - FORECAST_MAX_AGE - timedelta(hours=1)
         _freshen_station(config_entry)
+        await hass.async_block_till_done()
+
+        assert hass.states.get(_ENTITY_ID).state == "unavailable"
+
+
+async def test_unavailable_after_a_sustained_outage(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A total outage ages the entity out without any listener push to help it.
+
+    The other staleness tests manufacture the push that re-renders the entity.
+    This one does not, and that is the point: once a failure follows a failure,
+    ``DataUpdateCoordinator`` stops notifying listeners altogether, so nothing
+    would ever re-evaluate the age bounds. Only the entity's own staleness tick
+    gets it to ``unavailable``.
+    """
+    with freeze_time(_NOW) as frozen:
+        await _setup(hass, config_entry)
+        assert hass.states.get(_ENTITY_ID).state != "unavailable"
+
+        # Everything upstream 500s from here on; the cached data stays in place.
+        mock_ogd.clear_requests()
+        mock_ogd.get(station_now_url(_STATION_ABBR), status=500)
+        mock_ogd.get(stac_items_url(COLLECTION_FORECAST), status=500)
+        station = config_entry.runtime_data.station_coordinator
+        forecast = config_entry.runtime_data.forecast_coordinator
+        # Two failures in a row per coordinator: from the second one on, HA
+        # swallows the failure without notifying listeners, so no refresh
+        # attempt re-renders the entity any more.
+        for coordinator in (station, forecast):
+            await coordinator.async_refresh()
+            await coordinator.async_refresh()
+        await hass.async_block_till_done()
+        assert station.last_update_success is False
+        assert forecast.last_update_success is False
+        assert hass.states.get(_ENTITY_ID).state != "unavailable"
+
+        # Age past the station bound and let the staleness tick fire.
+        frozen.move_to(_NOW + STATION_MAX_AGE + AVAILABILITY_CHECK_INTERVAL)
+        async_fire_time_changed(hass, dt_util.utcnow())
         await hass.async_block_till_done()
 
         assert hass.states.get(_ENTITY_ID).state == "unavailable"
