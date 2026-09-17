@@ -24,6 +24,126 @@
 - **No YAML.** UI setup, picks the forecast point and station from your
   Home Assistant location, lets you override both.
 
+## What data you get
+
+Everything below comes from three MeteoSwiss open-data collections: the
+SwissMetNet station files (10-minute observations), the per-point local
+forecast (republished hourly, ~220 hours and 9 days ahead) and, as an opt-in,
+the automatic pollen network. Every entity carries the attribution
+*Source: MeteoSwiss*. Entities marked **off** are created but disabled in the
+entity registry — enable them on the device page when you need them.
+
+### The `weather` entity
+
+One per config entry, named after the forecast point.
+
+**Current conditions** — from the chosen SwissMetNet station, refreshed every
+10 minutes:
+
+| Attribute | Description | Unit |
+|---|---|---|
+| `temperature` | Air temperature at 2 m | °C |
+| `humidity` | Relative humidity at 2 m | % |
+| `dew_point` | Dew point at 2 m | °C |
+| `pressure` | Pressure reduced to sea level (QFF) | hPa |
+| `wind_speed` | 10-minute mean wind speed | km/h |
+| `wind_bearing` | 10-minute mean wind direction, 0 = north | ° |
+| `wind_gust_speed` | Peak gust (1 s) in the last 10 minutes | km/h |
+| `condition` | Home Assistant condition (`sunny`, `rainy`, `snowy`, …) mapped from the MeteoSwiss weather symbol: the current hour's hourly symbol when the hourly option is on and cached, otherwise today's daily symbol. The day/night variant follows `sun.sun`. | — |
+| `current_precipitation` | Precipitation sum of the last 10 minutes | mm |
+| `precipitation_station` | Name of the precipitation-only station, present only when one is configured; `current_precipitation` then comes from it | — |
+
+**Daily forecast** — 9 days, always on, refreshed when a new forecast run
+lands (checked hourly). Per day:
+
+| Field | Description | Unit |
+|---|---|---|
+| `condition` | Daytime variant of the day's MeteoSwiss symbol | — |
+| `temperature` / `templow` | Daily maximum / minimum temperature (local calendar day) | °C |
+| `precipitation` | Daily precipitation sum | mm |
+| `wind_speed` | Highest hourly mean wind speed of the day | km/h |
+| `wind_gust_speed` | Highest hourly gust of the day | km/h |
+| `wind_bearing` | Wind direction at the hour of the strongest wind | ° |
+
+**Hourly forecast** — opt-in ([why](#why-another-meteoswiss-integration)),
+fetched only while a card or automation subscribes to it. Per hour:
+
+| Field | Description | Unit |
+|---|---|---|
+| `condition` | MeteoSwiss hourly symbol, day/night variant as sent | — |
+| `temperature` | Air temperature at 2 m (median forecast) | °C |
+| `precipitation` | Hourly precipitation sum | mm |
+| `precipitation_probability` | Probability of precipitation in the 3-hour window ending at that hour | % |
+| `wind_speed` / `wind_gust_speed` / `wind_bearing` | Hourly mean wind, gust and direction | km/h, km/h, ° |
+| `cloud_coverage` | Total cloud cover, the maximum of the three layers — **only with the cloud-layers option** | % |
+| `cloud_coverage_high` / `_mid` / `_low` | The three cloud layers — **only with the cloud-layers option** | % |
+| `temperature_p10` / `temperature_p90` | 10th / 90th percentile of the temperature forecast, the uncertainty band — **only with the temperature-percentiles option** | °C |
+
+### Station sensors
+
+One sensor per measured parameter of the chosen SwissMetNet station, refreshed
+every 10 minutes. Only sensors the station actually measures are created; not
+every station has every instrument.
+
+| Sensor | Description | Unit | Default |
+|---|---|---|---|
+| Temperature | Air temperature at 2 m | °C | on |
+| Humidity | Relative humidity at 2 m | % | on |
+| Pressure QFF | Pressure reduced to sea level (the value forecasts use) | hPa | on |
+| Wind speed | 10-minute mean | km/h | on |
+| Wind bearing | 10-minute mean direction, 0 = north | ° | on |
+| Wind gust speed | Peak gust (1 s) in the last 10 minutes | km/h | on |
+| Precipitation (10 min) | Sum of the last 10 minutes; from the optional precipitation-only station when one is configured (a `station` attribute then names it) | mm | on |
+| Dew point | Dew point at 2 m | °C | off |
+| Pressure QFE | Pressure at station level, not reduced | hPa | off |
+| Pressure QNH | Pressure reduced to sea level with the ICAO standard atmosphere (aviation) | hPa | off |
+| Sunshine duration (10 min) | Minutes of sunshine in the last 10 minutes | min | off |
+| Global radiation | Incoming short-wave solar radiation, 10-minute mean | W/m² | off |
+| Diffuse radiation | Diffuse part of the solar radiation | W/m² | off |
+| Longwave radiation | Incoming long-wave (thermal) radiation | W/m² | off |
+| Snow depth | Automatically measured snow depth | cm | off |
+| Wind chill | Perceived temperature from wind and air temperature | °C | off |
+| Air temperature (5 cm) | Temperature just above the ground — ground-frost indicator | °C | off |
+| Soil temperature (5 / 10 / 20 cm) | Three soil temperature depths, one sensor each | °C | off |
+| Measurement time | Timestamp of the last delivered observation (diagnostic) | — | off |
+
+### Forecast sensors
+
+Derived from the local forecast for the configured point.
+
+| Sensor | Description | Unit | Default |
+|---|---|---|---|
+| High temperature today | Today's forecast maximum; flips to the new day at local midnight | °C | on |
+| Low temperature today | Today's forecast minimum | °C | on |
+| Precipitation today | Today's forecast precipitation sum | mm | on |
+| Zero-degree level | Forecast altitude of the 0 °C isotherm for the current hour — snow-line material; advances every hour. Needs the hourly forecast option until [#107](https://github.com/chriguschneider/hass-meteoswiss-weather/issues/107) lands | m | off |
+
+### Pollen sensors
+
+Opt-in in the options. Hourly concentrations from the nearest of the 15
+automatic pollen stations (you can pick another), only for the taxa that
+station measures.
+
+| Sensor | Default |
+|---|---|
+| Grass pollen | on |
+| Birch pollen | on |
+| Alder pollen | off |
+| Hazel pollen | off |
+| Beech pollen | off |
+| Ash pollen | off |
+| Oak pollen | off |
+
+All in grains/m³.
+
+### Service
+
+`meteoswiss_weather.import_history` imports the station's official hourly
+history into Home Assistant's long-term statistics (temperature mean/min/max,
+means for humidity, dew point, pressure, wind, gust and radiation, hourly sums
+for precipitation), so statistics graphs reach back before the install. One-off
+download, details in [CONFIGURATION.md](docs/CONFIGURATION.md#services).
+
 ## Why another MeteoSwiss integration
 
 Every existing one reads the undocumented backend of the MeteoSwiss mobile
