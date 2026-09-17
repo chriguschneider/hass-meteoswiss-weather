@@ -503,20 +503,22 @@ async def fetch_hourly_file(
     )
 
 
-async def fetch_wind_block(
+async def fetch_point_block(
     session: aiohttp.ClientSession,
     url: str,
     point: ForecastPoint,
     *,
     cached_start: int | None = None,
 ) -> HourlyFileResult | None:
-    """Fetch the point's block from a point-major wind file for the daily wind.
+    """Fetch the point's block from a point-major file, or ``None`` if it is not.
 
-    The daily wind feature must never trigger a full 30 MB download (ADR-0002
-    guardrail, issue #60): returns ``None`` when the file is not point-major so
-    the caller can set the daily wind fields to ``None`` and log a warning.
-    When the file is point-major the full point block (~5 KB) is fetched and
-    returned as a :class:`HourlyFileResult`.
+    The point-major-only helper behind the default daily refresh's bonus
+    fields: the daily wind aggregation (issue #60) and the daily precipitation
+    probability (issue #112). Such a default feature must never trigger a full
+    30 MB download (ADR-0002 guardrail): this returns ``None`` when the file is
+    not point-major so the caller can degrade the derived field to ``None`` and
+    log a warning. When the file is point-major the full point block (~5 KB) is
+    fetched and returned as a :class:`HourlyFileResult`.
     """
     reader = AiohttpRangeReader(session, url)
     layout = await classify_layout(reader)

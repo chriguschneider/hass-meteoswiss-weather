@@ -11,6 +11,16 @@ using the matching section below as release notes.
 
 ### Added
 
+- **Daily precipitation probability** (#112). Each day of the daily forecast now
+  carries a `precipitation_probability`, shown by the weather card. MeteoSwiss
+  publishes no daily probability parameter, so it is derived from the hourly
+  3-hour probability (`rp0003i0`): the maximum over the local calendar day — the
+  conservative "chance of rain today" figure. The value is folded into the
+  default daily refresh via one ~5 KB point-major block fetch, next to the wind
+  blocks (no measurable traffic cost, [ADR-0002](docs/adr/0002-traffic-budget-bulk-local-forecast.md)
+  revision 5); with the hourly option on, the block is fetched once per run and
+  reused.
+
 - **Measurement time sensor** (#105). A new `sensor.<name>_measurement_time`
   entity (`device_class: timestamp`, `entity_category: diagnostic`) exposes the
   `reference_timestamp` of the latest station observation. Disabled by default;

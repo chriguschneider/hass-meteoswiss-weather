@@ -68,7 +68,7 @@ One `weather` entity per config entry.
 
 **Forecast:**
 
-- **Daily forecast**: 9 days, always available. Temperature high/low, precipitation, and weather condition for each day.
+- **Daily forecast**: 9 days, always available. Temperature high/low, precipitation, precipitation probability, wind (speed, gust, bearing), and weather condition for each day.
 - **Hourly forecast**: When enabled in options (see below). Hourly temperature, precipitation, wind, and condition. Updated at most every 3 hours.
 
 ### Station Sensors

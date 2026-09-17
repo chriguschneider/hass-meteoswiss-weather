@@ -30,6 +30,7 @@ from custom_components.meteoswiss_weather.const import (
 from custom_components.meteoswiss_weather.ogd.const import (
     DAILY_REQUIRED_PARAMS,
     DAILY_WIND_PARAMS,
+    HOURLY_PRECIP_PROBABILITY,
     HOURLY_REQUIRED_PARAMS,
     station_now_url,
 )
@@ -87,13 +88,14 @@ def _daily_calls(aioclient_mock: AiohttpClientMocker) -> int:
     )
 
 
-# Hourly-only params: the three non-wind files (temperature, precipitation,
-# symbol) that are fetched exclusively by the opt-in hourly forecast and never
-# by the default daily refresh. Wind files (fu3010h0, fu3010h1, dkl010h0) are
-# point-major block-fetched on every daily refresh (issue #60) so they are
-# tracked separately by _wind_calls() below.
+# Hourly-only params: the files fetched exclusively by the opt-in hourly
+# forecast and never by the default daily refresh. The wind files (fu3010h0,
+# fu3010h1, dkl010h0, issue #60) and the rp0003i0 probability file (issue #112)
+# are point-major block-fetched on every daily refresh, so they are tracked
+# separately by _wind_calls()/_prob_calls() below and excluded here.
+_DAILY_BLOCK_PARAMS = (*DAILY_WIND_PARAMS, HOURLY_PRECIP_PROBABILITY)
 _HOURLY_ONLY_PARAMS = tuple(
-    p for p in HOURLY_REQUIRED_PARAMS if p not in DAILY_WIND_PARAMS
+    p for p in HOURLY_REQUIRED_PARAMS if p not in _DAILY_BLOCK_PARAMS
 )
 
 
@@ -121,6 +123,16 @@ def _wind_calls(aioclient_mock: AiohttpClientMocker) -> int:
     )
 
 
+def _prob_calls(aioclient_mock: AiohttpClientMocker) -> int:
+    """Number of rp0003i0 block downloads (daily precip probability, issue #112)."""
+    suffix = f"{_RUN_TS}.{HOURLY_PRECIP_PROBABILITY}.csv"
+    return sum(
+        1
+        for _method, url, *_ in aioclient_mock.mock_calls
+        if url.path.endswith(suffix)
+    )
+
+
 async def test_setup_populates_both_coordinators(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -143,6 +155,9 @@ async def test_setup_populates_both_coordinators(
     forecast = runtime.forecast_coordinator.data
     assert forecast is not None
     assert len(forecast.daily) == 9
+    # The daily refresh block-fetches rp0003i0 once for the probability field
+    # (issue #112), next to the wind blocks — with the hourly option off.
+    assert _prob_calls(mock_ogd) == 1
     # Hourly is off by default (ADR-0002) and lazy even when on (issue #54):
     # nothing has been fetched at setup.
     assert runtime.forecast_coordinator.hourly_provider.last_fetch is None

@@ -22,6 +22,7 @@ from custom_components.meteoswiss_weather.ogd import (
     BulkCsvBackend,
     ForecastPoint,
     OgdParseError,
+    aggregate_daily_precip_probability,
     aggregate_daily_wind,
     fetch_points,
     latest_run,
@@ -336,6 +337,11 @@ async def test_bulk_backend_fetch_daily(session) -> None:
         for param in DAILY_WIND_PARAMS:
             mock.get(_asset_url(param), status=200,
                      body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        # rp0003i0 probability block — the fixture is date-major too, so the
+        # guardrail fires and precipitation_probability degrades to None.
+        mock.get(_asset_url(HOURLY_PRECIP_PROBABILITY), status=200,
+                 body=_fixture_bytes(
+                     f"vnut12.lssw.{RUN_TS}.{HOURLY_PRECIP_PROBABILITY}.csv"))
         backend = BulkCsvBackend(session)
         daily = await backend.fetch_daily(_koeniz_point())
 
@@ -344,6 +350,8 @@ async def test_bulk_backend_fetch_daily(session) -> None:
     assert daily[0].symbol == 2
     # The fixture wind files are date-major → guardrail fires → daily wind is None.
     assert daily[0].native_wind_speed is None
+    # Same for the date-major probability fixture.
+    assert daily[0].precipitation_probability is None
 
 
 # --- hourly parser ----------------------------------------------------------
@@ -649,6 +657,24 @@ def _point_major_wind_text(param: str, hours: int = 24) -> str:
     return "\n".join(rows) + "\n"
 
 
+def _point_major_prob_text(hours: int = 24) -> str:
+    """Synthetic point-major rp0003i0 CSV for two points, sorted by point_id.
+
+    Point 1;1 carries a constant 99 % (a decoy at a lower id); point 309800;2
+    carries the UTC hour number as its probability, so the daily max is the
+    latest UTC hour on each local day. classify_layout() sees ids increasing so
+    it returns POINT_MAJOR_ID.
+    """
+    rows = [f"point_id;point_type_id;Date;{HOURLY_PRECIP_PROBABILITY}"]
+    for h in range(hours):
+        stamp = datetime(2026, 8, 27, h, 0, tzinfo=UTC).strftime("%Y%m%d%H%M")
+        rows.append(f"1;1;{stamp};99")
+    for h in range(hours):
+        stamp = datetime(2026, 8, 27, h, 0, tzinfo=UTC).strftime("%Y%m%d%H%M")
+        rows.append(f"309800;2;{stamp};{h}")
+    return "\n".join(rows) + "\n"
+
+
 def test_aggregate_daily_wind_summer_utc_local_boundary() -> None:
     """Fixture data covers 2026-08-27 00:00–23:00 UTC; in CEST (UTC+2) this splits
     into local days 2026-08-27 (hours 0–21 UTC) and 2026-08-28 (hours 22–23 UTC).
@@ -755,6 +781,69 @@ def test_aggregate_daily_wind_empty_input() -> None:
     assert aggregate_daily_wind({}, _koeniz_point()) == {}
 
 
+# --- daily precipitation probability aggregation (issue #112) ---------------
+
+
+def test_aggregate_daily_precip_probability_summer_utc_local_boundary() -> None:
+    """The real trimmed rp0003i0 fixture, aggregated per local calendar day.
+
+    For 309800;2 the fixture is 0 % every hour except 30 % at 12:00 UTC. In CEST
+    (UTC+2) UTC hours 0–21 fall on local day 2026-08-27 and UTC hours 22–23 on
+    2026-08-28, so the daily max is 30 % on the 27th and 0 % on the 28th.
+    """
+    text = _fixture_text(f"vnut12.lssw.{RUN_TS}.{HOURLY_PRECIP_PROBABILITY}.csv")
+    result = aggregate_daily_precip_probability(text, _koeniz_point())
+
+    assert result[date(2026, 8, 27)] == pytest.approx(30.0)
+    assert result[date(2026, 8, 28)] == pytest.approx(0.0)
+
+
+def test_aggregate_daily_precip_probability_winter_utc_local_boundary() -> None:
+    """In CET (UTC+1), 23:00 UTC is midnight local, landing on the next day.
+
+    Mirrors the winter wind boundary test: the 23:00 UTC row must be counted on
+    the following local calendar day, not the day its UTC stamp names.
+    """
+    text = (
+        f"point_id;point_type_id;Date;{HOURLY_PRECIP_PROBABILITY}\n"
+        "309800;2;202601142200;40\n"  # 2026-01-14 23:00 CET → local day 2026-01-14
+        "309800;2;202601142300;70\n"  # 2026-01-15 00:00 CET → local day 2026-01-15
+    )
+    result = aggregate_daily_precip_probability(text, _koeniz_point())
+
+    assert result[date(2026, 1, 14)] == pytest.approx(40.0)
+    assert result[date(2026, 1, 15)] == pytest.approx(70.0)
+
+
+def test_aggregate_daily_precip_probability_takes_the_daily_max() -> None:
+    """The per-day value is the maximum over that day's 3-hour probabilities."""
+    text = (
+        f"point_id;point_type_id;Date;{HOURLY_PRECIP_PROBABILITY}\n"
+        "309800;2;202608270600;10\n"
+        "309800;2;202608270900;55\n"  # the day's peak
+        "309800;2;202608271200;20\n"
+    )
+    result = aggregate_daily_precip_probability(text, _koeniz_point())
+    assert result[date(2026, 8, 27)] == pytest.approx(55.0)
+
+
+def test_aggregate_daily_precip_probability_discriminates_on_point_type() -> None:
+    """A row with the right id but wrong point type is ignored."""
+    text = (
+        f"point_id;point_type_id;Date;{HOURLY_PRECIP_PROBABILITY}\n"
+        "309800;1;202608270900;99\n"  # station type → ignored
+        "309800;2;202608270900;40\n"
+    )
+    result = aggregate_daily_precip_probability(text, _koeniz_point())
+    assert result[date(2026, 8, 27)] == pytest.approx(40.0)
+
+
+def test_aggregate_daily_precip_probability_empty_input() -> None:
+    """A header-only block yields an empty result, not an error."""
+    text = f"point_id;point_type_id;Date;{HOURLY_PRECIP_PROBABILITY}\n"
+    assert aggregate_daily_precip_probability(text, _koeniz_point()) == {}
+
+
 # --- backend daily wind (point-major fixture) ----------------------------------
 
 
@@ -769,6 +858,8 @@ async def test_bulk_backend_fetch_daily_with_point_major_wind(session) -> None:
         for param in DAILY_WIND_PARAMS:
             mock.get(_asset_url(param), status=200,
                      body=_point_major_wind_text(param).encode("iso-8859-1"))
+        mock.get(_asset_url(HOURLY_PRECIP_PROBABILITY), status=200,
+                 body=_point_major_prob_text().encode("iso-8859-1"))
         backend = BulkCsvBackend(session)
         daily = await backend.fetch_daily(_koeniz_point())
 
@@ -779,6 +870,9 @@ async def test_bulk_backend_fetch_daily_with_point_major_wind(session) -> None:
     assert daily[0].native_wind_speed == pytest.approx(15.5)
     assert daily[0].native_wind_gust_speed == pytest.approx(18.5)
     assert daily[0].wind_bearing == pytest.approx(180.0)
+    # Probability comes from the point-major rp0003i0 block; the synthetic block
+    # is h for 309800;2, so the CEST 2026-08-27 max (UTC hours 0–21) is 21.
+    assert daily[0].precipitation_probability == pytest.approx(21.0)
 
 
 async def test_bulk_backend_fetch_daily_wind_not_point_major_returns_none(
@@ -799,6 +893,10 @@ async def test_bulk_backend_fetch_daily_wind_not_point_major_returns_none(
         for param in DAILY_WIND_PARAMS:
             mock.get(_asset_url(param), status=200,
                      body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        # The rp0003i0 fixture is date-major too → its guardrail fires as well.
+        mock.get(_asset_url(HOURLY_PRECIP_PROBABILITY), status=200,
+                 body=_fixture_bytes(
+                     f"vnut12.lssw.{RUN_TS}.{HOURLY_PRECIP_PROBABILITY}.csv"))
         backend = BulkCsvBackend(session)
         daily = await backend.fetch_daily(_koeniz_point())
 
@@ -806,6 +904,8 @@ async def test_bulk_backend_fetch_daily_wind_not_point_major_returns_none(
     assert all(d.native_wind_speed is None for d in daily)
     assert all(d.native_wind_gust_speed is None for d in daily)
     assert all(d.wind_bearing is None for d in daily)
+    # The date-major probability fixture degrades to None as well.
+    assert all(d.precipitation_probability is None for d in daily)
     # Temperature still populated.
     assert daily[0].temp_max == 29.3
 
@@ -835,6 +935,26 @@ async def test_get_wind_texts_missing_wind_assets_returns_none(session) -> None:
     assert backend._wind_texts == {}
 
 
+async def test_get_prob_text_missing_asset_returns_none(session) -> None:
+    """A daily-complete run whose rp0003i0 file has not published yet degrades to
+    None, never a KeyError (issue #112, same contract as the wind guardrail).
+    """
+    from custom_components.meteoswiss_weather.ogd.stac import Run
+
+    run = Run(
+        timestamp=datetime(2026, 8, 27, 3, 0, tzinfo=UTC),
+        assets={param: _asset_url(param) for param in DAILY_REQUIRED_PARAMS},
+    )
+    backend = BulkCsvBackend(session)
+
+    # No aioresponses mock registered: any HTTP attempt would raise, proving the
+    # guardrail returns before touching the network.
+    assert await backend._get_prob_text(_koeniz_point(), run) is None
+    # Run marked as attempted so a repeat call for the same run short-circuits.
+    assert backend._prob_run == run.timestamp
+    assert backend._prob_text is None
+
+
 async def test_bulk_backend_fetch_daily_wind_fetch_error_degrades_to_none(
     session,
 ) -> None:
@@ -855,6 +975,8 @@ async def test_bulk_backend_fetch_daily_wind_fetch_error_degrades_to_none(
         # Every wind block probe returns HTTP 503 → OgdConnectionError.
         for param in DAILY_WIND_PARAMS:
             mock.get(_asset_url(param), status=503, repeat=True)
+        # The probability block also errors; it must degrade to None too.
+        mock.get(_asset_url(HOURLY_PRECIP_PROBABILITY), status=503, repeat=True)
         backend = BulkCsvBackend(session)
         daily = await backend.fetch_daily(_koeniz_point())
 
@@ -863,8 +985,11 @@ async def test_bulk_backend_fetch_daily_wind_fetch_error_degrades_to_none(
     assert all(d.native_wind_speed is None for d in daily)
     assert all(d.native_wind_gust_speed is None for d in daily)
     assert all(d.wind_bearing is None for d in daily)
+    assert all(d.precipitation_probability is None for d in daily)
     # Sentinel cached so a repeat call for the same run short-circuits.
     assert backend._wind_texts == {}
+    assert backend._prob_text is None
+    assert backend._prob_run is not None
 
 
 @freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC))
@@ -892,9 +1017,15 @@ async def test_bulk_backend_fetch_hourly_reuses_daily_wind_cache(session) -> Non
             mock.get(_asset_url(param), status=200,
                      body=_point_major_wind_text(param).encode("iso-8859-1"))
 
-        # Non-wind hourly params registered once for the hourly fetch.
-        non_wind = [p for p in HOURLY_REQUIRED_PARAMS if p not in DAILY_WIND_PARAMS]
-        for param in non_wind:
+        # rp0003i0 registered *once* too: fetch_daily block-fetches it and caches
+        # it; if fetch_hourly re-fetched it, aioresponses would fail (issue #112).
+        mock.get(_asset_url(HOURLY_PRECIP_PROBABILITY), status=200,
+                 body=_point_major_prob_text().encode("iso-8859-1"))
+
+        # The remaining hourly params (not wind, not probability) fetched once.
+        cached_params = (*DAILY_WIND_PARAMS, HOURLY_PRECIP_PROBABILITY)
+        rest = [p for p in HOURLY_REQUIRED_PARAMS if p not in cached_params]
+        for param in rest:
             mock.get(_hourly_asset_url(param), status=200,
                      body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
 
@@ -903,8 +1034,11 @@ async def test_bulk_backend_fetch_hourly_reuses_daily_wind_cache(session) -> Non
         daily = await backend.fetch_daily(point)
         hourly = await backend.fetch_hourly(point)
 
-    # Daily wind populated from the block fetch.
+    # Daily wind and probability populated from the block fetches.
     assert daily[0].native_wind_speed == pytest.approx(15.5)
-    # Hourly wind comes from the reused cache; full 24 hours returned.
+    assert daily[0].precipitation_probability == pytest.approx(21.0)
+    # Hourly wind and probability come from the reused cache; 24 hours returned.
     assert len(hourly) == 24
     assert hourly[0].wind_speed_kmh == pytest.approx(5.0)
+    # rp0003i0 hour 0 for 309800;2 in the synthetic block is 0.
+    assert hourly[0].precipitation_probability == pytest.approx(0.0)
