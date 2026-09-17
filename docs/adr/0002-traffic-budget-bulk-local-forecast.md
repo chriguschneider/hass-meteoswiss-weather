@@ -6,6 +6,7 @@
 - **Revised again:** 2026-08-28 (issue #54) — see [Revision 2](#revision-2-2026-08-28-issue-54)
 - **Revised again:** 2026-08-28 (issue #60) — see [Revision 3](#revision-3-2026-08-28-issue-60)
 - **Revised again:** 2026-08-28 (issue #55) — see [Revision 4](#revision-4-2026-08-28-issue-55)
+- **Revised again:** 2026-09-17 (issue #112) — see [Revision 5](#revision-5-2026-09-17-issue-112)
 
 ## Context
 
@@ -207,3 +208,46 @@ The date-major temperature file and the near/far tier schedule are unchanged.
 
 The decisions above — daily stays default, hourly stays opt-in, every request
 stays conditional, parsing stays in the executor — are unchanged.
+
+## Revision 5 (2026-09-17, issue #112)
+
+**Daily precipitation probability on by default.** `DailyForecast.precipitation_probability`
+existed in the model and the weather entity already mapped it to the standard HA
+`precipitation_probability` daily key, but nothing populated it — MeteoSwiss
+publishes **no daily probability parameter** (verified against all 32 rows of
+`ogd-local-forecasting_meta_parameters.csv`: the only probability is the hourly
+`rp0003i0`, "probability of precipitation during 3 hours", integer %). The field
+is therefore **derived** from that hourly block, the same way the daily wind
+fields are derived from the hourly wind blocks (Revision 3):
+
+| field | meaning |
+|---|---|
+| `precipitation_probability` | maximum of the point's `rp0003i0` 3-hour probabilities whose window end falls in the **local calendar day** (Europe/Zurich, the boundary the daily `p`-variants and `aggregate_daily_wind` use) |
+
+The max of P(rain in window_i) is a lower bound for P(rain at any time of the
+day) — the conservative and common "chance of rain today" approximation. A day
+with no rows in the block stays `None`; the file starts at 21:00 UTC of the
+previous day, so the last day may be aggregated over a partial set of hours.
+
+**Cost per run:** one point-major block fetch at ~5 KB via the #50 Range
+strategy, added to the default daily refresh (~5 MB total) next to the three
+wind blocks — negligible, well inside the budget for a default feature.
+
+**Guardrail:** `fetch_point_block()` (the renamed, now generic
+`fetch_wind_block`) returns `None` for any file that is not point-major; a
+missing `rp0003i0` asset (it publishes last, like the wind files) or a
+connection error degrades the field to `None`. The full 30 MB download is never
+triggered for a default feature, and the daily refresh still succeeds — the same
+"never crash the default daily refresh" contract as the wind guardrail.
+
+**Cache sharing:** the `rp0003i0` block text is cached by run stamp on the
+backend, so when the lazy hourly fetch runs for the same run it reuses the block
+instead of downloading it again (`rp0003i0` is already in the hourly minimum set
+since Revision 4) — the same pattern as the wind cache.
+
+The decisions above — daily stays default, hourly stays opt-in, every request
+stays conditional, parsing stays in the executor — are unchanged.
+
+(This is ADR-0002's fifth revision. Issue #112 anticipated a "revision 6" on the
+assumption that a zero-degree daily fold had already landed as revision 5; that
+change had not, so daily precipitation probability takes the revision-5 slot.)

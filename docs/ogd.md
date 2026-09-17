@@ -301,7 +301,7 @@ This is the basis of the tiered refresh (ADR-0002, revision 2; #54).
 | `rre150h0` | precipitation sum; `rreq10h0` / `rreq90h0` percentiles |
 | `rre003i0`, `rp0003i0` | precipitation over a 3-hour interval and its probability. **Measured 2026-08-28:** `rp0003i0` has a row for **every hour** (217 rows per point, integer %, e.g. `0,0,0,2,6,18,41,57`), so it is a rolling 3-hour window; the meta description says only "during 3 hours", the sibling `jww003i0` says "preceding 3 hours" — treat the value as the window **ending** at `Date` unless the docs say otherwise |
 | `jww003i0` | **weather symbol** (MeteoSwiss icon code, day/night variants) |
-| `fu3010h0` | wind speed km/h; `fu3010h1` gust; `fu3q10h0` … percentiles |
+| `fu3010h0` | wind speed km/h; `fu3010h1` gust; `fu3q10h0` / `fu3q90h0` wind-speed 10 % / 90 % percentiles; `fu3q10h1` / `fu3q90h1` gust 10 % / 90 % percentiles |
 | `dkl010h0` | wind direction ° |
 | `sre000h0` | sunshine duration |
 | `gre000h0`, `ods000h0` | global / diffuse radiation |
@@ -315,6 +315,21 @@ This is the basis of the tiered refresh (ADR-0002, revision 2; #54).
 | `tre200dx` / `tre200dn` | max / min temperature, **UTC day, stations only** — do **not** use for postal-code points (issue #34) |
 | `rka150d0` | precipitation total, **UTC day (0 UTC – 0 UTC), stations only** — do **not** use for postal-code points (issue #34) |
 | `jp2000d0` | **daily weather symbol** (all point types) |
+| `rreq10p0` / `rreq90p0` | 10 % / 90 % quantile of the **daily precipitation amount** (mm), local day, all point types — these are quantiles of the *amount*, **not** a probability, and the integration does not use them (issue #112) |
+
+**No daily probability parameter exists.** Verified 2026-09-17 against all 32
+rows of `ogd-local-forecasting_meta_parameters.csv`: the only probability
+MeteoSwiss publishes is the hourly `rp0003i0` ("probability of precipitation
+during 3 hours", integer %). The daily `precipitation_probability` the weather
+entity exposes is therefore **derived**, not read from a daily file: it is the
+**maximum** of the point's `rp0003i0` 3-hour probabilities whose window end (see
+`rp0003i0` below and the `Date` column) falls in that **local calendar day**
+(`Europe/Zurich`, the boundary the daily `p`-variants and the wind aggregation
+use). The max of P(rain in a 3-hour window) is a lower bound for P(rain at any
+time of the day) — the conservative "chance of rain today" figure. A day with no
+rows in the block stays `None` (issue #112, ADR-0002 revision 5). This is folded
+into the default daily refresh via one ~5 KB point-major block fetch, next to the
+wind blocks.
 
 **Trap (issue #34):** the `p`-suffix on `tre200px`/`tre200pn` and the `p0` on
 `rka150p0` are *not* percentiles/probabilities — the official

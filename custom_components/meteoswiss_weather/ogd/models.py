@@ -118,6 +118,13 @@ class DailyForecast:
     ``native_wind_speed`` is the daily maximum of hourly mean wind speed,
     ``native_wind_gust_speed`` is the daily maximum gust, and ``wind_bearing``
     is the direction at the hour of maximum wind speed.
+
+    ``precipitation_probability`` (%) is likewise derived, not read from a daily
+    file: MeteoSwiss publishes no daily probability parameter, so it is the
+    **maximum** of the hourly 3-hour probabilities (``rp0003i0``) whose window
+    end falls in that local calendar day (issue #112, ADR-0002 revision 5). The
+    max of P(rain in a window) is a lower bound for P(rain at any time of the
+    day) — the conservative "chance of rain today" figure.
     """
 
     date: date

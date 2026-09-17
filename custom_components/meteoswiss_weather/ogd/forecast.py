@@ -60,9 +60,10 @@ _DATA_POINT_TYPE_ID = "point_type_id"
 _DATA_DATE = "Date"
 
 # Daily parameter code -> DailyForecast field. ``precipitation_probability`` is
-# deliberately absent: the probability column's code is not confirmed against
-# ogd-local-forecasting_meta_parameters.csv yet, so the client never guesses it
-# (docs/ogd.md §E4). Add it here once the meta CSV pins the code down.
+# not in this table: MeteoSwiss publishes no daily probability parameter (the
+# only probability is the hourly ``rp0003i0``), so the daily value is *derived*
+# from that hourly block by :func:`aggregate_daily_precip_probability` and merged
+# on the backend, not parsed from a daily file here (issue #112, docs/ogd.md §E4).
 _DAILY_FIELDS: dict[str, str] = {
     DAILY_TEMP_MAX: "temp_max",
     DAILY_TEMP_MIN: "temp_min",
@@ -400,3 +401,47 @@ def aggregate_daily_wind(
         )
         for day in max_speed
     }
+
+
+def aggregate_daily_precip_probability(
+    text: str,
+    point: ForecastPoint,
+) -> dict[date, float]:
+    """Aggregate the hourly ``rp0003i0`` block into per-day precipitation probability.
+
+    A **plain function** so the backend can run it in an executor (ADR-0002).
+    MeteoSwiss publishes no daily probability parameter, so the daily figure is
+    derived from the only probability upstream carries — the 3-hour rolling
+    probability ``rp0003i0`` (integer %, the window **ending** at ``Date``,
+    docs/ogd.md §E4). The hourly ``Date`` stamps are UTC; grouping uses
+    Europe/Zurich local calendar days — the same boundary as the daily
+    ``p``-variants and :func:`aggregate_daily_wind`.
+
+    For each local calendar day the value is the **maximum** of the 3-hour
+    probabilities whose window end falls in that day: the max of
+    P(rain in window_i) is a lower bound for P(rain at any time of the day), the
+    conservative and common "chance of rain today" approximation (issue #112).
+    Days present in the block get the max over the hours that exist (the file
+    starts at 21:00 UTC of the previous day, so the last day may be partial);
+    a day with no rows is simply absent from the result, and the caller leaves
+    ``precipitation_probability`` at ``None`` for it.
+    """
+    tz = ZoneInfo(FORECAST_TIMEZONE)
+    max_by_day: dict[date, float] = {}
+
+    for row in _reader(text):
+        if _to_int(row.get(_DATA_POINT_ID)) != point.point_id:
+            continue
+        if _to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
+            continue
+        when = _parse_datetime(row.get(_DATA_DATE))
+        if when is None:
+            continue
+        value = _to_float(row.get(HOURLY_PRECIP_PROBABILITY))
+        if value is None:
+            continue
+        local_day = when.astimezone(tz).date()
+        if local_day not in max_by_day or value > max_by_day[local_day]:
+            max_by_day[local_day] = value
+
+    return max_by_day

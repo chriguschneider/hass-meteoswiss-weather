@@ -15,7 +15,9 @@
 
 - **A `weather` entity per Swiss postal code**: current conditions from the
   nearest SwissMetNet station (10-minute values) and the same 9-day local
-  forecast the MeteoSwiss app shows, with the app's weather symbols.
+  forecast the MeteoSwiss app shows, with the app's weather symbols — each day
+  carrying temperature high/low, precipitation, precipitation probability and
+  wind.
 - **Hourly forecast as an option** — off by default, because of what it
   costs (see below).
 - **Station sensors**: temperature, humidity, dew point, pressure, wind,
