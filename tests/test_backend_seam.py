@@ -36,6 +36,7 @@ from custom_components.meteoswiss_weather.const import (
     DOMAIN,
 )
 from custom_components.meteoswiss_weather.ogd import (
+    DailyBundle,
     DailyForecast,
     ForecastBackend,
     ForecastPoint,
@@ -108,8 +109,8 @@ class FakeBackend:
         for h in range(4)
     ]
 
-    async def fetch_daily(self, point: ForecastPoint) -> list[DailyForecast]:
-        return self.DAILY
+    async def fetch_daily(self, point: ForecastPoint) -> DailyBundle:
+        return DailyBundle(daily=self.DAILY)
 
     async def fetch_hourly(
         self,

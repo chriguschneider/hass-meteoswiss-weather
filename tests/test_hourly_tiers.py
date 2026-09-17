@@ -32,6 +32,7 @@ from custom_components.meteoswiss_weather.coordinator import (
     HourlyForecastProvider,
     _tier_due,
 )
+from custom_components.meteoswiss_weather.ogd import DailyBundle
 from custom_components.meteoswiss_weather.ogd.const import (
     HOURLY_CLOUD_HIGH,
     HOURLY_CLOUD_LOW,
@@ -137,7 +138,7 @@ class _RecordingBackend:
         self.calls: list[tuple[tuple[str, ...], int]] = []
 
     async def fetch_daily(self, point):  # pragma: no cover - unused here
-        return []
+        return DailyBundle(daily=[])
 
     async def fetch_hourly(self, point, *, horizon_days=-1, params=()):
         self.calls.append((tuple(params), horizon_days))
@@ -332,7 +333,7 @@ class _TrimmingBackend:
         self.calls: list[tuple[tuple[str, ...], int]] = []
 
     async def fetch_daily(self, point):  # pragma: no cover - unused here
-        return []
+        return DailyBundle(daily=[])
 
     async def fetch_hourly(self, point, *, horizon_days=-1, params=()):
         self.calls.append((tuple(params), horizon_days))
@@ -431,7 +432,7 @@ class _GatedRecordingBackend:
         self.calls: list[tuple[tuple[str, ...], int]] = []
 
     async def fetch_daily(self, point):  # pragma: no cover - unused here
-        return []
+        return DailyBundle(daily=[])
 
     async def fetch_hourly(self, point, *, horizon_days=-1, params=()):
         self.calls.append((tuple(params), horizon_days))

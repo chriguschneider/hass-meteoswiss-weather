@@ -6,7 +6,7 @@ field the upstream file left empty; the client never invents a value.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import Enum
 
@@ -136,6 +136,22 @@ class DailyForecast:
     native_wind_speed: float | None = None
     native_wind_gust_speed: float | None = None
     wind_bearing: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DailyBundle:
+    """What one daily refresh yields (ADR-0002 revision 5, issue #107).
+
+    ``daily`` is the 9-day forecast. ``zero_degree_level`` maps each forecast
+    hour (aware UTC datetime, top of the hour) to the zero-degree level in m
+    above sea level, read from the run's point-major ``zprfr0hs`` block. The
+    parameter exists only at hourly resolution upstream, so the daily bundle
+    carries it by hour; it is empty when the block could not be fetched
+    without a full download (the point-major guardrail) or is not published.
+    """
+
+    daily: list[DailyForecast]
+    zero_degree_level: dict[datetime, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

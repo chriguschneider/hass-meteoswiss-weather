@@ -7,6 +7,7 @@
 - **Revised again:** 2026-08-28 (issue #60) — see [Revision 3](#revision-3-2026-08-28-issue-60)
 - **Revised again:** 2026-08-28 (issue #55) — see [Revision 4](#revision-4-2026-08-28-issue-55)
 - **Revised again:** 2026-09-17 (issue #112) — see [Revision 5](#revision-5-2026-09-17-issue-112)
+- **Revised again:** 2026-09-17 (issue #107) — see [Revision 6](#revision-6-2026-09-17-issue-107)
 
 ## Context
 
@@ -251,3 +252,45 @@ stays conditional, parsing stays in the executor — are unchanged.
 (This is ADR-0002's fifth revision. Issue #112 anticipated a "revision 6" on the
 assumption that a zero-degree daily fold had already landed as revision 5; that
 change had not, so daily precipitation probability takes the revision-5 slot.)
+
+## Revision 6 (2026-09-17, issue #107)
+
+**The zero-degree block joins the daily refresh.** `zprfr0hs` is the only
+zero-degree parameter MeteoSwiss publishes and it exists only at hourly
+resolution, so under Revision 4 the zero-degree sensor could show a value
+only when the hourly opt-in was on *and* something had already subscribed
+to the hourly forecast *and* that subscription had happened before the
+coordinator's hourly tick — a race with an unrelated consumer, permanently
+`unknown` for everyone else. The file is point-major (docs/ogd.md, row
+order), so its per-point block is the same ~5 KB the Revision 3 wind blocks
+cost.
+
+**Decision:** the daily refresh fetches the point-major blocks of
+`DAILY_BLOCK_PARAMS` — the three wind files of Revision 3, the `rp0003i0`
+probability block of Revision 5 and `zprfr0hs` — through one per-file path
+(`_get_block_texts()`, replacing the separate wind and probability fetchers).
+The backend returns a `DailyBundle`: the 9-day daily forecast plus the
+zero-degree level by forecast hour. The coordinator carries that map in its payload, and the
+zero-degree sensor reads the current hour from it — no hourly opt-in, no
+card, no `get_forecasts` call. The sensor also re-evaluates at the top of
+every hour so it advances without waiting for the next coordinator tick.
+
+**Cost per run:** one more ~5 KB block plus its verification probe on the
+default daily refresh: **~25 KB** of blocks (five files) instead of ~20 KB, on
+top of the ~5 MB daily files. Still negligible.
+
+**Guardrail, now per file:** a block that is not point-major, not yet
+published for the run or unreachable is skipped with a warning and only its
+own fields degrade to `None` — the daily wind no longer disappears because
+the probability or zero-degree file had a bad day, and vice versa. The full 30 MB download
+is still never triggered for a default feature.
+
+**Cache sharing, unchanged in spirit:** the block texts are cached by run
+stamp on the backend; when the hourly opt-in is on, the point-major tier
+folds the cached zero-degree block in for the same run instead of fetching
+the file a second time (the Revision 3 and 5 contract, extended to the
+fourth block). The hourly forecast keeps sourcing its per-hour `zero_degree_level`
+from the bulk parse, so the weather entity's hourly attribute is unchanged.
+
+The decisions above — daily stays default, hourly stays opt-in, every request
+stays conditional, parsing stays in the executor — are unchanged.

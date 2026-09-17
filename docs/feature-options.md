@@ -157,7 +157,8 @@ numbers (up to 8 more files; ~7–11 MB each at the A5 default horizon,
   field `precipitation_probability`; the most visible missing forecast
   field.
 - [x] **B8 — Zero-degree level** (`zprfr0hs`) — a snow-line sensor;
-  much asked for in Switzerland.
+  much asked for in Switzerland. Since #107 its ~5 KB point block rides
+  along with the daily refresh, so the sensor needs no hourly opt-in.
 - [x] **B9 — Cloud coverage** (`nprohihs`/`npromths`/`nprolohs`) → the
   HA `cloud_coverage` forecast field.
 - [x] **B10 — Radiation forecast** (`gre000h0`) — feedstock for PV

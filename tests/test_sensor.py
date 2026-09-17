@@ -10,14 +10,17 @@ rollover.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from freezegun import freeze_time
 from homeassistant.const import STATE_UNKNOWN, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
 from custom_components.meteoswiss_weather.const import (
@@ -681,3 +684,105 @@ async def test_measurement_time_sensor_survives_reduced_inventory(
     assert entry is not None, (
         "measurement_time entity was incorrectly removed by inventory cleanup"
     )
+
+
+# ---------------------------------------------------------------------------
+# B8 — zero-degree level sensor without the hourly opt-in (issue #107)
+# ---------------------------------------------------------------------------
+
+_ZERO_DEGREE_ID = "sensor.koniz_zero_degree_level"
+
+
+async def _setup_with_zero_degree(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    """Set up with the disabled-by-default sensor pre-enabled in the registry.
+
+    Pre-creating the registry entry as enabled avoids the registry's delayed
+    reload (which a later time jump would fire, re-running the whole setup and
+    confusing the fetch counts).
+    """
+    entry.add_to_hass(hass)
+    entity_reg = er.async_get(hass)
+    entity_reg.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "2-309800_zero_degree_level",
+        config_entry=entry,
+        suggested_object_id="koniz_zero_degree_level",
+        disabled_by=None,
+    )
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.get(_ZERO_DEGREE_ID) is not None
+
+
+def _zero_degree_calls(mock: AiohttpClientMocker) -> int:
+    return sum(
+        1 for _m, url, *_ in mock.mock_calls if url.path.endswith(".zprfr0hs.csv")
+    )
+
+
+async def test_zero_degree_sensor_value_without_hourly_option(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """The sensor shows the current hour's value right after the first daily
+    refresh — hourly option off, no card open, no get_forecasts call (#107).
+
+    Fixture: Köniz 2500 m at 00:00 UTC on 2026-08-27, +5 m per hour.
+    """
+    with freeze_time(datetime(2026, 8, 27, 1, 30, tzinfo=UTC)):
+        await _setup_with_zero_degree(hass, config_entry)
+        assert _state(hass, "zero_degree_level") == "2505.0"
+
+    # The default entry has no options: the hourly path never ran.
+    provider = config_entry.runtime_data.forecast_coordinator.hourly_provider
+    assert provider.enabled is False
+    assert provider.cached_hourly is None
+
+
+async def test_zero_degree_sensor_advances_at_the_top_of_the_hour(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A new hour re-writes the state from the cached map, without a fetch."""
+    start = datetime(2026, 8, 27, 1, 30, tzinfo=UTC)
+    with freeze_time(start) as frozen:
+        await _setup_with_zero_degree(hass, config_entry)
+        assert _state(hass, "zero_degree_level") == "2505.0"
+        fetched = _zero_degree_calls(mock_ogd)
+
+        frozen.move_to(start + timedelta(minutes=30))
+        async_fire_time_changed(hass, start + timedelta(minutes=30))
+        await hass.async_block_till_done()
+
+        assert _state(hass, "zero_degree_level") == "2510.0"
+        assert _zero_degree_calls(mock_ogd) == fetched
+
+
+async def test_zero_degree_sensor_unknown_outside_the_run(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """No entry for the current hour → ``unknown``, never a stale neighbour."""
+    with freeze_time(datetime(2026, 9, 10, 12, 0, tzinfo=UTC)):
+        await _setup_with_zero_degree(hass, config_entry)
+        assert _state(hass, "zero_degree_level") == STATE_UNKNOWN
+
+
+async def test_zero_degree_sensor_unknown_when_block_degraded(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """An empty zero-degree map (guardrail fired) reads as ``unknown``."""
+    from custom_components.meteoswiss_weather.coordinator import ForecastData
+
+    with freeze_time(datetime(2026, 8, 27, 1, 30, tzinfo=UTC)):
+        await _setup_with_zero_degree(hass, config_entry)
+        coordinator = config_entry.runtime_data.forecast_coordinator
+        coordinator.async_set_updated_data(ForecastData(daily=coordinator.data.daily))
+        await hass.async_block_till_done()
+        assert _state(hass, "zero_degree_level") == STATE_UNKNOWN

@@ -118,7 +118,7 @@ Derived from the local forecast for the configured point.
 | High temperature today | Today's forecast maximum; flips to the new day at local midnight | °C | on |
 | Low temperature today | Today's forecast minimum | °C | on |
 | Precipitation today | Today's forecast precipitation sum | mm | on |
-| Zero-degree level | Forecast altitude of the 0 °C isotherm for the current hour — snow-line material; advances every hour. Needs the hourly forecast option until [#107](https://github.com/chriguschneider/hass-meteoswiss-weather/issues/107) lands | m | off |
+| Zero-degree level | Forecast altitude of the 0 °C isotherm for the current hour — snow-line material; advances every hour. Works without the hourly forecast option | m | off |
 
 ### Pollen sensors
 
