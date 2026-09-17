@@ -29,6 +29,20 @@ using the matching section below as release notes.
 
 ### Fixed
 
+- **The zero-degree level sensor no longer needs the hourly forecast option**
+  (#107). `sensor.<name>_zero_degree_level` used to read the lazy hourly
+  cache, so it showed a value only when the hourly option was on, something
+  had already subscribed to the hourly forecast, and that had happened before
+  the coordinator's hourly tick — for most users it was permanently
+  `unknown`. The zero-degree file is point-major, so its ~5 KB point block now
+  rides along with every daily refresh next to the wind blocks (ADR-0002
+  revision 6): the sensor has a value after the first refresh with the option
+  off, no card open and no `get_forecasts` call, and it advances at the top
+  of every hour. With the option on, the hourly fetch reuses the block, so
+  nothing is downloaded twice. Each block file now degrades on its own: a
+  wind file that is not point-major no longer blanks the zero-degree level,
+  and vice versa.
+
 - **A transient forecast failure no longer makes the weather entity
   unavailable** (#108). The entity's availability is now derived from
   whether each coordinator *has data* rather than whether its most recent

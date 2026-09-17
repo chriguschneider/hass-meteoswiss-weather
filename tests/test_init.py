@@ -28,10 +28,11 @@ from custom_components.meteoswiss_weather.const import (
     HOURLY_FAR_MAX_AGE,
 )
 from custom_components.meteoswiss_weather.ogd.const import (
+    DAILY_BLOCK_PARAMS,
     DAILY_REQUIRED_PARAMS,
-    DAILY_WIND_PARAMS,
     HOURLY_PRECIP_PROBABILITY,
     HOURLY_REQUIRED_PARAMS,
+    HOURLY_ZERO_DEGREE,
     station_now_url,
 )
 
@@ -89,21 +90,20 @@ def _daily_calls(aioclient_mock: AiohttpClientMocker) -> int:
 
 
 # Hourly-only params: the files fetched exclusively by the opt-in hourly
-# forecast and never by the default daily refresh. The wind files (fu3010h0,
-# fu3010h1, dkl010h0, issue #60) and the rp0003i0 probability file (issue #112)
-# are point-major block-fetched on every daily refresh, so they are tracked
-# separately by _wind_calls()/_prob_calls() below and excluded here.
-_DAILY_BLOCK_PARAMS = (*DAILY_WIND_PARAMS, HOURLY_PRECIP_PROBABILITY)
+# forecast and never by the default daily refresh. The wind files (issue #60),
+# the rp0003i0 probability file (issue #112) and the zero-degree file (issue
+# #107) are point-major block-fetched on every daily refresh, so they are
+# tracked separately by _block_calls() below.
 _HOURLY_ONLY_PARAMS = tuple(
-    p for p in HOURLY_REQUIRED_PARAMS if p not in _DAILY_BLOCK_PARAMS
+    p for p in HOURLY_REQUIRED_PARAMS if p not in DAILY_BLOCK_PARAMS
 )
 
 
 def _hourly_calls(aioclient_mock: AiohttpClientMocker) -> int:
     """Opt-in hourly-forecast file downloads (excludes daily-wind files).
 
-    Counts only the three non-wind hourly parameters so tests that verify the
-    lazy hourly behaviour are not confused by the daily wind fetch (issue #60).
+    Counts only the hourly-only parameters so tests that verify the lazy
+    hourly behaviour are not confused by the daily block fetch (issue #60).
     """
     suffixes = tuple(f"{_RUN_TS}.{param}.csv" for param in _HOURLY_ONLY_PARAMS)
     return sum(
@@ -113,19 +113,13 @@ def _hourly_calls(aioclient_mock: AiohttpClientMocker) -> int:
     )
 
 
-def _wind_calls(aioclient_mock: AiohttpClientMocker) -> int:
-    """Number of wind-block file downloads (daily wind fetch, issue #60)."""
-    suffixes = tuple(f"{_RUN_TS}.{param}.csv" for param in DAILY_WIND_PARAMS)
-    return sum(
-        1
-        for _method, url, *_ in aioclient_mock.mock_calls
-        if url.path.endswith(suffixes)
-    )
+def _block_calls(aioclient_mock: AiohttpClientMocker, param: str) -> int:
+    """Requests to one point-major block file (daily block fetch, #60/#107).
 
-
-def _prob_calls(aioclient_mock: AiohttpClientMocker) -> int:
-    """Number of rp0003i0 block downloads (daily precip probability, issue #112)."""
-    suffix = f"{_RUN_TS}.{HOURLY_PRECIP_PROBABILITY}.csv"
+    The mock answers every Range probe with the whole file, so the reader
+    caches it after the first request and one fetch is exactly one call.
+    """
+    suffix = f"{_RUN_TS}.{param}.csv"
     return sum(
         1
         for _method, url, *_ in aioclient_mock.mock_calls
@@ -157,7 +151,7 @@ async def test_setup_populates_both_coordinators(
     assert len(forecast.daily) == 9
     # The daily refresh block-fetches rp0003i0 once for the probability field
     # (issue #112), next to the wind blocks — with the hourly option off.
-    assert _prob_calls(mock_ogd) == 1
+    assert _block_calls(mock_ogd, HOURLY_PRECIP_PROBABILITY) == 1
     # Hourly is off by default (ADR-0002) and lazy even when on (issue #54):
     # nothing has been fetched at setup.
     assert runtime.forecast_coordinator.hourly_provider.last_fetch is None
@@ -386,6 +380,58 @@ async def test_run_change_fetches_hourly_only_with_subscriber(
         assert _hourly_calls(mock_ogd) == n_params
         assert received and received[-1] is not None
         unsub()
+
+
+async def test_zero_degree_block_fetched_with_daily_refresh_hourly_off(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """The zero-degree block rides along with the daily refresh (issue #107).
+
+    With the hourly option off, no card open and no ``get_forecasts`` call,
+    the first refresh already carries the zero-degree levels by hour; the
+    hourly-only files are still never touched.
+    """
+    config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    data = config_entry.runtime_data.forecast_coordinator.data
+    assert data is not None
+    # Fixture: 24 hours for Köniz, 2500 m at 00:00 UTC rising 5 m per hour.
+    assert len(data.zero_degree_level) == 24
+    assert data.zero_degree_level[datetime(2026, 8, 27, 0, 0, tzinfo=UTC)] == 2500.0
+    assert _block_calls(mock_ogd, HOURLY_ZERO_DEGREE) == 1
+    assert _hourly_calls(mock_ogd) == 0
+
+
+async def test_zero_degree_block_not_fetched_twice_with_hourly_on(
+    hass: HomeAssistant,
+    hourly_config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """With the hourly option on, the hourly fetch reuses the daily block.
+
+    The daily refresh fetched the zero-degree block for this run; the provider's
+    point-major fetch for the same run must fold in the cached text instead of
+    downloading the file again (issue #107, the #60 cache-sharing contract).
+    """
+    with freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC)):
+        hourly_config_entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(hourly_config_entry.entry_id)
+        await hass.async_block_till_done()
+        assert _block_calls(mock_ogd, HOURLY_ZERO_DEGREE) == 1
+
+        coordinator = hourly_config_entry.runtime_data.forecast_coordinator
+        hourly = await coordinator.hourly_provider.async_get_hourly(
+            coordinator.last_run
+        )
+
+    assert hourly is not None and len(hourly) == 24
+    # The hourly forecast still carries the value, sourced from the shared block.
+    assert hourly[0].zero_degree_level == 2500.0
+    assert _block_calls(mock_ogd, HOURLY_ZERO_DEGREE) == 1
 
 
 async def test_options_change_reloads_entry(

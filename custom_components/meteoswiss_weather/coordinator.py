@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 import aiohttp
@@ -101,9 +101,15 @@ class ForecastData:
 
     The hourly forecast is not carried here — it is fetched lazily through
     :class:`HourlyForecastProvider` only when something asks for it (issue #54).
+    The one exception is ``zero_degree_level``: the zero-degree level exists
+    only at hourly resolution upstream, and its ~5 KB point block rides along
+    with every daily refresh so the sensor works without the hourly opt-in
+    (issue #107). It maps each forecast hour (aware UTC) to metres above sea
+    level and is empty when the block could not be fetched.
     """
 
     daily: list[DailyForecast]
+    zero_degree_level: dict[datetime, float] = field(default_factory=dict)
 
 
 def _tier_due(
@@ -559,11 +565,13 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
             and self.data is not None
         ):
             daily = self.data.daily
+            zero_degree_level = self.data.zero_degree_level
         else:
             try:
-                # The backend downloads the small daily files and parses them
-                # off the event loop; a future per-point backend swaps in here.
-                daily = await self._backend.fetch_daily(self._point)
+                # The backend downloads the small daily files (plus the
+                # point-major wind and zero-degree blocks) and parses them off
+                # the event loop; a future per-point backend swaps in here.
+                bundle = await self._backend.fetch_daily(self._point)
             except OgdParseError as err:
                 async_create_issue(
                     self.hass,
@@ -576,11 +584,13 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
                 raise UpdateFailed(f"daily forecast parse failed: {err}") from err
             except OgdConnectionError as err:
                 raise UpdateFailed(f"daily forecast fetch failed: {err}") from err
+            daily = bundle.daily
+            zero_degree_level = bundle.zero_degree_level
             self.last_run = run.timestamp
 
         async_delete_issue(self.hass, DOMAIN, _ISSUE_FORECAST_PARSE)
         self.last_success = dt_util.utcnow()
-        return ForecastData(daily=daily)
+        return ForecastData(daily=daily, zero_degree_level=zero_degree_level)
 
 
 class PollenCoordinator(DataUpdateCoordinator[PollenObservation]):

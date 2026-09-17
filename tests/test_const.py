@@ -18,13 +18,17 @@ from custom_components.meteoswiss_weather.const import (
     STATION_UPDATE_INTERVAL,
 )
 from custom_components.meteoswiss_weather.ogd.const import (
+    DAILY_BLOCK_PARAMS,
     DAILY_REQUIRED_PARAMS,
     DAILY_SYMBOL,
+    DAILY_WIND_PARAMS,
     HOURLY_CLOUD_PARAMS,
     HOURLY_DATE_MAJOR_PARAMS,
     HOURLY_POINT_MAJOR_PARAMS,
+    HOURLY_PRECIP_PROBABILITY,
     HOURLY_REQUIRED_PARAMS,
     HOURLY_TEMP_PERCENTILE_PARAMS,
+    HOURLY_ZERO_DEGREE,
     hourly_date_major_params,
 )
 
@@ -114,6 +118,20 @@ def test_gated_files_are_disjoint_from_the_point_major_group() -> None:
     assert not gated & set(HOURLY_POINT_MAJOR_PARAMS)
     # They are also disjoint from the always-on required set (opt-in additions).
     assert not gated & set(HOURLY_REQUIRED_PARAMS)
+
+
+def test_daily_block_params_are_point_major_files() -> None:
+    """The blocks fetched with every daily refresh: wind, probability, zero-degree.
+
+    Every one of them must be in the point-major group: the daily refresh
+    fetches them as ~5 KB point blocks, and a date-major file there would cost
+    a horizon prefix on the default path (issue #60, issue #107).
+    """
+    assert set(DAILY_BLOCK_PARAMS) == set(DAILY_WIND_PARAMS) | {
+        HOURLY_PRECIP_PROBABILITY,
+        HOURLY_ZERO_DEGREE,
+    }
+    assert set(DAILY_BLOCK_PARAMS) <= set(HOURLY_POINT_MAJOR_PARAMS)
 
 
 def test_station_and_forecast_intervals() -> None:

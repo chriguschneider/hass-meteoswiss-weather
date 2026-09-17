@@ -29,6 +29,7 @@ from .hourly import (
 )
 from .http import CachedResponse, get_text
 from .models import (
+    DailyBundle,
     DailyForecast,
     FileLayout,
     ForecastPoint,
@@ -66,6 +67,7 @@ __all__ = [
     "BulkCsvBackend",
     "POINT_TYPE_MOUNTAIN",
     "CachedResponse",
+    "DailyBundle",
     "DailyForecast",
     "aggregate_daily_precip_probability",
     "aggregate_daily_wind",

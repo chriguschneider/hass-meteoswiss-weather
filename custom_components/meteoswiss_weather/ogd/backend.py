@@ -18,12 +18,14 @@ import aiohttp
 
 from .const import (
     COLLECTION_FORECAST,
+    DAILY_BLOCK_PARAMS,
     DAILY_REQUIRED_PARAMS,
     DAILY_WIND_PARAMS,
     FORECAST_ENCODING,
     HOURLY_HORIZON_FULL_RUN,
     HOURLY_PRECIP_PROBABILITY,
     HOURLY_REQUIRED_PARAMS,
+    HOURLY_ZERO_DEGREE,
 )
 from .forecast import (
     aggregate_daily_precip_probability,
@@ -34,7 +36,7 @@ from .forecast import (
 from .hourly import fetch_hourly_file, fetch_point_block, horizon_end_utc
 from .http import get_text
 from .models import (
-    DailyForecast,
+    DailyBundle,
     ForecastPoint,
     HourlyForecast,
     OgdConnectionError,
@@ -47,7 +49,7 @@ _LOGGER = logging.getLogger(__name__)
 class ForecastBackend(Protocol):
     """A source of daily and hourly forecasts for a resolved point."""
 
-    async def fetch_daily(self, point: ForecastPoint) -> list[DailyForecast]: ...
+    async def fetch_daily(self, point: ForecastPoint) -> DailyBundle: ...
 
     async def fetch_hourly(
         self,
@@ -62,13 +64,13 @@ class BulkCsvBackend:
     """Assembles the forecast from the bulk per-parameter CSV files.
 
     Discovers the newest complete run (STAC), downloads its small daily files
-    and parses them off the event loop (ADR-0002). Point-major hourly blocks are
-    also fetched with each daily refresh (~5 KB each via the #50 block strategy)
-    to populate derived daily fields: the three wind files for the daily wind
-    fields (issue #60, ADR-0002 revision 3) and ``rp0003i0`` for the daily
-    precipitation probability (issue #112, ADR-0002 revision 5). Their blocks
-    are cached by run stamp so the lazy hourly fetch reuses them without a second
-    download.
+    and parses them off the event loop (ADR-0002). The point-major blocks of
+    :data:`DAILY_BLOCK_PARAMS` are also fetched with each daily refresh (~5 KB
+    each via the #50 block strategy): the three wind files for the daily wind
+    fields (issue #60, ADR-0002 revision 3), ``rp0003i0`` for the derived daily
+    precipitation probability (issue #112, revision 5) and ``zprfr0hs`` for the
+    hourly zero-degree levels (issue #107, revision 6). The blocks are cached by
+    run stamp so the lazy hourly fetch reuses them without a second download.
     """
 
     def __init__(self, session: aiohttp.ClientSession) -> None:
@@ -76,169 +78,104 @@ class BulkCsvBackend:
         # Byte offset of the point's block in each point-major hourly file,
         # remembered across runs so the next fetch verifies it with one probe
         # instead of a fresh binary search (issue #50). Keyed by parameter code.
-        # Shared between the daily wind fetch and the lazy hourly fetch.
+        # Shared between the daily block fetch and the lazy hourly fetch.
         self._block_starts: dict[str, int] = {}
-        # Cached wind block texts from the most recent successful fetch, keyed
-        # by run stamp so the daily and hourly paths never download them twice
-        # for the same run (issue #60).
-        self._wind_texts: dict[str, str] | None = None
-        self._wind_run: datetime | None = None
-        # Same, for the rp0003i0 block behind the daily precipitation
-        # probability (issue #112). A single file, so a plain text (None means
-        # "degraded"); _prob_run marks the run this was last attempted for.
-        self._prob_text: str | None = None
-        self._prob_run: datetime | None = None
+        # Cached block texts from the most recent daily refresh, keyed by
+        # parameter and remembered with the run stamp, so the daily and hourly
+        # paths never download a block twice for the same run (issue #60). A
+        # parameter that degraded (missing, not point-major, unreachable) is
+        # simply absent from the dict.
+        self._block_texts: dict[str, str] = {}
+        self._block_run: datetime | None = None
 
-    async def _get_wind_texts(
+    async def _get_block_texts(
         self, point: ForecastPoint, run: Run
-    ) -> dict[str, str] | None:
-        """Return the wind block texts for ``run``, fetching only if needed.
+    ) -> dict[str, str]:
+        """Return the point-major block texts for ``run``, fetching only if needed.
 
-        Returns ``None`` when any wind file is not point-major (ADR-0002
-        guardrail: the full 30 MB download is never triggered for a default
-        feature). On success the texts are cached so the hourly path reuses
-        them for the same run without a second download.
+        Every parameter in :data:`DAILY_BLOCK_PARAMS` is fetched independently
+        and the result holds only the ones that came back; a file that is not
+        point-major, not yet published for this run or unreachable is left out
+        with a warning (ADR-0002 guardrail: the full 30 MB download is never
+        triggered for a default feature, and one file's trouble never takes the
+        others down with it). On success the texts are cached so the hourly
+        path reuses them for the same run without a second download.
         """
-        # _wind_run set means we already tried this run; _wind_texts is the result
-        # (populated dict on success, empty dict when the guardrail fired).
-        if self._wind_run == run.timestamp:
-            return self._wind_texts or None
+        # _block_run set means we already tried this run; _block_texts is the
+        # result (possibly empty when every guardrail fired).
+        if self._block_run == run.timestamp:
+            return self._block_texts
 
         # The daily run is selected on DAILY_REQUIRED_PARAMS alone, so it can be
-        # complete for the small daily files while the ~30 MB wind files of the
-        # same run have not landed yet (they publish last). A missing wind asset
-        # must degrade to None like the point-major guardrail, never crash the
-        # default daily refresh with a KeyError from asset_url() (issue #60).
-        if any(param not in run.assets for param in DAILY_WIND_PARAMS):
-            _LOGGER.warning(
-                "daily wind skipped for run %s: one or more wind files are not "
-                "published yet; wind fields will be None for all days",
-                run.timestamp.isoformat(),
-            )
-            self._wind_texts = {}
-            self._wind_run = run.timestamp
-            return None
-
-        # Wind is a best-effort bonus on the default daily refresh: a transient
-        # connection error while probing/fetching a block must degrade wind to
-        # None, never fail the whole daily update and lose the temperature,
-        # precipitation and symbol that fetched fine (ADR-0002 revision 3, the
-        # same "never crash the default daily refresh" contract as the missing-
-        # asset and non-point-major guardrails above).
-        try:
-            results = await asyncio.gather(
-                *(
-                    fetch_point_block(
-                        self._session,
-                        run.asset_url(param),
-                        point,
-                        cached_start=self._block_starts.get(param),
-                    )
-                    for param in DAILY_WIND_PARAMS
+        # complete for the small daily files while the ~30 MB hourly files of
+        # the same run have not landed yet (they publish last). A missing asset
+        # must degrade like the point-major guardrail, never crash the default
+        # daily refresh with a KeyError from asset_url() (issue #60).
+        present = [param for param in DAILY_BLOCK_PARAMS if param in run.assets]
+        for param in DAILY_BLOCK_PARAMS:
+            if param not in present:
+                _LOGGER.warning(
+                    "block %s skipped for run %s: file not published yet; its "
+                    "fields will be None",
+                    param,
+                    run.timestamp.isoformat(),
                 )
-            )
-        except OgdConnectionError as err:
-            _LOGGER.warning(
-                "daily wind skipped for run %s: %s; wind fields will be None "
-                "for all days",
-                run.timestamp.isoformat(),
-                err,
-            )
-            self._wind_texts = {}
-            self._wind_run = run.timestamp
-            return None
 
-        if any(r is None for r in results):
-            _LOGGER.warning(
-                "daily wind skipped for run %s: one or more wind files are not "
-                "point-major; wind fields will be None for all days",
-                run.timestamp.isoformat(),
-            )
-            # Record the sentinel (empty dict) so repeated calls for this run
-            # return None immediately without re-probing the files.
-            self._wind_texts = {}
-            self._wind_run = run.timestamp
-            return None
+        # The blocks are a best-effort bonus on the default daily refresh: a
+        # transient connection error while probing/fetching one must degrade
+        # its fields to None, never fail the whole daily update and lose the
+        # temperature, precipitation and symbol that fetched fine (ADR-0002
+        # revision 3, the same "never crash the default daily refresh" contract
+        # as the missing-asset and non-point-major guardrails).
+        results = await asyncio.gather(
+            *(
+                fetch_point_block(
+                    self._session,
+                    run.asset_url(param),
+                    point,
+                    cached_start=self._block_starts.get(param),
+                )
+                for param in present
+            ),
+            return_exceptions=True,
+        )
 
         texts: dict[str, str] = {}
-        for param, result in zip(DAILY_WIND_PARAMS, results, strict=True):
-            texts[param] = result.text  # type: ignore[union-attr]
-            if result.block_start is not None:  # type: ignore[union-attr]
-                self._block_starts[param] = result.block_start  # type: ignore[union-attr]
+        for param, result in zip(present, results, strict=True):
+            if isinstance(result, OgdConnectionError):
+                _LOGGER.warning(
+                    "block %s skipped for run %s: %s; its fields will be None",
+                    param,
+                    run.timestamp.isoformat(),
+                    result,
+                )
+                continue
+            if isinstance(result, BaseException):
+                raise result
+            if result is None:
+                _LOGGER.warning(
+                    "block %s skipped for run %s: file is not point-major; its "
+                    "fields will be None",
+                    param,
+                    run.timestamp.isoformat(),
+                )
+                continue
+            texts[param] = result.text
+            if result.block_start is not None:
+                self._block_starts[param] = result.block_start
 
-        self._wind_texts = texts
-        self._wind_run = run.timestamp
+        self._block_texts = texts
+        self._block_run = run.timestamp
         return texts
 
-    async def _get_prob_text(
-        self, point: ForecastPoint, run: Run
-    ) -> str | None:
-        """Return the ``rp0003i0`` block text for ``run``, fetching only if needed.
-
-        Precipitation probability is a best-effort bonus on the default daily
-        refresh (issue #112, ADR-0002 revision 5), guarded exactly like the
-        daily wind (issue #60): a missing asset, a non-point-major layout or a
-        connection error degrades it to ``None`` — the full 30 MB download is
-        never triggered for a default feature. On success the block text is
-        cached by run stamp so the lazy hourly fetch reuses it without a second
-        download.
-        """
-        # _prob_run set means we already tried this run; _prob_text is the
-        # result (the block text on success, None when the guardrail fired).
-        if self._prob_run == run.timestamp:
-            return self._prob_text
-        self._prob_run = run.timestamp
-        self._prob_text = None
-
-        # Like the wind files, the ~30 MB rp0003i0 file may not have published
-        # yet for a run whose small daily files are already complete; a missing
-        # asset must degrade to None, not KeyError from asset_url() (issue #60).
-        if HOURLY_PRECIP_PROBABILITY not in run.assets:
-            _LOGGER.warning(
-                "daily precipitation probability skipped for run %s: rp0003i0 is "
-                "not published yet; the field will be None for all days",
-                run.timestamp.isoformat(),
-            )
-            return None
-
-        try:
-            result = await fetch_point_block(
-                self._session,
-                run.asset_url(HOURLY_PRECIP_PROBABILITY),
-                point,
-                cached_start=self._block_starts.get(HOURLY_PRECIP_PROBABILITY),
-            )
-        except OgdConnectionError as err:
-            _LOGGER.warning(
-                "daily precipitation probability skipped for run %s: %s; the field "
-                "will be None for all days",
-                run.timestamp.isoformat(),
-                err,
-            )
-            return None
-
-        if result is None:
-            _LOGGER.warning(
-                "daily precipitation probability skipped for run %s: rp0003i0 is "
-                "not point-major; the field will be None for all days",
-                run.timestamp.isoformat(),
-            )
-            return None
-
-        self._prob_text = result.text
-        if result.block_start is not None:
-            self._block_starts[HOURLY_PRECIP_PROBABILITY] = result.block_start
-        return self._prob_text
-
-    async def fetch_daily(self, point: ForecastPoint) -> list[DailyForecast]:
+    async def fetch_daily(self, point: ForecastPoint) -> DailyBundle:
         run = await latest_run(
             self._session, COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS
         )
         # Daily files are small; fetch them concurrently, one per parameter.
-        # Fetch the wind blocks and the rp0003i0 probability block concurrently
-        # with the daily files (each ~5 KB via the point-major block strategy —
-        # well inside the daily budget).
-        bodies, wind_texts, prob_text = await asyncio.gather(
+        # Fetch the point-major blocks concurrently with the daily files (each
+        # ~5 KB via the block strategy — well inside the daily budget).
+        bodies, block_texts = await asyncio.gather(
             asyncio.gather(
                 *(
                     get_text(
@@ -247,8 +184,7 @@ class BulkCsvBackend:
                     for param in DAILY_REQUIRED_PARAMS
                 )
             ),
-            self._get_wind_texts(point, run),
-            self._get_prob_text(point, run),
+            self._get_block_texts(point, run),
         )
         text_by_param = {
             param: response.body
@@ -258,7 +194,11 @@ class BulkCsvBackend:
         loop = asyncio.get_running_loop()
         daily = await loop.run_in_executor(None, parse_daily, text_by_param, point)
 
-        if wind_texts:
+        # Daily wind needs all three blocks: speed drives the aggregation and
+        # gust/direction are looked up at its hour, so a partial set is as good
+        # as none.
+        wind_texts = {p: block_texts[p] for p in DAILY_WIND_PARAMS if p in block_texts}
+        if len(wind_texts) == len(DAILY_WIND_PARAMS):
             wind_by_day = await loop.run_in_executor(
                 None, aggregate_daily_wind, wind_texts, point
             )
@@ -273,16 +213,37 @@ class BulkCsvBackend:
                 for wind in [wind_by_day.get(d.date, (None, None, None))]
             ]
 
-        if prob_text:
+        # The daily probability is derived from the rp0003i0 block (issue #112):
+        # the maximum 3-hour probability per local calendar day.
+        if HOURLY_PRECIP_PROBABILITY in block_texts:
             prob_by_day = await loop.run_in_executor(
-                None, aggregate_daily_precip_probability, prob_text, point
+                None,
+                aggregate_daily_precip_probability,
+                block_texts[HOURLY_PRECIP_PROBABILITY],
+                point,
             )
             daily = [
                 replace(d, precipitation_probability=prob_by_day.get(d.date))
                 for d in daily
             ]
 
-        return daily
+        # The zero-degree block is the hourly parser's job (it is an hourly
+        # file); keep only the hours that carry a value (issue #107).
+        zero_degree: dict[datetime, float] = {}
+        if HOURLY_ZERO_DEGREE in block_texts:
+            hours = await loop.run_in_executor(
+                None,
+                parse_hourly,
+                {HOURLY_ZERO_DEGREE: block_texts[HOURLY_ZERO_DEGREE]},
+                point,
+            )
+            zero_degree = {
+                h.time: h.zero_degree_level
+                for h in hours
+                if h.zero_degree_level is not None
+            }
+
+        return DailyBundle(daily=daily, zero_degree_level=zero_degree)
 
     async def fetch_hourly(
         self,
@@ -303,30 +264,24 @@ class BulkCsvBackend:
         # point-major group on independent schedules, so this fetches only what a
         # given tier needs rather than the whole set every time.
         #
-        # When fetch_daily() has already fetched a point-major block for this run
-        # — the three wind files (issue #60, ADR-0002 revision 3) or the
-        # rp0003i0 probability file (issue #112, revision 5) — reuse the cached
-        # text without a second download. When no cache exists (no prior daily
-        # call, or a different run), the requested params are fetched the normal
-        # way — the same as before issue #60.
+        # When fetch_daily() has already fetched the point-major wind,
+        # probability and zero-degree blocks for this run, reuse their cached
+        # texts without a second download (issues #60, #112, #107). When
+        # the cache is absent (no prior daily call, or a different run), the
+        # requested params are fetched the normal way — the same as before
+        # issue #60.
         run = await latest_run(self._session, COLLECTION_FORECAST, params)
         now = datetime.now(UTC)
         horizon_end = horizon_end_utc(horizon_days, now)
         horizon_start = now.replace(minute=0, second=0, microsecond=0)
 
-        # Direct cache check (no re-probe): only hits if daily already ran for
-        # this run. Restricted to the requested params so a temperature-only
-        # (near/far) fetch stays temperature-only.
-        cached: dict[str, str] = {}
-        if self._wind_run == run.timestamp and self._wind_texts:
-            cached.update({p: t for p, t in self._wind_texts.items() if p in params})
-        if (
-            self._prob_run == run.timestamp
-            and self._prob_text is not None
-            and HOURLY_PRECIP_PROBABILITY in params
-        ):
-            cached[HOURLY_PRECIP_PROBABILITY] = self._prob_text
-        params_to_fetch = [p for p in params if p not in cached]
+        # Direct cache check (no re-probe): only hit if daily already ran for
+        # this very run. A block that degraded on the daily path is absent from
+        # the cache and is fetched here like any other hourly file.
+        block_cache = (
+            self._block_texts if self._block_run == run.timestamp else {}
+        )
+        params_to_fetch = [p for p in params if p not in block_cache]
 
         results = await asyncio.gather(
             *(
@@ -346,7 +301,9 @@ class BulkCsvBackend:
             if result.block_start is not None:
                 self._block_starts[param] = result.block_start
 
-        text_by_param.update(cached)
+        # Only fold in cached block texts for params this call requested, so a
+        # temperature-only (near/far) fetch stays temperature-only.
+        text_by_param.update({p: t for p, t in block_cache.items() if p in params})
 
         # The download is the cost this option pays for; record it so a user can
         # see what enabling the hourly forecast actually spends (ADR-0002).

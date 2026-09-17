@@ -202,6 +202,21 @@ DAILY_WIND_PARAMS: tuple[str, ...] = (
     HOURLY_WIND_DIRECTION,
 )
 
+# Every point-major hourly block fetched with the daily refresh: the three wind
+# files above, the 3-hour precipitation probability behind the derived daily
+# probability (issue #112, ADR-0002 revision 5) and the zero-degree level
+# (issue #107, revision 6). Neither has a daily variant upstream, so the daily
+# figures can only come from the hourly files; each ~5 KB point block rides
+# along with the wind blocks so the values work without the hourly opt-in. The
+# guardrail is per file: a block that is missing from the run or not
+# point-major degrades its own fields to None and never triggers a full
+# download, and never takes the other blocks down with it.
+DAILY_BLOCK_PARAMS: tuple[str, ...] = (
+    *DAILY_WIND_PARAMS,
+    HOURLY_PRECIP_PROBABILITY,
+    HOURLY_ZERO_DEGREE,
+)
+
 # Per-file HTTP-Range strategy for the hourly bulk files (issue #50, ADR-0002
 # revision). The 30 MB files have two layouts, detected at runtime:
 #   - "date-major": rows sorted by Date, so the earliest hours of every point
