@@ -9,6 +9,25 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- **One forecast store per entry** (#116, [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)).
+  Per-hour values such as the zero-degree level now live in one place that
+  every fetch path fills and every entity reads. The run is discovered once
+  per refresh and handed down, so a refresh costs one ~600 KB STAC listing
+  instead of two to four. The diagnostics dump lists, per parameter, which
+  run is stored, which path delivered it and whether it is held over.
+
+### Fixed
+
+- **The zero-degree level sensor no longer depends on which path fetched the
+  file** (#116). MeteoSwiss re-sorted `zprfr0hs`, so the small block fetch of
+  v0.3.0 stopped applying and the sensor read `unknown`. With the hourly
+  forecast option on, the value now arrives through the hourly fetch as soon
+  as it runs, and a refresh that cannot deliver keeps the previous run's
+  series instead of blanking the sensor. Serving the sensor for every file
+  layout without the hourly option follows with the fetch ladder of ADR-0008.
+
 ## [v0.3.0] — 2026-09-17
 
 ### Added

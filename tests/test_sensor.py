@@ -772,17 +772,83 @@ async def test_zero_degree_sensor_unknown_outside_the_run(
         assert _state(hass, "zero_degree_level") == STATE_UNKNOWN
 
 
-async def test_zero_degree_sensor_unknown_when_block_degraded(
+async def test_zero_degree_sensor_unknown_when_nothing_was_ever_delivered(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """An empty zero-degree map (guardrail fired) reads as ``unknown``."""
-    from custom_components.meteoswiss_weather.coordinator import ForecastData
+    """An empty store (no path has delivered the file yet) reads as ``unknown``."""
+    from custom_components.meteoswiss_weather.store import ForecastStore
 
     with freeze_time(datetime(2026, 8, 27, 1, 30, tzinfo=UTC)):
         await _setup_with_zero_degree(hass, config_entry)
         coordinator = config_entry.runtime_data.forecast_coordinator
-        coordinator.async_set_updated_data(ForecastData(daily=coordinator.data.daily))
+        coordinator.store = ForecastStore()
+        coordinator.async_update_listeners()
         await hass.async_block_till_done()
         assert _state(hass, "zero_degree_level") == STATE_UNKNOWN
+
+
+async def test_zero_degree_sensor_keeps_last_good_run_when_a_refresh_degrades(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A later run whose block could not be fetched does not blank the sensor:
+    the previous run's series still covers the hour (ADR-0008 section 1)."""
+    from datetime import timedelta as _td
+
+    from custom_components.meteoswiss_weather.ogd.const import HOURLY_ZERO_DEGREE
+
+    with freeze_time(datetime(2026, 8, 27, 1, 30, tzinfo=UTC)):
+        await _setup_with_zero_degree(hass, config_entry)
+        coordinator = config_entry.runtime_data.forecast_coordinator
+        next_run = coordinator.last_run + _td(hours=1)
+        # The next run delivers nothing for the file.
+        assert not coordinator.store.put(
+            HOURLY_ZERO_DEGREE,
+            {},
+            run=next_run,
+            fetched_at=datetime(2026, 8, 27, 1, 30, tzinfo=UTC),
+            source="daily",
+        )
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+
+        assert _state(hass, "zero_degree_level") == "2505.0"
+        assert coordinator.store.is_stale(HOURLY_ZERO_DEGREE, next_run)
+
+
+async def test_zero_degree_sensor_is_fed_by_the_hourly_path_too(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A series filed by the hourly provider reaches the sensor at once, without
+    waiting for the coordinator's next tick (the v0.3.0 live failure)."""
+    from custom_components.meteoswiss_weather.store import ForecastStore
+
+    now = datetime(2026, 8, 27, 1, 30, tzinfo=UTC)
+    with freeze_time(now):
+        await _setup_with_zero_degree(hass, config_entry)
+        coordinator = config_entry.runtime_data.forecast_coordinator
+        # The daily block degraded: nothing in the store.
+        coordinator.store = ForecastStore()
+        coordinator.hourly_provider._store = coordinator.store
+        coordinator.async_update_listeners()
+        await hass.async_block_till_done()
+        assert _state(hass, "zero_degree_level") == STATE_UNKNOWN
+
+        # The hourly path delivers the file and publishes it.
+        hour = now.replace(minute=0)
+        coordinator.hourly_provider._publish(
+            [_hour_with_zero_degree(hour, 3100.0)], coordinator.last_run, now
+        )
+        await hass.async_block_till_done()
+        assert _state(hass, "zero_degree_level") == "3100.0"
+
+
+def _hour_with_zero_degree(when: datetime, level: float):
+    from custom_components.meteoswiss_weather.ogd import HourlyForecast
+
+    return HourlyForecast(time=when, zero_degree_level=level)

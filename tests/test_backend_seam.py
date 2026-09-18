@@ -109,7 +109,7 @@ class FakeBackend:
         for h in range(4)
     ]
 
-    async def fetch_daily(self, point: ForecastPoint) -> DailyBundle:
+    async def fetch_daily(self, point: ForecastPoint, *, run=None) -> DailyBundle:
         return DailyBundle(daily=self.DAILY)
 
     async def fetch_hourly(
@@ -118,6 +118,7 @@ class FakeBackend:
         *,
         horizon_days: int = -1,
         params: tuple[str, ...] = (),
+        run=None,
     ) -> list[HourlyForecast]:
         # The tiered provider (issue #68) asks for the temperature and the
         # point-major group on separate schedules; this in-memory backend

@@ -43,6 +43,7 @@ from . import MeteoSwissConfigEntry
 from .const import ATTRIBUTION, DOMAIN
 from .coordinator import ForecastCoordinator, PollenCoordinator, StationCoordinator
 from .ogd import DailyForecast, Observation, PollenObservation
+from .ogd.const import HOURLY_ZERO_DEGREE
 
 
 @dataclass(frozen=True, slots=True)
@@ -690,11 +691,13 @@ class PollenSensor(CoordinatorEntity[PollenCoordinator], SensorEntity):
 class ZeroDegreeSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
     """Current hour's zero-degree level (B8, issue #55).
 
-    Reads the coordinator's ``zero_degree_level`` map, which the daily refresh
-    fills from the ~5 KB point-major ``zprfr0hs`` block on every new run
-    (issue #107) — no hourly opt-in, no card and no ``get_forecasts`` call is
-    needed. Shows ``unknown`` (``None``) until the first refresh, or when the
-    block degraded (not published, not point-major, unreachable).
+    Reads the ``zprfr0hs`` series from the coordinator's forecast store
+    (ADR-0008), which the daily refresh fills from the point-major block on
+    every new run (issue #107) and the hourly provider fills whenever it
+    fetches the file — so no particular path, card or ``get_forecasts`` call is
+    needed. When a refresh could not deliver, the store keeps the previous
+    run's series, which still covers the coming hours. Shows ``unknown``
+    (``None``) only while no path has ever delivered the current hour.
 
     Re-evaluates on every coordinator refresh and at the top of each hour, so
     the value advances to the new hour without waiting for the next tick.
@@ -735,11 +738,8 @@ class ZeroDegreeSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
     @property
     def native_value(self) -> float | None:
         """Return the current hour's zero-degree level, or ``None`` when absent."""
-        data = self.coordinator.data
-        if data is None or not data.zero_degree_level:
-            return None
         this_hour = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
-        return data.zero_degree_level.get(this_hour)
+        return self.coordinator.store.value_at(HOURLY_ZERO_DEGREE, this_hour)
 
 
 class MeasurementTimeSensor(CoordinatorEntity[StationCoordinator], SensorEntity):

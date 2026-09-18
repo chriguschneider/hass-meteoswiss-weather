@@ -67,6 +67,9 @@ async def async_get_config_entry_diagnostics(
                     str(fc.last_exception) if fc.last_exception else None
                 ),
                 "last_run": fc.last_run.isoformat() if fc.last_run else None,
+                # Per-parameter series of the point and which path delivered
+                # them (ADR-0008).
+                "store": fc.store.as_diagnostics(fc.last_run),
                 "hourly": {
                     "enabled": fc.hourly_provider.enabled,
                     "last_fetch": (

@@ -47,9 +47,17 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class ForecastBackend(Protocol):
-    """A source of daily and hourly forecasts for a resolved point."""
+    """A source of daily and hourly forecasts for a resolved point.
 
-    async def fetch_daily(self, point: ForecastPoint) -> DailyBundle: ...
+    ``run`` is the run the caller already discovered this tick (ADR-0008
+    section 3): a backend that needs a run uses it instead of discovering one
+    again, and falls back to its own discovery when it is ``None`` or does not
+    carry the files it needs.
+    """
+
+    async def fetch_daily(
+        self, point: ForecastPoint, *, run: Run | None = None
+    ) -> DailyBundle: ...
 
     async def fetch_hourly(
         self,
@@ -57,6 +65,7 @@ class ForecastBackend(Protocol):
         *,
         horizon_days: int = HOURLY_HORIZON_FULL_RUN,
         params: tuple[str, ...] = HOURLY_REQUIRED_PARAMS,
+        run: Run | None = None,
     ) -> list[HourlyForecast]: ...
 
 
@@ -168,10 +177,20 @@ class BulkCsvBackend:
         self._block_run = run.timestamp
         return texts
 
-    async def fetch_daily(self, point: ForecastPoint) -> DailyBundle:
-        run = await latest_run(
-            self._session, COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS
-        )
+    async def _resolve_run(self, run: Run | None, params: tuple[str, ...]) -> Run:
+        """Use the caller's run when it carries ``params``, else discover one.
+
+        One STAC listing is ~600 KB (measured 2026-09-18), so the run the
+        coordinator discovered this tick is reused instead of listing again.
+        """
+        if run is not None and all(param in run.assets for param in params):
+            return run
+        return await latest_run(self._session, COLLECTION_FORECAST, params)
+
+    async def fetch_daily(
+        self, point: ForecastPoint, *, run: Run | None = None
+    ) -> DailyBundle:
+        run = await self._resolve_run(run, DAILY_REQUIRED_PARAMS)
         # Daily files are small; fetch them concurrently, one per parameter.
         # Fetch the point-major blocks concurrently with the daily files (each
         # ~5 KB via the block strategy — well inside the daily budget).
@@ -251,6 +270,7 @@ class BulkCsvBackend:
         *,
         horizon_days: int = HOURLY_HORIZON_FULL_RUN,
         params: tuple[str, ...] = HOURLY_REQUIRED_PARAMS,
+        run: Run | None = None,
     ) -> list[HourlyForecast]:
         # The bulk hourly files are the whole traffic budget (~30 MB each), so
         # this path only runs behind the opt-in option and the tiered schedule
@@ -270,7 +290,7 @@ class BulkCsvBackend:
         # the cache is absent (no prior daily call, or a different run), the
         # requested params are fetched the normal way — the same as before
         # issue #60.
-        run = await latest_run(self._session, COLLECTION_FORECAST, params)
+        run = await self._resolve_run(run, params)
         now = datetime.now(UTC)
         horizon_end = horizon_end_utc(horizon_days, now)
         horizon_start = now.replace(minute=0, second=0, microsecond=0)
