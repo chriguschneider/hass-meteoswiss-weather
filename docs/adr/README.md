@@ -38,3 +38,4 @@ added test coverage, and prose/style tweaks.
 - [0005 — The pollen dataset is in scope, as an opt-in on the existing entry](0005-pollen-dataset-in-scope.md)
 - [0006 — An optional second station from the precipitation-only network](0006-optional-precipitation-station.md)
 - [0007 — Station history is imported into long-term statistics on request only](0007-station-history-backfill.md)
+- [0008 — One run-scoped forecast store, filled by an escalating fetch](0008-run-scoped-forecast-store.md)
