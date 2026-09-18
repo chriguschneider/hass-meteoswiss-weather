@@ -239,6 +239,15 @@ HOURLY_HORIZON_FULL_RUN = -1
 HOURLY_BYTES_PER_HOUR = 200_000
 HOURLY_RANGE_SAFETY = 1.5
 
+# The escalation ladder (ADR-0008 section 4): a level that would need more than
+# this many requests for one file is skipped in favour of the next one, so
+# saving bytes never turns into a request storm. 96 lets a 72 h horizon stay on
+# row addressing. Owner decision 2026-09-18; tests/test_const.py asserts it.
+SERIES_REQUEST_CAP = 96
+# Hours of zero-degree level fetched with the daily refresh: the sensor shows
+# the current hour and steps through the cached hours between refreshes.
+DAILY_ZERO_DEGREE_WINDOW_HOURS = 48
+
 # A single data row is short (`id;type;YYYYMMDDHHMM;value`); this window is wide
 # enough to always contain a complete row plus its neighbouring boundaries.
 HOURLY_ROW_PROBE_BYTES = 1024

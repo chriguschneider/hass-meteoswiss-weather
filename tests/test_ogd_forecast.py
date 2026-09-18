@@ -334,9 +334,9 @@ async def test_bulk_backend_fetch_daily(session) -> None:
         for param in DAILY_REQUIRED_PARAMS:
             mock.get(_asset_url(param), status=200,
                      body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
-        # Block files — the wind fixtures are date-major so their guardrail
-        # fires (wind = None); the zero-degree fixture keeps the measured
-        # point-major order, so its block is read (issue #107).
+        # Block files — the wind and probability fixtures are date-major and
+        # need the whole run, so the ladder climbs to the full (tiny) file; the
+        # zero-degree fixture keeps a point-major order, so its block is read.
         for param in DAILY_BLOCK_PARAMS:
             mock.get(_asset_url(param), status=200,
                      body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
@@ -347,10 +347,10 @@ async def test_bulk_backend_fetch_daily(session) -> None:
     assert len(daily) == 9
     assert daily[0].temp_max == 29.3
     assert daily[0].symbol == 2
-    # The fixture wind files are date-major → guardrail fires → daily wind is None.
-    assert daily[0].native_wind_speed is None
-    # Same for the date-major rp0003i0 probability fixture (issue #112).
-    assert daily[0].precipitation_probability is None
+    # Date-major files are served, not refused (ADR-0008): the same values the
+    # aggregation tests below derive from these fixtures.
+    assert daily[0].native_wind_speed == pytest.approx(15.5)
+    assert daily[0].precipitation_probability == pytest.approx(30.0)
 
 
 # --- hourly parser ----------------------------------------------------------
@@ -878,53 +878,47 @@ async def test_bulk_backend_fetch_daily_with_point_major_wind(session) -> None:
     assert daily[0].precipitation_probability == pytest.approx(21.0)
 
 
-async def test_bulk_backend_fetch_daily_wind_not_point_major_returns_none(
+@freeze_time(datetime(2026, 8, 27, 1, 30, tzinfo=UTC))
+async def test_bulk_backend_date_major_blocks_are_served_by_escalation(
     session,
 ) -> None:
-    """Non-point-major wind file → guardrail fires, all daily wind fields = None.
+    """A date-major block file is served, never refused (ADR-0008 section 4).
 
-    No full download is attempted: the backend returns None and logs a warning.
-    The date-major fixture files trigger this path automatically.
+    Wind and probability need the whole run, so their date-major fixtures climb
+    to the full file; the zero-degree file is demanded for a window and is
+    row-addressed. This is the live v0.3.0 failure: upstream re-sorted
+    ``zprfr0hs`` and the old guardrail turned the sensor ``unknown``.
     """
     with aioresponses() as mock:
         mock.get(ITEMS_URL, status=200,
                  body=_fixture_bytes("ogd-local-forecasting_items.json"))
-        for param in DAILY_REQUIRED_PARAMS:
-            mock.get(_asset_url(param), status=200,
-                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
-        # Date-major fixture → classify_layout returns DATE_MAJOR → guardrail.
-        for param in DAILY_WIND_PARAMS:
+        for param in (*DAILY_REQUIRED_PARAMS, *DAILY_WIND_PARAMS,
+                      HOURLY_PRECIP_PROBABILITY):
             mock.get(_asset_url(param), status=200,
                      body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
         mock.get(_asset_url(HOURLY_ZERO_DEGREE), status=200,
                  body=_date_major_block_text(HOURLY_ZERO_DEGREE).encode("iso-8859-1"))
-        # The rp0003i0 fixture is date-major too → its guardrail fires as well.
-        mock.get(_asset_url(HOURLY_PRECIP_PROBABILITY), status=200,
-                 body=_fixture_bytes(
-                     f"vnut12.lssw.{RUN_TS}.{HOURLY_PRECIP_PROBABILITY}.csv"))
         backend = BulkCsvBackend(session)
         bundle = await backend.fetch_daily(_koeniz_point())
 
     daily = bundle.daily
-    # Guardrail fires: wind and probability are None for all nine days, and
-    # the zero-degree map is empty (issue #107) — nothing was downloaded in full.
-    assert all(d.native_wind_speed is None for d in daily)
-    assert all(d.native_wind_gust_speed is None for d in daily)
-    assert all(d.wind_bearing is None for d in daily)
-    assert all(d.precipitation_probability is None for d in daily)
-    assert bundle.zero_degree_level == {}
-    assert backend._block_texts == {}
-    # Temperature still populated.
     assert daily[0].temp_max == 29.3
+    assert daily[0].native_wind_speed == pytest.approx(15.5)
+    assert daily[0].precipitation_probability == pytest.approx(30.0)
+    # Row-addressed from the current hour on: 01:00 … 23:00 UTC of the file,
+    # the synthetic value being the hour number.
+    assert len(bundle.zero_degree_level) == 23
+    assert bundle.zero_degree_level[datetime(2026, 8, 27, 3, 0, tzinfo=UTC)] == 3.0
+    assert datetime(2026, 8, 27, 0, 0, tzinfo=UTC) not in bundle.zero_degree_level
+    # Only whole-run texts may stand in for an hourly fetch; the windowed
+    # zero-degree text must not.
+    assert set(DAILY_WIND_PARAMS) <= backend._block_whole
+    assert HOURLY_ZERO_DEGREE not in backend._block_whole
+    assert HOURLY_ZERO_DEGREE in backend._geometry
 
 
-async def test_bulk_backend_block_guardrail_is_per_file(session) -> None:
-    """One block degrading leaves the others intact (issue #107).
-
-    A date-major zero-degree file fires its own guardrail; the point-major wind
-    files still populate the daily wind. And the other way round: wind files
-    that are not point-major do not take the zero-degree level down with them.
-    """
+async def test_bulk_backend_one_unreachable_block_leaves_the_others(session) -> None:
+    """Only upstream trouble drops a file, and only that file (ADR-0008)."""
     with aioresponses() as mock:
         mock.get(ITEMS_URL, status=200,
                  body=_fixture_bytes("ogd-local-forecasting_items.json"))
@@ -934,8 +928,7 @@ async def test_bulk_backend_block_guardrail_is_per_file(session) -> None:
         for param in (*DAILY_WIND_PARAMS, HOURLY_PRECIP_PROBABILITY):
             mock.get(_asset_url(param), status=200,
                      body=_point_major_wind_text(param).encode("iso-8859-1"))
-        mock.get(_asset_url(HOURLY_ZERO_DEGREE), status=200,
-                 body=_date_major_block_text(HOURLY_ZERO_DEGREE).encode("iso-8859-1"))
+        mock.get(_asset_url(HOURLY_ZERO_DEGREE), status=503, repeat=True)
         bundle = await BulkCsvBackend(session).fetch_daily(_koeniz_point())
 
     assert bundle.daily[0].native_wind_speed == pytest.approx(15.5)
@@ -949,8 +942,7 @@ async def test_bulk_backend_block_guardrail_is_per_file(session) -> None:
             mock.get(_asset_url(param), status=200,
                      body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
         for param in (*DAILY_WIND_PARAMS, HOURLY_PRECIP_PROBABILITY):
-            mock.get(_asset_url(param), status=200,
-                     body=_date_major_block_text(param).encode("iso-8859-1"))
+            mock.get(_asset_url(param), status=503, repeat=True)
         mock.get(_asset_url(HOURLY_ZERO_DEGREE), status=200,
                  body=_point_major_wind_text(HOURLY_ZERO_DEGREE).encode("iso-8859-1"))
         bundle = await BulkCsvBackend(session).fetch_daily(_koeniz_point())
@@ -958,6 +950,31 @@ async def test_bulk_backend_block_guardrail_is_per_file(session) -> None:
     assert all(d.native_wind_speed is None for d in bundle.daily)
     assert all(d.precipitation_probability is None for d in bundle.daily)
     assert len(bundle.zero_degree_level) == 24
+
+
+@freeze_time(datetime(2026, 8, 27, 1, 30, tzinfo=UTC))
+async def test_bulk_backend_remembers_a_file_without_the_point(session) -> None:
+    """A file proven (by the full download) to lack the point is not downloaded
+    again the same UTC day (ADR-0008: the proof is not repeated every run)."""
+    from custom_components.meteoswiss_weather.ogd.stac import Run
+
+    rows = [f"point_id;point_type_id;Date;{HOURLY_ZERO_DEGREE}"]
+    for h in range(24):
+        stamp = datetime(2026, 8, 27, h, 0, tzinfo=UTC).strftime("%Y%m%d%H%M")
+        rows += [f"1;1;{stamp};3000", f"5000;3;{stamp};3100"]
+    without_the_point = ("\n".join(rows) + "\n").encode("iso-8859-1")
+
+    assets = {HOURLY_ZERO_DEGREE: _asset_url(HOURLY_ZERO_DEGREE)}
+    backend = BulkCsvBackend(session)
+    with aioresponses() as mock:
+        mock.get(_asset_url(HOURLY_ZERO_DEGREE), status=200, body=without_the_point)
+        first = Run(timestamp=datetime(2026, 8, 27, 2, 0, tzinfo=UTC), assets=assets)
+        assert await backend._get_block_texts(_koeniz_point(), first) == {}
+    assert HOURLY_ZERO_DEGREE in backend._absent
+
+    # No mock registered: a second attempt the same day would fail the test.
+    second = Run(timestamp=datetime(2026, 8, 27, 3, 0, tzinfo=UTC), assets=assets)
+    assert await backend._get_block_texts(_koeniz_point(), second) == {}
 
 
 async def test_get_block_texts_missing_assets_are_skipped(session) -> None:

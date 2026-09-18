@@ -388,3 +388,179 @@ def test_ragged_head_within_single_tier() -> None:
     assert hourly[0].time == h0
     assert hourly[0].wind_bearing == 210.0
     assert hourly[0].wind_speed_kmh == 12.0
+
+
+# --- the escalation ladder (ADR-0008 section 4) -----------------------------
+
+_BIG_HOURS = 60
+_BIG_POINTS = [(pid, 1) for pid in range(1, 301)] + [
+    (pid, 2) for pid in range(309700, 310000)
+]
+
+
+def _big_date_major(*, drop: tuple[int, int, int] | None = None) -> bytes:
+    """A date-major file big enough that a 2 KB window needs a real prediction.
+
+    600 points per hour block (~13 KB) over 60 hours, with values of varying
+    width so the blocks differ in size and a position extrapolated from the file
+    start drifts — the property measured on the live ``tre200h0``. Within a
+    block the points keep one fixed (unsorted) order, like upstream. ``drop``
+    removes one ``(point_id, point_type_id, hour)`` row.
+    """
+    order = _BIG_POINTS[::2] + _BIG_POINTS[1::2]  # fixed, but not sorted
+    lines = [_HEADER]
+    for h in range(_BIG_HOURS):
+        when = _H0 + timedelta(hours=h)
+        for pid, ptype in order:
+            if drop == (pid, ptype, h):
+                continue
+            value = ((pid * 7 + h * 131) % 20000) / 10  # "0.7" … "1999.9"
+            lines.append(f"{pid};{ptype};{_stamp(when)};{value}")
+    return ("\n".join(lines) + "\n").encode("iso-8859-1")
+
+
+def _counting(data: bytes, cap: int | None = 96) -> H._CountingReader:
+    return H._CountingReader(_MemReader(data), cap)
+
+
+async def _series(data: bytes, *, start=None, end=None, cap=96, **hints):
+    return await H._fetch_series(
+        _counting(data, cap),
+        _TARGET,
+        window_start=start,
+        window_end=end,
+        block_start=hints.get("block_start"),
+        geometry=hints.get("geometry"),
+    )
+
+
+def _series_lines(result) -> list[str]:
+    return [line for line in result.text.split("\n")[1:] if line]
+
+
+def _series_hours(result) -> list[str]:
+    return [line.split(";")[2] for line in _series_lines(result)]
+
+
+async def test_ladder_row_addresses_a_date_major_window() -> None:
+    """The window is served row by row: every hour, only the point, few bytes."""
+    data = _big_date_major()
+    start, end = _H0 + timedelta(hours=10), _H0 + timedelta(hours=40)
+    result = await _series(data, start=start, end=end)
+
+    assert result.layout is FileLayout.DATE_MAJOR
+    assert result.level == 1
+    assert not result.whole_run
+    assert _series_hours(result) == [
+        _stamp(start + timedelta(hours=h)) for h in range(30)
+    ]
+    assert all(
+        line.startswith(f"{_TARGET.point_id};{_TARGET.point_type_id};")
+        for line in _series_lines(result)
+    )
+    assert result.requests <= 96
+    assert result.bytes < len(data) / 4
+    # The parser reads the text like any other file.
+    assert len(parse_hourly({"tre200h0": result.text}, _TARGET, None)) == 30
+
+
+async def test_ladder_geometry_hint_saves_the_learning_scan() -> None:
+    data = _big_date_major()
+    start, end = _H0 + timedelta(hours=10), _H0 + timedelta(hours=20)
+    cold = await _series(data, start=start, end=end)
+    warm = await _series(data, start=start, end=end, geometry=cold.geometry)
+
+    assert cold.geometry is not None
+    assert _series_hours(warm) == _series_hours(cold)
+    assert warm.level == 0
+    assert warm.requests < cold.requests
+
+
+async def test_ladder_wrong_geometry_hint_is_detected_not_trusted() -> None:
+    """A stale hint costs wider reads, never a wrong or missing row."""
+    data = _big_date_major()
+    start, end = _H0 + timedelta(hours=5), _H0 + timedelta(hours=15)
+    good = await _series(data, start=start, end=end)
+    bad_hint = H.RowGeometry(
+        block_bytes=good.geometry.block_bytes * 0.8,
+        row_offset=17,
+        anchor_stamp=_stamp(start),
+        anchor_offset=123,
+    )
+    result = await _series(data, start=start, end=end, geometry=bad_hint)
+
+    assert _series_lines(result) == _series_lines(good)
+    assert result.level <= 2  # a fresh look, not a prefix or the whole file
+
+
+async def test_ladder_climbs_to_the_full_file_when_a_row_is_missing() -> None:
+    """Addressing cannot prove hour 20, the prefix cannot either, so the whole
+    file is read and what upstream has is returned (quality first)."""
+    data = _big_date_major(drop=(_TARGET.point_id, _TARGET.point_type_id, 20))
+    start, end = _H0 + timedelta(hours=10), _H0 + timedelta(hours=30)
+    result = await _series(data, start=start, end=end)
+
+    assert result.level == 4
+    assert result.whole_run
+    hours = _series_hours(result)
+    assert len(hours) == _BIG_HOURS - 1
+    assert _stamp(_H0 + timedelta(hours=20)) not in hours
+
+
+async def test_ladder_skips_addressing_beyond_the_request_cap() -> None:
+    """A window that needs more requests than the cap goes straight to the
+    prefix, so saving bytes never becomes a request storm."""
+    data = _big_date_major()
+    start, end = _H0 + timedelta(hours=2), _H0 + timedelta(hours=32)
+    result = await _series(data, start=start, end=end, cap=20)
+
+    assert result.level == 3
+    assert not result.whole_run
+    hours = _series_hours(result)
+    assert _stamp(start) in hours and _stamp(end - timedelta(hours=1)) in hours
+
+
+async def test_ladder_whole_run_of_a_date_major_file_is_the_full_file() -> None:
+    result = await _series(_big_date_major())
+    assert result.level == 4
+    assert result.whole_run
+    assert len(_series_hours(result)) == _BIG_HOURS
+
+
+async def test_ladder_window_outside_the_file_is_empty_without_escalating() -> None:
+    data = _big_date_major()
+    start = _H0 + timedelta(days=30)
+    result = await _series(data, start=start, end=start + timedelta(hours=48))
+
+    assert not result.has_rows
+    assert result.level < 3
+    assert result.bytes < len(data) / 4
+
+
+async def test_ladder_point_major_block_is_whole_run_and_hint_is_level_zero() -> None:
+    data = _point_major_type()
+    start, end = _H0 + timedelta(hours=3), _H0 + timedelta(hours=9)
+    cold = await _series(data, start=start, end=end)
+    warm = await _series(data, start=start, end=end, block_start=cold.block_start)
+
+    assert cold.level == 1 and warm.level == 0
+    assert cold.whole_run and warm.whole_run
+    assert len(_series_hours(cold)) == _HOURS
+    assert warm.requests < cold.requests
+
+
+async def test_ladder_unrecognised_layout_reads_the_full_file() -> None:
+    result = await _series(_shuffled())
+    assert result.layout is FileLayout.FALLBACK
+    assert result.level == 4
+    assert len(_series_hours(result)) == _HOURS
+
+
+async def test_ladder_absent_point_is_proven_by_the_full_file() -> None:
+    rows = [r for r in _rows() if (r[0], r[1]) != (_TARGET.point_id, 2)]
+    data = _render(sorted(rows, key=lambda r: (r[2], r[1], r[0])))
+    result = await _series(
+        data, start=_H0 + timedelta(hours=1), end=_H0 + timedelta(hours=5)
+    )
+    assert result.level == 4
+    assert not result.has_rows

@@ -134,6 +134,13 @@ def test_daily_block_params_are_point_major_files() -> None:
     assert set(DAILY_BLOCK_PARAMS) <= set(HOURLY_POINT_MAJOR_PARAMS)
 
 
+def test_series_request_cap_is_the_owner_decision() -> None:
+    """ADR-0008: 96 requests per file before the ladder jumps a level."""
+    from custom_components.meteoswiss_weather.ogd.const import SERIES_REQUEST_CAP
+
+    assert SERIES_REQUEST_CAP == 96
+
+
 def test_station_and_forecast_intervals() -> None:
     """Station polls every 10 min; the forecast run is checked hourly."""
     assert STATION_UPDATE_INTERVAL == timedelta(minutes=10)

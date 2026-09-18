@@ -230,8 +230,8 @@ files. Sampling rows at fixed byte offsets across each file shows two layouts:
 
 | layout | sort key | files |
 |---|---|---|
-| **date-major** (all points per hour block, ~150 KB/h) | `Date`, then point | `tre200h0`, `treq10h0`, `treq90h0` |
-| **point-major** (one point's ~220 rows contiguous, ~5 KB) | `(point_type_id, point_id, Date)` — ends with type-3 rows | `rre150h0`, `rre003i0`, `rp0003i0`, `fu3010h0`, `fu3010h1`, `dkl010h0`, `zprfr0hs`, `gre000h0`, `sre000h0` |
+| **date-major** (all points per hour block, ~150 KB/h) | `Date`, then a fixed point order | `tre200h0`, `treq10h0`, `treq90h0`; `zprfr0hs` since at least 2026-09-16 (see below) |
+| **point-major** (one point's ~220 rows contiguous, ~5 KB) | `(point_type_id, point_id, Date)` — ends with type-3 rows | `rre150h0`, `rre003i0`, `rp0003i0`, `fu3010h0`, `fu3010h1`, `dkl010h0`, `gre000h0`, `sre000h0` (and `zprfr0hs` until some day between 2026-08-28 and 2026-09-16) |
 | **point-major, id-sorted** (types mixed) | `(point_id, Date)` | `jww003i0` (`834;3` at 3 MB, `5025;1` at 6 MB); `nprohihs`, `npromths`, `nprolohs` since 2026-08-31 (see below) |
 
 **Cloud-layer unit change (issue #97):** `nprohihs`, `npromths`, `nprolohs`
@@ -249,6 +249,33 @@ change also re-sorted the three cloud files from date-major to point-major
 these files have now demonstrably flipped layout once, so the weekly smoke
 test accepts **either** layout for them (failing only on "other") and prints
 the observed layout instead of pinning one.
+
+**Zero-degree row-order change (issue #116):** `zprfr0hs` was point-major on
+2026-08-28 and is date-major in every run sampled from 2026-09-16 on. Like the
+cloud files, the change was not announced and MeteoSwiss documents no row
+order at all, so no layout is ever assumed: the fetch ladder
+(`ogd/hourly.py`, `fetch_series`, ADR-0008) detects it per fetch and climbs to
+a bigger read when a cheap one cannot prove it delivered every row.
+
+**A date-major file is addressable per row (measured 2026-09-18, runs
+`202609180500`/`0600`, point 309800;2):** every hour block lists the same
+points in the same order, so the point sits at the same row index in every
+block (2832 for Köniz in `zprfr0hs`, `tre200h0` and `tre200px`). The index is
+per file, not global — `tre200h0` carries 5629 points per block, `zprfr0hs` and
+`tre200px` 5632. `zprfr0hs` blocks are all exactly 148 428 bytes (integer
+values of equal width); `tre200h0` blocks vary by about ±60 bytes, so a
+position extrapolated from the file start drifts by kilobytes over a day and
+each found row must re-anchor the next prediction. Live cost for a 48 h window
+of `zprfr0hs`: 63 requests / 307 KB cold, 61 requests / 113 KB with the
+remembered position, instead of a 1.5–4 MB prefix or the 33 MB file.
+
+**The daily files are date-major too:** `tre200px` has nine day blocks of 5632
+rows (~148 KB each, ±100 bytes) with the point at a fixed row index.
+
+**Run discovery:** the items listing is ~620 KB, `Cache-Control: max-age=600`,
+no `ETag`. The single day item (`/items/<yyyymmdd>-ch`) is ~80 KB, carries an
+`ETag` and answers `If-None-Match` with 304. A `HEAD` on a run's asset answers
+200 when published and **403** when not.
 
 - The origin is **CloudFront over S3**. `Range` is answered with 206 and
   `Accept-Ranges: bytes`; `If-None-Match` **plus** `Range` answers 304 when

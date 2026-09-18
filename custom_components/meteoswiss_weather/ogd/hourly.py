@@ -22,6 +22,7 @@ unit-tested against an in-memory reader with no network.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -39,6 +40,7 @@ from .const import (
     HOURLY_HORIZON_FULL_RUN,
     HOURLY_RANGE_SAFETY,
     HOURLY_ROW_PROBE_BYTES,
+    SERIES_REQUEST_CAP,
 )
 from .http import get_bytes
 from .models import FileLayout, ForecastPoint
@@ -503,29 +505,437 @@ async def fetch_hourly_file(
     )
 
 
-async def fetch_point_block(
+# ---------------------------------------------------------------------------
+# The escalation ladder (ADR-0008 section 4)
+# ---------------------------------------------------------------------------
+#
+# ``fetch_series`` returns the configured point's rows of one file. It starts
+# with the cheapest strategy the file's layout admits and climbs until a level
+# *verifies complete*; the last rung is the whole file. It never gives up for
+# cost — only upstream errors (raised as OgdConnectionError) end it early.
+#
+#   L0  remembered position verified with a single read per block/row
+#   L1  layout-aware addressing (binary-searched block / row addressing)
+#   L2  a window of whole hour blocks around a row that L1 could not find
+#   L3  the prefix up to the end of the demanded window
+#   L4  the whole file
+
+# Row-addressing windows around a predicted row position: L1 tries these in
+# turn; L2 then reads a few whole hour blocks around the prediction.
+_ROW_WINDOWS = (2048, 16384)
+_BLOCK_WINDOW_BLOCKS = 2.5
+# Chunk size while learning a date-major file's geometry from its first block.
+_LEARN_CHUNK_BYTES = 65_536
+# Classification, header, first/last row and geometry learning, on top of one
+# read per demanded hour, when deciding whether row addressing fits the cap.
+_ADDRESSING_OVERHEAD_REQUESTS = 16
+
+
+class _NotProven(Exception):
+    """A level could not prove it delivered every demanded row; climb."""
+
+
+class _RequestCapExceeded(_NotProven):
+    """A level needed more requests than the cap allows; climb."""
+
+
+class _CountingReader:
+    """A :class:`RangeReader` that counts requests/bytes and enforces a cap."""
+
+    def __init__(self, inner: RangeReader, cap: int | None) -> None:
+        self._inner = inner
+        self.cap = cap
+        self.requests = 0
+        self.bytes = 0
+
+    def _charge(self) -> None:
+        self.requests += 1
+        if self.cap is not None and self.requests > self.cap:
+            raise _RequestCapExceeded(f"more than {self.cap} requests")
+
+    async def size(self) -> int:
+        return await self._inner.size()
+
+    async def read(self, start: int, length: int) -> bytes:
+        self._charge()
+        data = await self._inner.read(start, length)
+        self.bytes += len(data)
+        return data
+
+    async def read_all(self) -> bytes:
+        self._charge()
+        data = await self._inner.read_all()
+        self.bytes += len(data)
+        return data
+
+
+@dataclass(frozen=True, slots=True)
+class RowGeometry:
+    """Where a point's row sits in a date-major file (a hint, always verified).
+
+    Every hour block of a date-major file lists the same points in the same
+    order (measured 2026-09-18), so the point is ``row_offset`` bytes into
+    every block, give or take the width of a few values. ``block_bytes`` is the
+    running estimate of one hour block's size. ``anchor_stamp``/``anchor_offset``
+    name one row found last time: byte offsets are stable across the runs of a
+    UTC day, so the next fetch starts its predictions right next to its window
+    instead of extrapolating from the file start.
+    """
+
+    block_bytes: float
+    row_offset: int
+    anchor_stamp: str | None = None
+    anchor_offset: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SeriesResult:
+    """The point's rows of one file, and what it took to get them."""
+
+    text: str  # header + only the point's rows, ready for the shared parsers
+    layout: FileLayout
+    level: int  # 0..4, the highest rung of the ladder that was needed
+    requests: int
+    bytes: int
+    # True when ``text`` holds every row of the point in the file, so any
+    # consumer may reuse it; False when it was cut to the demanded window.
+    whole_run: bool
+    block_start: int | None = None  # point-major hint for the next fetch
+    geometry: RowGeometry | None = None  # date-major hint for the next fetch
+
+    @property
+    def has_rows(self) -> bool:
+        """Whether the file carried any row for the point."""
+        return self.text.count("\n") > 1
+
+
+def _needle(point: ForecastPoint, stamp: str) -> bytes:
+    return f"\n{point.point_id};{point.point_type_id};{stamp};".encode("ascii")
+
+
+def _stamp(when: datetime) -> str:
+    return when.strftime("%Y%m%d%H%M")
+
+
+def _filter_point_rows(text: str, point: ForecastPoint) -> str:
+    """Header plus only ``point``'s rows. A plain function (runs in an executor)."""
+    prefix = f"{point.point_id};{point.point_type_id};"
+    lines = text.split("\n")
+    kept = [lines[0], *(line for line in lines[1:] if line.startswith(prefix))]
+    return "\n".join(kept) + "\n"
+
+
+def _point_stamps(text: str) -> list[str]:
+    """The ``Date`` stamps of the data rows in an already-filtered text."""
+    return [
+        parts[2]
+        for line in text.split("\n")[1:]
+        if len(parts := line.split(";", 3)) >= 3
+    ]
+
+
+def _window_hours(
+    start: datetime, end: datetime, first: datetime, last: datetime
+) -> list[datetime]:
+    """The full hours of ``[start, end)`` that the file ``[first, last]`` covers."""
+    lo = max(start, first).replace(minute=0, second=0, microsecond=0)
+    hi = min(end, last + timedelta(hours=1))
+    hours = []
+    when = lo
+    while when < hi:
+        hours.append(when)
+        when += timedelta(hours=1)
+    return hours
+
+
+async def _learn_geometry(
+    reader: RangeReader, point: ForecastPoint, first: _Row
+) -> RowGeometry:
+    """Scan the first hour block for its size and the point's offset in it."""
+    size = await reader.size()
+    pos = first.start
+    line_start = first.start
+    pending = b""
+    row_offset: int | None = None
+    while pos < size:
+        chunk = await reader.read(pos, _LEARN_CHUNK_BYTES)
+        if not chunk:
+            break
+        pos += len(chunk)
+        data = pending + chunk
+        cursor = 0
+        while (nl := data.find(b"\n", cursor)) != -1:
+            row = _parse_row(line_start, data[cursor:nl])
+            if row is not None:
+                if row.date != first.date:
+                    if row_offset is None:
+                        raise _NotProven("point not in the first hour block")
+                    return RowGeometry(
+                        block_bytes=float(line_start - first.start),
+                        row_offset=row_offset,
+                    )
+                if (
+                    row.point_id == point.point_id
+                    and row.point_type_id == point.point_type_id
+                ):
+                    row_offset = line_start - first.start
+            line_start += nl - cursor + 1
+            cursor = nl + 1
+        pending = data[cursor:]
+    if row_offset is None:
+        raise _NotProven("point not in the first hour block")
+    # A single-block file: the block runs to the end of the file.
+    return RowGeometry(block_bytes=float(size - first.start), row_offset=row_offset)
+
+
+async def _find_row(
+    reader: RangeReader, predicted: float, needle: bytes, windows: tuple[int, ...]
+) -> tuple[int, bytes] | None:
+    """Look for ``needle`` in windows centred on ``predicted``; (offset, line)."""
+    size = await reader.size()
+    for window in windows:
+        start = max(0, int(predicted) - window // 2)
+        if start >= size:
+            return None
+        data = await reader.read(start, window)
+        at = data.find(needle)
+        if at == -1:
+            continue
+        line_start = at + 1
+        end = data.find(b"\n", line_start)
+        if end == -1:
+            data += await reader.read(start + len(data), HOURLY_ROW_PROBE_BYTES)
+            end = data.find(b"\n", line_start)
+            if end == -1:
+                end = len(data)
+        return start + line_start, data[line_start:end]
+    return None
+
+
+async def _fetch_rows_date_major(
+    reader: RangeReader,
+    point: ForecastPoint,
+    window_start: datetime,
+    window_end: datetime,
+    geometry: RowGeometry | None,
+) -> tuple[str, RowGeometry | None, int]:
+    """Row-address the point's rows for the window; ``(text, geometry, level)``.
+
+    Each verified row re-anchors the prediction for the next hour, because hour
+    blocks differ by a few dozen bytes (variable-width values) and a position
+    extrapolated from the file start drifts by kilobytes over a day.
+    """
+    header = await _read_header(reader)
+    size = await reader.size()
+    first = await _read_row_after(reader, 0)
+    last = await _read_row_before(reader, size)
+    first_dt = _dt_from_stamp(first.date) if first is not None else None
+    last_dt = _dt_from_stamp(last.date) if last is not None else None
+    if first is None or first_dt is None or last_dt is None:
+        raise _NotProven("could not read the file's first/last row")
+
+    hours = _window_hours(window_start, window_end, first_dt, last_dt)
+    if not hours:
+        return header.decode(FORECAST_ENCODING), geometry, 0
+
+    level = 0 if geometry is not None else 1
+    if geometry is None:
+        geometry = await _learn_geometry(reader, point, first)
+    block = geometry.block_bytes
+    anchor_idx, anchor_off = 0, first.start + geometry.row_offset
+    # A remembered row is only trusted after it is seen again at its place: on
+    # a new UTC day the file starts 24 blocks later and the offset is stale.
+    anchor_dt = (
+        _dt_from_stamp(geometry.anchor_stamp) if geometry.anchor_stamp else None
+    )
+    if (
+        anchor_dt is not None
+        and geometry.anchor_offset is not None
+        and anchor_dt >= first_dt
+    ):
+        seen = await _find_row(
+            reader,
+            geometry.anchor_offset,
+            _needle(point, geometry.anchor_stamp or ""),
+            _ROW_WINDOWS[:1],
+        )
+        if seen is not None:
+            anchor_idx = int((anchor_dt - first_dt).total_seconds() // 3600)
+            anchor_off = seen[0]
+
+    lines: list[bytes] = []
+    first_found: tuple[str, int] | None = None
+    for when in hours:
+        idx = int((when - first_dt).total_seconds() // 3600)
+        predicted = anchor_off + (idx - anchor_idx) * block
+        needle = _needle(point, _stamp(when))
+        found = await _find_row(reader, predicted, needle, _ROW_WINDOWS[:1])
+        if found is None:
+            level = max(level, 1)
+            found = await _find_row(reader, predicted, needle, _ROW_WINDOWS[1:])
+        if found is None:
+            level = 2
+            found = await _find_row(
+                reader, predicted, needle, (int(block * _BLOCK_WINDOW_BLOCKS),)
+            )
+        if found is None:
+            raise _NotProven(f"row for {_stamp(when)} not found by addressing")
+        offset, line = found
+        if idx != anchor_idx:
+            block = (block + (offset - anchor_off) / (idx - anchor_idx)) / 2
+        anchor_idx, anchor_off = idx, offset
+        if first_found is None:
+            first_found = (_stamp(when), offset)
+        lines.append(line)
+
+    text = (header + b"\n".join(lines) + b"\n").decode(FORECAST_ENCODING)
+    learned = RowGeometry(
+        block_bytes=block,
+        row_offset=geometry.row_offset,
+        anchor_stamp=first_found[0] if first_found else None,
+        anchor_offset=first_found[1] if first_found else None,
+    )
+    return text, learned, level
+
+
+def _window_complete(
+    text: str, window_start: datetime, window_end: datetime
+) -> bool:
+    """Whether a filtered prefix text holds every hour it can be expected to."""
+    stamps = _point_stamps(text)
+    if not stamps:
+        return False
+    first_dt, last_dt = _dt_from_stamp(stamps[0]), _dt_from_stamp(stamps[-1])
+    if first_dt is None or last_dt is None:
+        return False
+    have = set(stamps)
+    return all(
+        _stamp(hour) in have
+        for hour in _window_hours(window_start, window_end, first_dt, last_dt)
+    ) and last_dt + timedelta(hours=1) >= window_end
+
+
+async def _fetch_series(
+    reader: _CountingReader,
+    point: ForecastPoint,
+    *,
+    window_start: datetime | None,
+    window_end: datetime | None,
+    block_start: int | None,
+    geometry: RowGeometry | None,
+) -> SeriesResult:
+    """Climb the ladder over ``reader`` (the network-free core of fetch_series)."""
+    loop = asyncio.get_running_loop()
+    layout = FileLayout.FALLBACK
+    windowed = window_start is not None and window_end is not None
+    try:
+        layout = await classify_layout(reader)
+        if layout in (FileLayout.POINT_MAJOR_TYPE, FileLayout.POINT_MAJOR_ID):
+            text, start = await _fetch_point_major(reader, layout, point, block_start)
+            stamps = _point_stamps(text)
+            # The block is read until the key changes, so it is complete by
+            # construction; an empty or unordered one is "not proven".
+            if stamps and stamps == sorted(set(stamps)):
+                return SeriesResult(
+                    text=text,
+                    layout=layout,
+                    level=0 if block_start is not None and start == block_start else 1,
+                    requests=reader.requests,
+                    bytes=reader.bytes,
+                    whole_run=True,
+                    block_start=start,
+                )
+            raise _NotProven("empty or unordered point block")
+        if layout is FileLayout.DATE_MAJOR and windowed:
+            assert window_start is not None and window_end is not None
+            demanded = int((window_end - window_start).total_seconds() // 3600) + 1
+            if reader.cap is not None and (
+                demanded + _ADDRESSING_OVERHEAD_REQUESTS > reader.cap
+            ):
+                raise _RequestCapExceeded("window too long for row addressing")
+            try:
+                text, geometry, level = await _fetch_rows_date_major(
+                    reader, point, window_start, window_end, geometry
+                )
+            except _RequestCapExceeded:
+                raise
+            except _NotProven:
+                if geometry is None:
+                    raise
+                # A stale hint must cost a fresh look, not a big download.
+                text, geometry, level = await _fetch_rows_date_major(
+                    reader, point, window_start, window_end, None
+                )
+            return SeriesResult(
+                text=text,
+                layout=layout,
+                level=level,
+                requests=reader.requests,
+                bytes=reader.bytes,
+                whole_run=False,
+                geometry=geometry,
+            )
+        raise _NotProven("no addressing strategy for this layout and demand")
+    except _NotProven as reason:
+        _LOGGER.debug("series fetch escalates past addressing: %s", reason)
+
+    # From here on bytes are spent rather than requests.
+    reader.cap = None
+    if layout is FileLayout.DATE_MAJOR and windowed:
+        assert window_start is not None and window_end is not None
+        prefix = await _fetch_date_major(reader, window_end)
+        text = await loop.run_in_executor(None, _filter_point_rows, prefix, point)
+        if _window_complete(text, window_start, window_end):
+            return SeriesResult(
+                text=text,
+                layout=layout,
+                level=3,
+                requests=reader.requests,
+                bytes=reader.bytes,
+                whole_run=False,
+                geometry=geometry,
+            )
+
+    full = (await reader.read_all()).decode(FORECAST_ENCODING)
+    text = await loop.run_in_executor(None, _filter_point_rows, full, point)
+    return SeriesResult(
+        text=text,
+        layout=layout,
+        level=4,
+        requests=reader.requests,
+        bytes=reader.bytes,
+        whole_run=True,
+    )
+
+
+async def fetch_series(
     session: aiohttp.ClientSession,
     url: str,
     point: ForecastPoint,
     *,
-    cached_start: int | None = None,
-) -> HourlyFileResult | None:
-    """Fetch the point's block from a point-major hourly file for the daily refresh.
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
+    block_start: int | None = None,
+    geometry: RowGeometry | None = None,
+    request_cap: int | None = SERIES_REQUEST_CAP,
+) -> SeriesResult:
+    """Fetch ``point``'s rows of one file, as cheaply as can be proven complete.
 
-    Used for the wind files (issue #60), the precipitation probability (issue
-    #112) and the zero-degree level (issue #107), which ride along with every
-    daily refresh. A default feature must never
-    trigger a full 30 MB download (ADR-0002 guardrail): returns ``None`` when
-    the file is not point-major so the caller can set the dependent fields to
-    ``None`` and log a warning. When the file is point-major the full point
-    block (~5 KB) is fetched and returned as a :class:`HourlyFileResult`.
+    ``window_start``/``window_end`` (aware UTC) name the hours the caller needs;
+    ``None`` means the whole run. ``block_start`` and ``geometry`` are the hints
+    a previous :class:`SeriesResult` returned; they only ever save requests, a
+    wrong hint is detected and costs a wider read. A level that would need more
+    than ``request_cap`` requests is skipped for the next one (ADR-0008: 96).
     """
-    reader = AiohttpRangeReader(session, url)
-    layout = await classify_layout(reader)
-    if layout not in (FileLayout.POINT_MAJOR_TYPE, FileLayout.POINT_MAJOR_ID):
-        return None
-    text, block_start = await _fetch_point_major(reader, layout, point, cached_start)
-    return HourlyFileResult(text=text, layout=layout, block_start=block_start)
+    reader = _CountingReader(AiohttpRangeReader(session, url), request_cap)
+    return await _fetch_series(
+        reader,
+        point,
+        window_start=window_start,
+        window_end=window_end,
+        block_start=block_start,
+        geometry=geometry,
+    )
 
 
 def horizon_end_utc(horizon_days: int | None, now: datetime) -> datetime | None:
