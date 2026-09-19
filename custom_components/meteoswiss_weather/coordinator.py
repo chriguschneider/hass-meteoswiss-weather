@@ -221,6 +221,11 @@ class HourlyRefresher:
         return self._enabled
 
     @property
+    def horizon_days(self) -> int:
+        """The configured hourly forecast horizon in local calendar days."""
+        return self._horizon_days
+
+    @property
     def demanded_params(self) -> tuple[str, ...]:
         """Every hourly parameter the enabled features demand (empty when off)."""
         return self._demand.params if self._demand is not None else ()
@@ -686,7 +691,18 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
                 # The backend downloads the small daily files (plus the
                 # point-major wind and zero-degree blocks) and parses them off
                 # the event loop; a future per-point backend swaps in here.
-                bundle = await self._backend.fetch_daily(self._point, run=run)
+                # Pass the hourly horizon so the daily path fetches zprfr0hs
+                # with a covering window when the hourly option is on, avoiding
+                # a duplicate download of the same file (issue #134).
+                bundle = await self._backend.fetch_daily(
+                    self._point,
+                    run=run,
+                    hourly_horizon_days=(
+                        self.hourly_refresher.horizon_days
+                        if self.hourly_refresher.enabled
+                        else None
+                    ),
+                )
             except OgdParseError as err:
                 async_create_issue(
                     self.hass,

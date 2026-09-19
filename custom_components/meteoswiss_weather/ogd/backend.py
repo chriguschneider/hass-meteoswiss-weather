@@ -94,7 +94,11 @@ class ForecastBackend(Protocol):
     """
 
     async def fetch_daily(
-        self, point: ForecastPoint, *, run: Run | None = None
+        self,
+        point: ForecastPoint,
+        *,
+        run: Run | None = None,
+        hourly_horizon_days: int | None = None,
     ) -> DailyBundle: ...
 
     async def fetch_hourly(
@@ -258,7 +262,10 @@ class BulkCsvBackend:
         return result.text
 
     async def _get_block_texts(
-        self, point: ForecastPoint, run: Run
+        self,
+        point: ForecastPoint,
+        run: Run,
+        hourly_horizon_days: int | None = None,
     ) -> dict[str, str]:
         """Return the point's rows of every daily block file for ``run``.
 
@@ -295,10 +302,27 @@ class BulkCsvBackend:
         # a date-major file is row-addressed for this window only. The wind and
         # probability files feed per-day aggregates and need the whole run.
         this_hour = now.replace(minute=0, second=0, microsecond=0)
+        # Covering window for zprfr0hs: when the hourly option is on, the daily
+        # path must fetch at least as far as the hourly horizon so the per-run
+        # series cache serves the hourly refresh without a second download
+        # (issue #134). With the option off, or for the full-run sentinel, keep
+        # the 48 h window (DAILY_ZERO_DEGREE_WINDOW_HOURS).
+        if (
+            hourly_horizon_days is not None
+            and hourly_horizon_days != HOURLY_HORIZON_FULL_RUN
+        ):
+            h_end = horizon_end_utc(hourly_horizon_days, now)
+            if h_end is not None:
+                horizon_hours = int((h_end - this_hour).total_seconds() / 3600)
+                zero_degree_hours = max(DAILY_ZERO_DEGREE_WINDOW_HOURS, horizon_hours)
+            else:
+                zero_degree_hours = DAILY_ZERO_DEGREE_WINDOW_HOURS
+        else:
+            zero_degree_hours = DAILY_ZERO_DEGREE_WINDOW_HOURS
         windows: dict[str, tuple[datetime, datetime]] = {
             HOURLY_ZERO_DEGREE: (
                 this_hour,
-                this_hour + timedelta(hours=DAILY_ZERO_DEGREE_WINDOW_HOURS),
+                this_hour + timedelta(hours=zero_degree_hours),
             )
         }
 
@@ -478,7 +502,11 @@ class BulkCsvBackend:
         return bool(by_day) and by_day == previous
 
     async def fetch_daily(
-        self, point: ForecastPoint, *, run: Run | None = None
+        self,
+        point: ForecastPoint,
+        *,
+        run: Run | None = None,
+        hourly_horizon_days: int | None = None,
     ) -> DailyBundle:
         run = await self._resolve_run(run, DAILY_REQUIRED_PARAMS)
         self._reset_series_cache(run)
@@ -505,7 +533,7 @@ class BulkCsvBackend:
         # text is reused here rather than downloaded again.
         text_by_param, block_texts = await asyncio.gather(
             self._fetch_daily_texts(point, run),
-            self._get_block_texts(point, run),
+            self._get_block_texts(point, run, hourly_horizon_days=hourly_horizon_days),
         )
         # Parsing scans several MB per file; keep it off the event loop.
         loop = asyncio.get_running_loop()

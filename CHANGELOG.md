@@ -40,6 +40,17 @@ using the matching section below as release notes.
   observed row-order layout for every hourly file so a layout drift is visible
   in the CI log without waiting for three escalated fetches.
 
+### Fixed
+
+- **`zprfr0hs` fetched once per run with the hourly option on** (#134). With
+  the hourly option on, the zero-degree level file (`zprfr0hs`) was fetched
+  twice per run: once by the daily path (fixed 48 h window) and again by the
+  hourly refresh (configured horizon, typically 49–72 h). The shared series
+  cache from #123 could not serve the second request because 48 h < the hourly
+  horizon. The daily path now uses `max(48 h, hourly horizon)` as the
+  zero-degree window so one fetch serves both consumers; with the hourly option
+  off the 48 h window is unchanged.
+
 ### Changed
 
 - **A refresh is a steady trickle, not an ~800-request burst** (#132,
