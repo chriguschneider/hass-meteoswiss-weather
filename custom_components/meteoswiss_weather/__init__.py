@@ -21,6 +21,7 @@ from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import ConfigEntrySelector
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -39,6 +40,8 @@ from .const import (
     CONF_STATION_ABBR,
     DEFAULT_HOURLY_HORIZON_DAYS,
     DOMAIN,
+    HINTS_STORAGE_KEY,
+    HINTS_STORAGE_VERSION,
 )
 from .coordinator import (
     ForecastCoordinator,
@@ -112,6 +115,16 @@ class MeteoSwissRuntimeData:
 type MeteoSwissConfigEntry = ConfigEntry[MeteoSwissRuntimeData]
 
 
+def _hints_store(hass: HomeAssistant, entry: ConfigEntry) -> Store:
+    """The per-entry store for the backend's persisted fetch hints (issue #133).
+
+    Keyed by entry id so two entries never share offsets, and versioned so a
+    future hint-shape change can migrate cleanly. Lives under ``.storage/`` and
+    is removed with the entry (:func:`async_remove_entry`).
+    """
+    return Store(hass, HINTS_STORAGE_VERSION, f"{HINTS_STORAGE_KEY}.{entry.entry_id}")
+
+
 def _point_from_entry(entry: ConfigEntry) -> ForecastPoint:
     """Rebuild the forecast point from the entry (no network at startup).
 
@@ -164,7 +177,13 @@ async def async_setup_entry(
         hourly_horizon_days=hourly_horizon_days,
         hourly_cloud_layers=hourly_cloud_layers,
         hourly_temp_percentiles=hourly_temp_percentiles,
+        hints_store=_hints_store(hass, entry),
     )
+
+    # Restore the backend's fetch-ladder hints before the first refresh so it is
+    # warm (issue #133): a cold refresh re-discovers positions known a minute
+    # before the restart. A missing or corrupt store just starts cold.
+    await forecast_coordinator.async_load_hints()
 
     # A first-refresh failure raises ConfigEntryNotReady so HA retries setup.
     await station_coordinator.async_config_entry_first_refresh()
@@ -324,3 +343,15 @@ async def async_unload_entry(
         if not remaining and hass.services.has_service(DOMAIN, SERVICE_IMPORT_HISTORY):
             hass.services.async_remove(DOMAIN, SERVICE_IMPORT_HISTORY)
     return unloaded
+
+
+async def async_remove_entry(
+    hass: HomeAssistant, entry: MeteoSwissConfigEntry
+) -> None:
+    """Drop the entry's persisted fetch-hint store when the entry is removed.
+
+    The hints are a per-entry cache of upstream byte positions (issue #133);
+    they are meaningless once the entry (and its forecast point) is gone, so
+    the store file is removed rather than left behind under ``.storage/``.
+    """
+    await _hints_store(hass, entry).async_remove()

@@ -492,6 +492,16 @@ where the stored series came from and what the last real fetch cost.
 | `bytes` | bytes fetched (absent when confirmed) |
 | `layout` | row-order layout last classified for the file: `date_major`, `point_major_type`, `point_major_id`, or `fallback` |
 
+Next to the `store` section, `forecast_coordinator.hints_restored` reports
+whether the fetch ladder's per-file hints were loaded from storage at setup
+(issue #133). The hints (layout, learned byte positions, per UTC day) are
+persisted per config entry and restored on the next start, so a refresh after a
+restart is warm rather than cold (a cold refresh with the hourly option and the
+cloud/percentile layers on measured ~800 requests / ~2.7 MB of re-discovery).
+The raw hints are not dumped — they are kept small; only the boolean appears. A
+stale, corrupt or foreign store is ignored (the ladder re-verifies every
+remembered position), so it can only ever cost a fresh look, never a wrong row.
+
 **Level 0–2** is cheap (a few KB per parameter). **Level 3** (a prefix of MBs)
 or **level 4** (the whole ~30 MB file) means the cheap strategies could not
 prove completeness — usually because MeteoSwiss re-sorted the file's rows.

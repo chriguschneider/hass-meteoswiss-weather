@@ -44,11 +44,13 @@ from datetime import date, datetime
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.issue_registry import (
     IssueSeverity,
     async_create_issue,
     async_delete_issue,
 )
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
@@ -56,6 +58,7 @@ from .const import (
     DEFAULT_HOURLY_HORIZON_DAYS,
     DOMAIN,
     FORECAST_CHECK_INTERVAL,
+    HINTS_SAVE_DELAY,
     HOURLY_CANARY_HOURS,
     HOURLY_FAR_MAX_AGE,
     HOURLY_HORIZON_FULL_RUN,
@@ -580,6 +583,7 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         hourly_horizon_days: int = DEFAULT_HOURLY_HORIZON_DAYS,
         hourly_cloud_layers: bool = False,
         hourly_temp_percentiles: bool = False,
+        hints_store: Store | None = None,
     ) -> None:
         super().__init__(
             hass,
@@ -591,6 +595,18 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         self._session = session
         self._backend = backend
         self._point = point
+        # Persisted fetch-ladder hints (issue #133, ADR-0008). The backend keeps
+        # its per-file hints in memory; this store lets them survive a restart or
+        # reload so the next refresh is not cold. ``None`` (a backend without
+        # hints, or a test) simply disables persistence. Restored at setup via
+        # :meth:`async_load_hints` and saved (debounced) after every refresh whose
+        # hints changed. ``_saved_hints`` is the last snapshot written, so an
+        # unchanged tick never schedules a write.
+        self._hints_store = hints_store
+        self._saved_hints: dict | None = None
+        # Whether a persisted hint set was restored at setup; for diagnostics
+        # (the raw hints are never dumped — they are kept small, issue #133).
+        self.hints_restored = False
         # Timestamp of the run the current daily data came from; exposed for
         # diagnostics and used to skip re-downloading an unchanged run. The
         # weather entity also watches it to trigger the lazy hourly refresh.
@@ -721,8 +737,58 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         # Sync escalation repair issues once per tick after all paths have
         # written to the store (ADR-0008 section 5).
         self._sync_escalation_issues(run)
+        # Persist the backend's fetch hints when this tick changed them, so the
+        # next restart is warm (issue #133). Debounced and no-op on no change.
+        self._save_hints_if_changed()
         self.last_success = dt_util.utcnow()
         return ForecastData(daily=daily)
+
+    async def async_load_hints(self) -> None:
+        """Restore the backend's fetch-ladder hints from disk (issue #133).
+
+        Called once before the first refresh so it is already warm. A missing,
+        unreadable or corrupt store is treated as "no hints": the ladder starts
+        cold, which is correct, never wrong. Kept off the ``ogd`` package
+        (ADR-0001) — the backend only exposes plain export/import of dicts.
+        """
+        if self._hints_store is None:
+            return
+        import_hints = getattr(self._backend, "import_hints", None)
+        if import_hints is None:
+            return
+        try:
+            stored = await self._hints_store.async_load()
+        except (HomeAssistantError, ValueError, OSError) as err:
+            _LOGGER.debug("stored forecast hints unreadable, starting cold: %s", err)
+            return
+        if not stored:
+            return
+        count = import_hints(stored)
+        self.hints_restored = count > 0
+        # Snapshot what the backend now holds so a following unchanged tick does
+        # not re-save the very hints just loaded.
+        export = getattr(self._backend, "export_hints", None)
+        self._saved_hints = export() if export is not None else None
+        _LOGGER.debug("restored %d forecast fetch hint(s) from storage", count)
+
+    def _save_hints_if_changed(self) -> None:
+        """Schedule a debounced save when the backend's hints changed (issue #133).
+
+        Comparing against the last written snapshot keeps a quiet tick — most
+        ticks, once positions are learned — from writing at all; only a genuine
+        change (a new UTC day's offsets, a re-learned geometry) hits the disk,
+        and even then the ``Store`` debounce coalesces bursts of a single run.
+        """
+        if self._hints_store is None:
+            return
+        export = getattr(self._backend, "export_hints", None)
+        if export is None:
+            return
+        hints = export()
+        if hints == self._saved_hints:
+            return
+        self._saved_hints = hints
+        self._hints_store.async_delay_save(lambda: hints, HINTS_SAVE_DELAY)
 
     def _sync_escalation_issues(self, run: Run) -> None:
         """Post or clear ``forecast_fetch_escalated_<param>`` repair issues.
