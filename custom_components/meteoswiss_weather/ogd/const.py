@@ -7,6 +7,8 @@ unchanged. Keep the values here identical to the ones there.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 # Official MeteoSwiss open data (ADR-0001). Every request goes here.
 OGD_FILE_BASE = "https://data.geo.admin.ch"
 # STAC catalogue for discovering the newest local-forecast run (docs/ogd.md).
@@ -247,6 +249,14 @@ SERIES_REQUEST_CAP = 96
 # Hours of zero-degree level fetched with the daily refresh: the sensor shows
 # the current hour and steps through the cached hours between refreshes.
 DAILY_ZERO_DEGREE_WINDOW_HOURS = 48
+
+# Daily canary (ADR-0008 section 3, issue #125): on a new run the backend reads
+# the representative daily file (tre200px, the temperature maxima) and, when its
+# per-day values still match the last built forecast, keeps that forecast instead
+# of re-fetching the other daily files and the point-major blocks. This is the
+# staleness fallback that forces a full daily fetch anyway, so a canary that
+# never sees a change can never serve a forecast older than this.
+DAILY_MAX_AGE = timedelta(hours=6)
 
 # A single data row is short (`id;type;YYYYMMDDHHMM;value`); this window is wide
 # enough to always contain a complete row plus its neighbouring boundaries.

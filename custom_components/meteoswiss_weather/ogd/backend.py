@@ -19,7 +19,9 @@ import aiohttp
 from .const import (
     COLLECTION_FORECAST,
     DAILY_BLOCK_PARAMS,
+    DAILY_MAX_AGE,
     DAILY_REQUIRED_PARAMS,
+    DAILY_TEMP_MAX,
     DAILY_WIND_PARAMS,
     DAILY_ZERO_DEGREE_WINDOW_HOURS,
     FORECAST_ENCODING,
@@ -29,6 +31,7 @@ from .const import (
     HOURLY_ZERO_DEGREE,
 )
 from .forecast import (
+    HOURLY_FIELD_BY_PARAM,
     aggregate_daily_precip_probability,
     aggregate_daily_wind,
     parse_daily,
@@ -101,6 +104,15 @@ class ForecastBackend(Protocol):
         run: Run | None = None,
     ) -> list[HourlyForecast]: ...
 
+    async def fetch_hourly_canary(
+        self,
+        point: ForecastPoint,
+        param: str,
+        *,
+        hours: int,
+        run: Run | None = None,
+    ) -> dict[datetime, float | int] | None: ...
+
 
 class BulkCsvBackend:
     """Assembles the forecast from the bulk per-parameter CSV files.
@@ -136,6 +148,13 @@ class BulkCsvBackend:
         # Files proven (by a full download) to carry no row for the point,
         # remembered for the UTC day so the proof is not repeated every run.
         self._absent: dict[str, date] = {}
+        # The last daily bundle this backend built, and when. On a new run the
+        # daily canary (ADR-0008 section 3, issue #125) fetches the representative
+        # temperature-maxima file and, when its per-day values still match this
+        # bundle, keeps it instead of re-fetching the other daily files and the
+        # point-major blocks. Reset never lives longer than DAILY_MAX_AGE.
+        self._last_daily: DailyBundle | None = None
+        self._last_daily_at: datetime | None = None
 
     def _reset_series_cache(self, run: Run) -> None:
         """Drop the per-run series cache when a new run has landed (issue #123)."""
@@ -343,15 +362,68 @@ class BulkCsvBackend:
             return run
         return await latest_run(self._session, COLLECTION_FORECAST, params)
 
+    async def _daily_canary_unchanged(
+        self, point: ForecastPoint, run: Run, now: datetime
+    ) -> bool:
+        """Whether ``run`` leaves the last daily forecast's per-day maxima intact.
+
+        The canary (ADR-0008 section 3, issue #125): the representative daily file
+        (``tre200px``, temperature maxima) is fetched for the whole run — the same
+        whole-run read :meth:`_fetch_daily_texts` needs, so it lands in the shared
+        per-run cache and a full fetch below reuses it. When its per-day values
+        still equal the last built forecast and that forecast is within
+        :data:`DAILY_MAX_AGE`, the run did not move the daily figures and the other
+        three daily files plus the point-major blocks are not re-fetched. A file
+        that cannot be read, an empty comparison or a stale last forecast counts
+        as changed, so the ladder does a full fetch.
+        """
+        if (
+            self._last_daily is None
+            or self._last_daily_at is None
+            or now - self._last_daily_at >= DAILY_MAX_AGE
+        ):
+            return False
+        text = await self._fetch_one(
+            point,
+            run,
+            DAILY_TEMP_MAX,
+            window_start=None,
+            window_end=None,
+            step=timedelta(days=1),
+            label="daily-canary",
+            degrade_absent=False,
+        )
+        if not text:
+            return False
+        loop = asyncio.get_running_loop()
+        canary = await loop.run_in_executor(
+            None, parse_daily, {DAILY_TEMP_MAX: text}, point
+        )
+        by_day = {d.date: d.temp_max for d in canary}
+        previous = {d.date: d.temp_max for d in self._last_daily.daily}
+        return bool(by_day) and by_day == previous
+
     async def fetch_daily(
         self, point: ForecastPoint, *, run: Run | None = None
     ) -> DailyBundle:
         run = await self._resolve_run(run, DAILY_REQUIRED_PARAMS)
         self._reset_series_cache(run)
+        now = datetime.now(UTC)
+        # Canary first (issue #125): if the representative temperature file is
+        # unchanged, keep the last forecast and skip the rest of the daily fetch.
+        if await self._daily_canary_unchanged(point, run, now):
+            _LOGGER.debug(
+                "daily canary unchanged for run %s: keeping the last forecast",
+                run.timestamp.isoformat(),
+            )
+            assert self._last_daily is not None  # guaranteed by the canary check
+            return self._last_daily
         # Route the daily files through the escalation ladder, concurrently with
         # the point-major blocks. Each daily p-variant is date-major with nine
         # ~148 KB day blocks, so row addressing at a one-day step reads a few KB
-        # per file instead of the ~1.3 MB whole file (issue #122, ADR-0008).
+        # per file instead of the ~1.3 MB whole file (issue #122, ADR-0008). The
+        # canary already fetched tre200px into the shared cache, so its whole-run
+        # text is reused here rather than downloaded again.
         text_by_param, block_texts = await asyncio.gather(
             self._fetch_daily_texts(point, run),
             self._get_block_texts(point, run),
@@ -409,7 +481,64 @@ class BulkCsvBackend:
                 if h.zero_degree_level is not None
             }
 
-        return DailyBundle(daily=daily, zero_degree_level=zero_degree)
+        bundle = DailyBundle(daily=daily, zero_degree_level=zero_degree)
+        # Remember it so the next run's canary can prove it still holds (#125).
+        self._last_daily = bundle
+        self._last_daily_at = now
+        return bundle
+
+    async def fetch_hourly_canary(
+        self,
+        point: ForecastPoint,
+        param: str,
+        *,
+        hours: int,
+        run: Run | None = None,
+    ) -> dict[datetime, float | int] | None:
+        """Read ``point``'s next ``hours`` of one file's ``param`` cheaply (#125).
+
+        The canary behind the run-scoped refresh (ADR-0008 section 3): a small
+        window ``[start of the current hour, +hours)`` fetched through the same
+        escalation ladder and shared cache as a full fetch, using the remembered
+        byte positions. Returns ``{hour(UTC) → value}`` for the parameter's field,
+        or ``None`` when nothing could be read (the file is unreachable, absent
+        for the point, or no row was proven) so the caller treats it as changed
+        and refreshes. A point-major file's whole block is read regardless of the
+        window (it is contiguous), so it lands whole in the cache and a following
+        group refresh of the same run reuses it without a second download.
+        """
+        run = await self._resolve_run(run, (param,))
+        self._reset_series_cache(run)
+        now = datetime.now(UTC)
+        start = now.replace(minute=0, second=0, microsecond=0)
+        end = start + timedelta(hours=hours)
+        try:
+            text = await self._fetch_one(
+                point,
+                run,
+                param,
+                window_start=start,
+                window_end=end,
+                step=timedelta(hours=1),
+                label="canary",
+                degrade_absent=False,
+            )
+        except OgdConnectionError as err:
+            _LOGGER.debug("canary %s unreadable, treating as changed: %s", param, err)
+            return None
+        if not text:
+            return None
+        loop = asyncio.get_running_loop()
+        hourly = await loop.run_in_executor(
+            None, parse_hourly, {param: text}, point, end, start
+        )
+        field = HOURLY_FIELD_BY_PARAM[param]
+        values = {
+            hour.time: value
+            for hour in hourly
+            if (value := getattr(hour, field)) is not None
+        }
+        return values or None
 
     async def fetch_hourly(
         self,

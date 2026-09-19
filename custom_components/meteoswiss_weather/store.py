@@ -27,6 +27,11 @@ class Provenance:
     # Which path wrote it ("daily" / "hourly"). The escalation level, bytes and
     # request count join here with the fetch ladder (ADR-0008 section 4).
     source: str
+    # True when this run's values were not fetched but a cheap canary read proved
+    # them equal to the series already stored, so it was re-stamped to the run
+    # rather than downloaded again (ADR-0008 section 3, issue #125). A confirmed
+    # series is as current as a fetched one — it just cost a few KB, not a fetch.
+    confirmed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +84,33 @@ class ForecastStore:
         )
         return True
 
+    def confirm(
+        self, param: str, *, run: datetime, fetched_at: datetime
+    ) -> bool:
+        """Re-stamp ``param``'s series to ``run`` after a canary proved it unchanged.
+
+        The escalating fetch is skipped when a cheap canary read shows the new
+        run carries the same values as the one already stored (ADR-0008 section
+        3, issue #125): the values are kept as-is but their provenance is moved
+        forward to ``run`` and flagged ``confirmed``, so diagnostics show the
+        parameter as current for the run rather than "stale, held over from an
+        earlier one". A no-op when nothing is stored or the stored series is not
+        older than ``run`` (there is nothing to move forward).
+        """
+        current = self._series.get(param)
+        if current is None or current.provenance.run >= run:
+            return False
+        self._series[param] = Series(
+            values=current.values,
+            provenance=Provenance(
+                run=run,
+                fetched_at=fetched_at,
+                source=current.provenance.source,
+                confirmed=True,
+            ),
+        )
+        return True
+
     def get(self, param: str) -> Series | None:
         """The stored series for ``param``, or ``None``."""
         return self._series.get(param)
@@ -104,6 +136,7 @@ class ForecastStore:
                 "run": series.provenance.run.isoformat(),
                 "fetched_at": series.provenance.fetched_at.isoformat(),
                 "source": series.provenance.source,
+                "confirmed": series.provenance.confirmed,
                 "hours": len(series.values),
                 "stale": self.is_stale(param, run),
             }

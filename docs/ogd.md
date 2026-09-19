@@ -326,7 +326,22 @@ The runs at 01, 03, 07, 09, 12 and 13 UTC changed **nothing** for either
 point. Fetching the near term at 02/05/08/…/23 UTC and the far range at
 05/11/17/23 UTC catches every observed change with 8 near and 4 far
 fetches per day; fetching every run wastes 6 of 24 downloads outright.
-This is the basis of the tiered refresh (ADR-0002, revision 2; #54).
+This was the basis of the tiered refresh (ADR-0002, revision 2; #54).
+
+**No longer the refresh trigger (issue #125, ADR-0008 section 3, owner
+decision 2).** These landing hours were measured once, on a single day, for one
+parameter — not a contract. The integration no longer decides what to refresh
+from that timetable: on every new run it reads a **canary** (the point's next
+few hours of one representative file per group, a few KB with the remembered
+byte positions above) and compares it with what it already holds. Equal values
+keep the stored series and re-stamp it to the run; different values, or a canary
+that cannot be read, refresh the group. The landing-hour sets
+(`HOURLY_NEAR_RUN_HOURS`/`HOURLY_FAR_RUN_HOURS`) are gone; only the max-age
+fallbacks remain, and only as a backstop that forces a refresh so a canary blind
+spot can never let a series go stale unbounded. The same idea gates the daily
+files (the representative `tre200px` maxima) so an unchanged run does not
+re-download them. `tests/test_const.py` asserts the landing-hour sets no longer
+exist.
 
 ### Parameter codes (from the docs; confirm against the meta CSV)
 

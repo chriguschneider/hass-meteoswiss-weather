@@ -11,6 +11,23 @@ using the matching section below as release notes.
 
 ### Changed
 
+- **A canary read decides whether a new run is refreshed** (#125,
+  [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). Whether a new forecast
+  run is worth downloading is no longer decided by a timetable measured once
+  (the near/far "landing hours"). On every new run the integration now reads a
+  cheap canary — the point's next few hours of one representative file per group
+  (the temperature file for the date-major group, the wind file for the
+  point-major group), a few KB using the remembered byte positions — and compares
+  it with what it already holds: unchanged values keep the stored series and
+  re-stamp it to the run (so diagnostics show it current, not stale), while
+  changed values, or a canary that cannot be read, refresh the group. The same
+  idea gates the daily files, so an unchanged run no longer re-downloads them.
+  The near/far/point-major max-age fallbacks stay as a backstop that still forces
+  a refresh, so a canary blind spot can never let a series go stale unbounded.
+  User-visible effect: quiet runs (a new run whose content did not move) cost a
+  few KB instead of a full group refresh, and the forecast reads as current for
+  the run rather than stale.
+
 - **Hourly forecast fetched eagerly; the lazy provider is removed** (#124,
   [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). With the hourly
   option on, the demanded files are now fetched by the forecast coordinator's

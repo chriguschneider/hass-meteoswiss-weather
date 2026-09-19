@@ -83,7 +83,55 @@ def test_diagnostics_summary() -> None:
             "run": _RUN.isoformat(),
             "fetched_at": _NOW.isoformat(),
             "source": "daily",
+            "confirmed": False,
             "hours": 1,
             "stale": True,
         }
     }
+
+
+def test_confirm_restamps_the_kept_series_to_the_new_run() -> None:
+    """A canary-confirmed run keeps the values but reads as current (#125)."""
+    store = ForecastStore()
+    _put(store, {_H0: 3000.0})
+    later = _RUN + timedelta(hours=3)
+    assert store.confirm(_P, run=later, fetched_at=later) is True
+    # The values are untouched...
+    assert store.value_at(_P, _H0) == 3000.0
+    # ... but the series is now current for the new run, and flagged confirmed.
+    assert not store.is_stale(_P, later)
+    series = store.get(_P)
+    assert series is not None
+    assert series.provenance.run == later
+    assert series.provenance.confirmed is True
+    assert series.provenance.source == "daily"  # the original source is kept
+
+
+def test_confirm_is_a_noop_without_a_stored_series() -> None:
+    """Confirming an unknown parameter changes nothing."""
+    store = ForecastStore()
+    assert store.confirm(_P, run=_RUN, fetched_at=_NOW) is False
+    assert store.get(_P) is None
+
+
+def test_confirm_does_not_move_a_series_backwards() -> None:
+    """A confirm for an older run than the stored one is ignored."""
+    store = ForecastStore()
+    _put(store, {_H0: 3000.0})
+    assert store.confirm(_P, run=_RUN - timedelta(hours=1), fetched_at=_NOW) is False
+    assert store.get(_P).provenance.run == _RUN
+    # An equal run has nothing to move forward either.
+    assert store.confirm(_P, run=_RUN, fetched_at=_NOW) is False
+
+
+def test_a_real_fetch_clears_a_prior_confirmation() -> None:
+    """A later fetch of a confirmed parameter marks it fetched, not confirmed."""
+    store = ForecastStore()
+    _put(store, {_H0: 3000.0})
+    later = _RUN + timedelta(hours=3)
+    store.confirm(_P, run=later, fetched_at=later)
+    assert _put(store, {_H0: 2900.0}, run=later, source="hourly")
+    series = store.get(_P)
+    assert series is not None
+    assert series.provenance.confirmed is False
+    assert store.value_at(_P, _H0) == 2900.0

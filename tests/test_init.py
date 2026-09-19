@@ -337,18 +337,28 @@ async def test_hourly_tiers_fetch_eagerly_via_coordinator(
         assert _tre_calls(mock_ogd) == 1
 
 
-async def test_run_change_fetches_hourly_eagerly(
+def _symbol_calls(aioclient_mock: AiohttpClientMocker) -> int:
+    """Downloads of the point-major weather-symbol file (the canary skips these)."""
+    suffix = f"{_RUN_TS}.{HOURLY_SYMBOL}.csv"
+    return sum(
+        1
+        for _method, url, *_ in aioclient_mock.mock_calls
+        if url.path.endswith(suffix)
+    )
+
+
+async def test_new_run_unchanged_canary_confirms_without_refetch(
     hass: HomeAssistant,
     hourly_config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """A new run refetches the point-major group eagerly, with no subscriber (#124).
+    """A new run whose content is unchanged confirms the store, no group refetch.
 
-    The coordinator drives the hourly refresh from its own tick: a run change
-    makes the point-major group due, fetched whether or not a card or automation
-    is listening (ADR-0008, owner decision 1). The STAC fixture only ever offers
-    one run, so the new run is handed straight to the refresher (as the
-    coordinator does), reusing the discovered run's asset URLs.
+    The canary decides now (ADR-0008 section 3, owner decision 2, issue #125):
+    the fixture serves one run, so a bumped run stamp presents the same content.
+    Its coming hours match the store, so no group is re-downloaded — the symbol
+    file is not re-fetched — and the stored series read as current for the new
+    run (confirmed), not stale.
     """
     from dataclasses import replace
 
@@ -359,19 +369,24 @@ async def test_run_change_fetches_hourly_eagerly(
         await hass.async_block_till_done()
 
         coordinator = hourly_config_entry.runtime_data.forecast_coordinator
-        # Setup already fetched the hourly-only files once (eagerly).
-        after_setup = _hourly_calls(mock_ogd)
-        assert after_setup == len(_HOURLY_ONLY_PARAMS)
+        symbol_after_setup = _symbol_calls(mock_ogd)
+        assert symbol_after_setup == 1  # fetched once at setup
 
-        # A genuinely new run (same fixture files, bumped stamp) resets the
-        # per-run cache; the point-major group is due and refetched, no
-        # subscriber needed.
+        # A new run (same fixture files, bumped stamp): the canary sees no change.
         new_run = replace(
             coordinator.run, timestamp=coordinator.run.timestamp + timedelta(hours=3)
         )
-        await coordinator.hourly_refresher.async_refresh(new_run)
+        assert await coordinator.hourly_refresher.async_refresh(new_run) is False
         await hass.async_block_till_done()
-        assert _hourly_calls(mock_ogd) == after_setup + len(_HOURLY_ONLY_PARAMS)
+
+        # The point-major symbol file was not downloaded again — the canary skip.
+        assert _symbol_calls(mock_ogd) == symbol_after_setup
+        # ... and the stored series now reads as current for the new run.
+        series = coordinator.store.get(HOURLY_SYMBOL)
+        assert series is not None
+        assert series.provenance.run == new_run.timestamp
+        assert series.provenance.confirmed is True
+        assert not coordinator.store.is_stale(HOURLY_SYMBOL, new_run.timestamp)
 
 
 async def test_zero_degree_block_fetched_with_daily_refresh_hourly_off(
