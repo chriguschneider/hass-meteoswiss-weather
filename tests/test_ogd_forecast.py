@@ -1441,8 +1441,13 @@ async def test_daily_canary_unchanged_keeps_the_last_forecast(session) -> None:
         bundle1 = await backend.fetch_daily(point, run=run1)
         bundle2 = await backend.fetch_daily(point, run=run2)
 
-    # The canary saw no change: the second run kept the first bundle verbatim.
-    assert bundle2 is bundle1
+    # The canary saw no change: the second run kept the first bundle's content
+    # (daily forecast and zero-degree series) verbatim, but carries no fetch_meta
+    # — nothing was re-fetched — so the coordinator re-stamps the stored series
+    # with confirm() rather than re-counting the escalation streak (ADR-0008 §5).
+    assert bundle2.daily == bundle1.daily
+    assert bundle2.zero_degree_level == bundle1.zero_degree_level
+    assert bundle2.fetch_meta == {}
     assert bundle2.daily[0].temp_max == 29.3
 
 

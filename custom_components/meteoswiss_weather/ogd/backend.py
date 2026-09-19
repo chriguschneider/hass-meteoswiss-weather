@@ -446,7 +446,12 @@ class BulkCsvBackend:
                 run.timestamp.isoformat(),
             )
             assert self._last_daily is not None  # guaranteed by the canary check
-            return self._last_daily
+            # Nothing but the temperature canary was fetched, so the returned
+            # bundle must not carry the earlier real fetch's escalation metadata
+            # (ADR-0008 §5): an empty fetch_meta is the signal that lets the
+            # coordinator confirm() the stored series instead of re-put()ing it,
+            # which would re-count the old level in the escalation streak.
+            return replace(self._last_daily, fetch_meta={})
         # Route the daily files through the escalation ladder, concurrently with
         # the point-major blocks. Each daily p-variant is date-major with nine
         # ~148 KB day blocks, so row addressing at a one-day step reads a few KB
