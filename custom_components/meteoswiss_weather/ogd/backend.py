@@ -29,6 +29,7 @@ from .const import (
     HOURLY_PRECIP_PROBABILITY,
     HOURLY_REQUIRED_PARAMS,
     HOURLY_ZERO_DEGREE,
+    OGD_MAX_CONCURRENT_REQUESTS,
 )
 from .forecast import (
     HOURLY_FIELD_BY_PARAM,
@@ -130,6 +131,14 @@ class BulkCsvBackend:
 
     def __init__(self, session: aiohttp.ClientSession) -> None:
         self._session = session
+        # One shared limiter across every file of a refresh (issue #132, ADR-0008).
+        # A cold refresh fans out ~19 files, each row-addressed with several
+        # byte-range probes, all under ``asyncio.gather``; without a bound that is
+        # ~800 requests in ~2 s against ``data.geo.admin.ch``. This semaphore caps
+        # the requests in flight to :data:`OGD_MAX_CONCURRENT_REQUESTS`, so the
+        # daily and hourly paths together stay a steady trickle instead of a burst.
+        # Bound on the fetch loop, so it is created here and reused across ticks.
+        self._limiter = asyncio.Semaphore(OGD_MAX_CONCURRENT_REQUESTS)
         # One :class:`FileHint` per parameter (ADR-0008, issue #121): the file's
         # layout, the UTC day it was learned on and the byte positions of the
         # point's rows (point-major block start, date-major row geometry, header,
@@ -210,6 +219,7 @@ class BulkCsvBackend:
             hint=self._hints.get(param),
             utc_day=run.timestamp.date(),
             step=step,
+            limiter=self._limiter,
         )
         # Escalating to a prefix or the whole file is correct but worth seeing:
         # it usually means upstream re-sorted the file.

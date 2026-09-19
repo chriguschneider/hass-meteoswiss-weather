@@ -7,6 +7,7 @@ latest-complete-run selection, and the order-independent daily parser.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import random
 from datetime import UTC, date, datetime, timedelta
@@ -1475,3 +1476,129 @@ async def test_daily_canary_refetches_past_the_max_age(session) -> None:
     # content.
     assert bundle2 is not bundle1
     assert bundle2.daily[0].temp_max == bundle1.daily[0].temp_max
+
+
+# --- shared request concurrency limit (issue #132) --------------------------
+
+
+class _ConcurrencyTrackingSession:
+    """A minimal aiohttp-like session that serves fixtures and records the peak
+    number of requests in flight at once (issue #132).
+
+    Every request sleeps briefly while it counts as "in flight", so all the
+    coroutines that hold a shared-limiter permit overlap in time and the peak
+    concurrency the semaphore permits becomes observable. It answers the single
+    ``Range`` forms the range reader issues (``bytes=a-b`` and ``bytes=a-``) with
+    a 206 slice, and a range-free GET with the whole body — enough for the
+    escalation ladder to run without the real network (ADR-0001).
+    """
+
+    def __init__(self, bodies: dict[str, bytes]) -> None:
+        self._bodies = bodies
+        self.in_flight = 0
+        self.max_in_flight = 0
+
+    def get(self, url, *, headers=None, timeout=None):  # noqa: ANN001, ANN201
+        return _TrackingRequest(self, url, headers or {})
+
+
+class _TrackingRequest:
+    def __init__(self, session, url, headers) -> None:  # noqa: ANN001
+        self._session = session
+        self._url = url
+        self._headers = headers
+
+    async def __aenter__(self):  # noqa: ANN204
+        s = self._session
+        s.in_flight += 1
+        s.max_in_flight = max(s.max_in_flight, s.in_flight)
+        # Yield so every other permit-holder reaches this point before any one of
+        # them releases its permit: the peak recorded is then the peak the shared
+        # semaphore actually allowed. A bare ``sleep(0)`` (not a timed sleep) is
+        # used deliberately — under ``freeze_time`` the event loop's monotonic
+        # clock is frozen, so a timed sleep would never wake.
+        await asyncio.sleep(0)
+        return _tracking_response(s._bodies[self._url], self._headers.get("Range"))
+
+    async def __aexit__(self, *exc) -> bool:  # noqa: ANN002
+        self._session.in_flight -= 1
+        return False
+
+
+class _TrackingResponse:
+    def __init__(self, status: int, body: bytes, headers: dict[str, str]) -> None:
+        self.status = status
+        self.headers = headers
+        self._body = body
+
+    async def read(self) -> bytes:
+        return self._body
+
+
+def _tracking_response(body: bytes, range_header: str | None) -> _TrackingResponse:
+    if range_header:
+        start_s, _, end_s = range_header.split("=", 1)[1].partition("-")
+        start = int(start_s) if start_s else 0
+        end = int(end_s) if end_s else len(body) - 1
+        chunk = body[start : end + 1]
+        return _TrackingResponse(
+            206,
+            chunk,
+            {
+                "Content-Range": f"bytes {start}-{start + len(chunk) - 1}/{len(body)}",
+                "ETag": '"e"',
+            },
+        )
+    return _TrackingResponse(
+        200, body, {"Content-Length": str(len(body)), "ETag": '"e"'}
+    )
+
+
+def _run_with(params: tuple[str, ...]) -> Run:
+    return Run(
+        timestamp=datetime(2026, 8, 27, 2, 0, tzinfo=UTC),
+        assets={param: _asset_url(param) for param in params},
+    )
+
+
+def _bodies_for(params: tuple[str, ...]) -> dict[str, bytes]:
+    return {
+        _asset_url(param): _fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv")
+        for param in params
+    }
+
+
+@freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC))
+async def test_fetch_daily_bounds_requests_in_flight() -> None:
+    """No more than OGD_MAX_CONCURRENT_REQUESTS requests overlap during a daily
+    refresh, even though it fans out every daily and block file at once (#132)."""
+    from custom_components.meteoswiss_weather.ogd.const import (
+        OGD_MAX_CONCURRENT_REQUESTS,
+    )
+
+    params = (*DAILY_REQUIRED_PARAMS, *DAILY_BLOCK_PARAMS)
+    session = _ConcurrencyTrackingSession(_bodies_for(params))
+    backend = BulkCsvBackend(session)
+    await backend.fetch_daily(_koeniz_point(), run=_run_with(params))
+
+    assert session.max_in_flight <= OGD_MAX_CONCURRENT_REQUESTS
+    # The fan-out really did run concurrently, so the bound is doing work and the
+    # assertion above is not vacuous.
+    assert session.max_in_flight > 1
+
+
+@freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC))
+async def test_fetch_hourly_bounds_requests_in_flight() -> None:
+    """The nine hourly files are fetched under one shared limiter, so the burst
+    never exceeds OGD_MAX_CONCURRENT_REQUESTS requests in flight (#132)."""
+    from custom_components.meteoswiss_weather.ogd.const import (
+        OGD_MAX_CONCURRENT_REQUESTS,
+    )
+
+    params = HOURLY_REQUIRED_PARAMS
+    session = _ConcurrencyTrackingSession(_bodies_for(params))
+    backend = BulkCsvBackend(session)
+    await backend.fetch_hourly(_koeniz_point(), run=_run_with(params))
+
+    assert session.max_in_flight <= OGD_MAX_CONCURRENT_REQUESTS
+    assert session.max_in_flight > 1

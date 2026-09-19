@@ -81,15 +81,26 @@ class AiohttpRangeReader:
     the strategies still work (they simply stop saving traffic).
     """
 
-    def __init__(self, session: aiohttp.ClientSession, url: str) -> None:
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        url: str,
+        *,
+        limiter: asyncio.Semaphore | None = None,
+    ) -> None:
         self._session = session
         self._url = url
+        self._limiter = limiter
         self._size: int | None = None
         self._full: bytes | None = None
 
     async def _prime(self) -> None:
         resp = await get_bytes(
-            self._session, self._url, start=0, end=HOURLY_ROW_PROBE_BYTES - 1
+            self._session,
+            self._url,
+            start=0,
+            end=HOURLY_ROW_PROBE_BYTES - 1,
+            limiter=self._limiter,
         )
         if resp.status == 200:
             self._full = resp.body
@@ -111,7 +122,11 @@ class AiohttpRangeReader:
         if self._full is not None:
             return self._full[start : start + length]
         resp = await get_bytes(
-            self._session, self._url, start=start, end=start + length - 1
+            self._session,
+            self._url,
+            start=start,
+            end=start + length - 1,
+            limiter=self._limiter,
         )
         if resp.status == 200:
             # The origin ignored the Range; cache the full body once.
@@ -122,7 +137,7 @@ class AiohttpRangeReader:
 
     async def read_all(self) -> bytes:
         if self._full is None:
-            resp = await get_bytes(self._session, self._url)
+            resp = await get_bytes(self._session, self._url, limiter=self._limiter)
             self._full = resp.body
             self._size = len(resp.body)
         return self._full
@@ -1105,6 +1120,7 @@ async def fetch_series(
     utc_day: date | None = None,
     step: timedelta = timedelta(hours=1),
     request_cap: int | None = SERIES_REQUEST_CAP,
+    limiter: asyncio.Semaphore | None = None,
 ) -> SeriesResult:
     """Fetch ``point``'s rows of one file, as cheaply as can be proven complete.
 
@@ -1121,8 +1137,13 @@ async def fetch_series(
     it fails to yield and costs a fresh look, never a prefix or the whole file
     (unless upstream really lacks the rows). A level that would need more than
     ``request_cap`` requests is skipped for the next one (ADR-0008: 96).
+    ``limiter`` is the shared :class:`asyncio.Semaphore` that caps how many
+    requests of one refresh are in flight across all its files at once (issue
+    #132); ``None`` leaves this fetch unbounded.
     """
-    reader = _CountingReader(AiohttpRangeReader(session, url), request_cap)
+    reader = _CountingReader(
+        AiohttpRangeReader(session, url, limiter=limiter), request_cap
+    )
     return await _fetch_series(
         reader,
         point,

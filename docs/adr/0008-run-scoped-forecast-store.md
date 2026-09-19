@@ -166,6 +166,20 @@ the entities do not change.
   `HOURLY_POINT_MAJOR_PARAMS` groupings and `DailyBundle.zero_degree_level`
   are replaced by the store and the demand registry.
 
+### Concurrency, added 2026-09-19 (issue #132)
+
+"More requests of smaller size" turned out to be a *burst*, not just a count:
+the first live cold refresh with the hourly option and the cloud/percentile
+layers on issued **~800 requests in ~2 s** against `data.geo.admin.ch` (19
+files, each row-addressed under one `asyncio.gather`). The volume is fine
+(~2.7 MB) but the terms of use name access frequency as well as volume. A
+single `asyncio.Semaphore` owned by `BulkCsvBackend` and shared across every
+file of a refresh now caps the requests in flight to
+`OGD_MAX_CONCURRENT_REQUESTS` (6, `ogd/const.py`), so a refresh is a steady
+trickle (~10–20 s cold) rather than a spike. This bounds concurrency *across*
+files and is orthogonal to the per-file `SERIES_REQUEST_CAP` of section 4. The
+first refresh still blocks setup and setup does not time out.
+
 ### Verified 2026-09-18 (run `202609180600`, point 309800;2)
 
 - **Row addressing holds for variable-width files.** In `tre200h0` every hour
