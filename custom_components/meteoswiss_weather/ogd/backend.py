@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
 
@@ -34,7 +34,7 @@ from .forecast import (
     parse_daily,
     parse_hourly,
 )
-from .hourly import FileHint, fetch_hourly_file, fetch_series, horizon_end_utc
+from .hourly import FileHint, fetch_series, horizon_end_utc
 from .models import (
     DailyBundle,
     ForecastPoint,
@@ -44,6 +44,39 @@ from .models import (
 from .stac import Run, latest_run
 
 _LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedSeries:
+    """One parameter's fetched rows for the current run and the window they cover.
+
+    The two forecast paths share one per-run cache (ADR-0008 section 4): both
+    ``fetch_daily()`` and ``fetch_hourly()`` read and fill it, so neither
+    downloads a file the other already has for the run. A ``whole_run`` text
+    (a point-major block, or a date-major file addressed for the whole run)
+    serves any request; a windowed text — a date-major file row-addressed to
+    the demanded hours — serves only a request whose window it contains, so the
+    daily path's 48 h zero-degree window never silently shortens a longer hourly
+    horizon (issue #123).
+    """
+
+    text: str
+    whole_run: bool
+    window_start: datetime | None
+    window_end: datetime | None
+
+    def covers(
+        self, window_start: datetime | None, window_end: datetime | None
+    ) -> bool:
+        """Whether this cached text answers a request for ``[start, end)``."""
+        if self.whole_run:
+            return True
+        # A whole-run request (window None) is only served by a whole-run text.
+        if window_start is None or window_end is None:
+            return False
+        if self.window_start is None or self.window_end is None:
+            return False
+        return self.window_start <= window_start and self.window_end >= window_end
 
 
 class ForecastBackend(Protocol):
@@ -78,8 +111,9 @@ class BulkCsvBackend:
     each via the #50 block strategy): the three wind files for the daily wind
     fields (issue #60, ADR-0002 revision 3), ``rp0003i0`` for the derived daily
     precipitation probability (issue #112, revision 5) and ``zprfr0hs`` for the
-    hourly zero-degree levels (issue #107, revision 6). The blocks are cached by
-    run stamp so the lazy hourly fetch reuses them without a second download.
+    hourly zero-degree levels (issue #107, revision 6). Every file a run fetches
+    lands in one shared per-run series cache keyed by parameter, so the daily and
+    hourly paths never download the same file twice for a run (issue #123).
     """
 
     def __init__(self, session: aiohttp.ClientSession) -> None:
@@ -89,24 +123,94 @@ class BulkCsvBackend:
         # point's rows (point-major block start, date-major row geometry, header,
         # first/last stamp). Remembered across the runs of a UTC day so the next
         # fetch skips classification and the probes and verifies through the rows
-        # it finds. Shared between the daily block fetch and the lazy hourly
-        # fetch; a hint only ever saves requests, a stale one costs a fresh look.
+        # it finds. Shared between the daily and hourly paths; a hint only ever
+        # saves requests, a stale one costs a fresh look.
         self._hints: dict[str, FileHint] = {}
-        # Cached block texts from the most recent daily refresh, keyed by
-        # parameter and remembered with the run stamp, so the daily and hourly
-        # paths never download a block twice for the same run (issue #60). A
-        # parameter that degraded (missing, not point-major, unreachable) is
-        # simply absent from the dict.
-        self._block_texts: dict[str, str] = {}
-        self._block_run: datetime | None = None
-        # The cached texts that hold the point's *whole* run. Only those may
-        # stand in for an hourly fetch; a text cut to the daily path's window
-        # (a row-addressed date-major file) would silently shorten the hourly
-        # forecast (ADR-0008 section 4).
-        self._block_whole: set[str] = set()
+        # One per-run series cache keyed by parameter (ADR-0008 section 4, issue
+        # #123). Both the daily and the hourly path read and fill it, so a file
+        # either path fetched for the current run is reused by the other without
+        # a second download. Each entry records the window its text covers so a
+        # windowed date-major fetch is never mistaken for the whole run.
+        self._series: dict[str, _CachedSeries] = {}
+        self._series_run: datetime | None = None
         # Files proven (by a full download) to carry no row for the point,
         # remembered for the UTC day so the proof is not repeated every run.
         self._absent: dict[str, date] = {}
+
+    def _reset_series_cache(self, run: Run) -> None:
+        """Drop the per-run series cache when a new run has landed (issue #123)."""
+        if self._series_run != run.timestamp:
+            self._series = {}
+            self._series_run = run.timestamp
+
+    async def _fetch_one(
+        self,
+        point: ForecastPoint,
+        run: Run,
+        param: str,
+        *,
+        window_start: datetime | None,
+        window_end: datetime | None,
+        step: timedelta,
+        label: str,
+        degrade_absent: bool,
+    ) -> str | None:
+        """Return ``point``'s rows of ``param`` for ``run``, using the shared cache.
+
+        Serves the request from :attr:`_series` when a text already fetched for
+        this run covers the window (so neither forecast path downloads a file the
+        other has, ADR-0008 section 4); otherwise climbs the escalation ladder
+        (:func:`~.hourly.fetch_series`) and files the result. ``degrade_absent``
+        distinguishes the optional daily blocks — where a file with no row for the
+        point degrades to ``None`` and is remembered absent for the UTC day — from
+        the required daily and hourly files, whose text is always returned.
+        Raises :class:`OgdConnectionError` on an unreachable file; the caller
+        decides whether that degrades one field or the whole refresh.
+        """
+        cached = self._series.get(param)
+        if cached is not None and cached.covers(window_start, window_end):
+            return cached.text
+
+        today = datetime.now(UTC).date()
+        if degrade_absent and self._absent.get(param) == today:
+            return None
+
+        result = await fetch_series(
+            self._session,
+            run.asset_url(param),
+            point,
+            window_start=window_start,
+            window_end=window_end,
+            hint=self._hints.get(param),
+            utc_day=run.timestamp.date(),
+            step=step,
+        )
+        # Escalating to a prefix or the whole file is correct but worth seeing:
+        # it usually means upstream re-sorted the file.
+        log = _LOGGER.warning if result.level >= 3 else _LOGGER.debug
+        log(
+            "%s %s for run %s: layout %s, level %d, %d requests, %d bytes",
+            label,
+            param,
+            run.timestamp.isoformat(),
+            result.layout.value,
+            result.level,
+            result.requests,
+            result.bytes,
+        )
+        if result.hint is not None:
+            self._hints[param] = result.hint
+        if degrade_absent and not result.has_rows:
+            if result.level == 4:
+                self._absent[param] = today
+            return None
+        self._series[param] = _CachedSeries(
+            text=result.text,
+            whole_run=result.whole_run,
+            window_start=None if result.whole_run else window_start,
+            window_end=None if result.whole_run else window_end,
+        )
+        return result.text
 
     async def _get_block_texts(
         self, point: ForecastPoint, run: Run
@@ -119,14 +223,10 @@ class BulkCsvBackend:
         the whole file when nothing cheaper proves complete. A file is left out
         only when upstream has nothing to give — it is not published for this
         run yet, it is unreachable, or it carries no row for the point — and
-        one file's trouble never takes the others down with it. The texts are
-        cached so the hourly path reuses the whole-run ones for the same run.
+        one file's trouble never takes the others down with it. Results land in
+        the shared per-run cache so the hourly path reuses them (issue #123).
         """
-        # _block_run set means we already tried this run; _block_texts is the
-        # result (possibly empty when upstream had nothing).
-        if self._block_run == run.timestamp:
-            return self._block_texts
-
+        self._reset_series_cache(run)
         now = datetime.now(UTC)
         today = now.date()
         # The daily run is selected on DAILY_REQUIRED_PARAMS alone, so it can be
@@ -162,14 +262,15 @@ class BulkCsvBackend:
         # good series for it (ADR-0008 section 1).
         results = await asyncio.gather(
             *(
-                fetch_series(
-                    self._session,
-                    run.asset_url(param),
+                self._fetch_one(
                     point,
+                    run,
+                    param,
                     window_start=windows.get(param, (None, None))[0],
                     window_end=windows.get(param, (None, None))[1],
-                    hint=self._hints.get(param),
-                    utc_day=run.timestamp.date(),
+                    step=timedelta(hours=1),
+                    label="block",
+                    degrade_absent=True,
                 )
                 for param in present
             ),
@@ -177,7 +278,6 @@ class BulkCsvBackend:
         )
 
         texts: dict[str, str] = {}
-        whole: set[str] = set()
         for param, result in zip(present, results, strict=True):
             if isinstance(result, OgdConnectionError):
                 _LOGGER.warning(
@@ -189,31 +289,8 @@ class BulkCsvBackend:
                 continue
             if isinstance(result, BaseException):
                 raise result
-            # Escalating to a prefix or the whole file is correct but worth
-            # seeing: it usually means upstream re-sorted the file.
-            log = _LOGGER.warning if result.level >= 3 else _LOGGER.debug
-            log(
-                "block %s for run %s: layout %s, level %d, %d requests, %d bytes",
-                param,
-                run.timestamp.isoformat(),
-                result.layout.value,
-                result.level,
-                result.requests,
-                result.bytes,
-            )
-            if result.hint is not None:
-                self._hints[param] = result.hint
-            if not result.has_rows:
-                if result.level == 4:
-                    self._absent[param] = today
-                continue
-            texts[param] = result.text
-            if result.whole_run:
-                whole.add(param)
-
-        self._block_texts = texts
-        self._block_whole = whole
-        self._block_run = run.timestamp
+            if result is not None:
+                texts[param] = result
         return texts
 
     async def _fetch_daily_texts(
@@ -230,39 +307,31 @@ class BulkCsvBackend:
 
         Unlike the optional blocks, these files are required to build any daily
         forecast, so a connection error propagates rather than degrading to a
-        partial bundle (the coordinator keeps the last good data, ADR-0008).
+        partial bundle (the coordinator keeps the last good data, ADR-0008). The
+        whole-run texts land in the shared per-run cache like every other file.
         """
         results = await asyncio.gather(
             *(
-                fetch_series(
-                    self._session,
-                    run.asset_url(param),
+                self._fetch_one(
                     point,
-                    hint=self._hints.get(param),
-                    utc_day=run.timestamp.date(),
+                    run,
+                    param,
+                    window_start=None,
+                    window_end=None,
                     step=timedelta(days=1),
+                    label="daily",
+                    degrade_absent=False,
                 )
                 for param in DAILY_REQUIRED_PARAMS
             )
         )
-        texts: dict[str, str] = {}
-        for param, result in zip(DAILY_REQUIRED_PARAMS, results, strict=True):
-            # Reaching the full file (level 4) means addressing could not prove
-            # every day — usually an upstream re-sort — and is worth seeing.
-            log = _LOGGER.warning if result.level >= 3 else _LOGGER.debug
-            log(
-                "daily %s for run %s: layout %s, level %d, %d requests, %d bytes",
-                param,
-                run.timestamp.isoformat(),
-                result.layout.value,
-                result.level,
-                result.requests,
-                result.bytes,
-            )
-            if result.hint is not None:
-                self._hints[param] = result.hint
-            texts[param] = result.text
-        return texts
+        # degrade_absent=False never returns None, so every required file has a
+        # text (header plus the point's rows) for parse_daily to read.
+        return {
+            param: text
+            for param, text in zip(DAILY_REQUIRED_PARAMS, results, strict=True)
+            if text is not None
+        }
 
     async def _resolve_run(self, run: Run | None, params: tuple[str, ...]) -> Run:
         """Use the caller's run when it carries ``params``, else discover one.
@@ -278,6 +347,7 @@ class BulkCsvBackend:
         self, point: ForecastPoint, *, run: Run | None = None
     ) -> DailyBundle:
         run = await self._resolve_run(run, DAILY_REQUIRED_PARAMS)
+        self._reset_series_cache(run)
         # Route the daily files through the escalation ladder, concurrently with
         # the point-major blocks. Each daily p-variant is date-major with nine
         # ~148 KB day blocks, so row addressing at a one-day step reads a few KB
@@ -351,79 +421,61 @@ class BulkCsvBackend:
     ) -> list[HourlyForecast]:
         # The bulk hourly files are the whole traffic budget (~30 MB each), so
         # this path only runs behind the opt-in option and the tiered schedule
-        # the provider enforces (ADR-0002 revision 2). Each file is fetched with
-        # the cheapest Range strategy for its layout (issue #50): a horizon prefix
-        # for the date-major files, the point's contiguous block for the
-        # point-major ones, and the full file only as a fallback.
+        # the provider enforces (ADR-0002 revision 2). Every requested parameter
+        # is fetched through the escalation ladder (:func:`~.hourly.fetch_series`,
+        # ADR-0008 section 4, issue #123) for the window ``[start of the current
+        # hour, horizon_end)``: a date-major file (``tre200h0``) is row-addressed
+        # to the horizon for ~100–300 KB instead of the ~10 MB date-major prefix,
+        # and a point-major file returns its ~5 KB block. A ``None`` horizon
+        # (the full-run option) demands the whole run, which the ladder serves by
+        # the full file when row addressing would overrun the request cap.
         #
         # ``params`` is the subset to fetch — the tiered provider (issue #68) asks
         # for the date-major temperature file (near/far horizon) and the
         # point-major group on independent schedules, so this fetches only what a
         # given tier needs rather than the whole set every time.
         #
-        # When fetch_daily() has already fetched the point-major wind,
-        # probability and zero-degree blocks for this run, reuse their cached
-        # texts without a second download (issues #60, #112, #107). When
-        # the cache is absent (no prior daily call, or a different run), the
-        # requested params are fetched the normal way — the same as before
-        # issue #60.
+        # Both forecast paths read and fill the shared per-run cache, so a file
+        # fetch_daily() already fetched for this run (the wind, probability and
+        # zero-degree blocks) is reused here without a second download, and a file
+        # fetched here is likewise reused by a later daily refresh of the same run
+        # (issue #123).
         run = await self._resolve_run(run, params)
+        self._reset_series_cache(run)
         now = datetime.now(UTC)
         horizon_end = horizon_end_utc(horizon_days, now)
         horizon_start = now.replace(minute=0, second=0, microsecond=0)
-
-        # Direct cache check (no re-probe): only hit if daily already ran for
-        # this very run. A block that degraded on the daily path is absent from
-        # the cache and is fetched here like any other hourly file.
-        block_cache = (
-            {p: t for p, t in self._block_texts.items() if p in self._block_whole}
-            if self._block_run == run.timestamp
-            else {}
-        )
-        params_to_fetch = [p for p in params if p not in block_cache]
+        # A None horizon is the whole-run demand: pass an open window so the
+        # ladder does not row-address ~220 hour blocks (issue #123).
+        window_start = horizon_start if horizon_end is not None else None
 
         results = await asyncio.gather(
             *(
-                fetch_hourly_file(
-                    self._session,
-                    run.asset_url(param),
+                self._fetch_one(
                     point,
-                    horizon_end=horizon_end,
-                    cached_start=(
-                        hint.block_start
-                        if (hint := self._hints.get(param)) is not None
-                        else None
-                    ),
+                    run,
+                    param,
+                    window_start=window_start,
+                    window_end=horizon_end,
+                    step=timedelta(hours=1),
+                    label="hourly",
+                    degrade_absent=False,
                 )
-                for param in params_to_fetch
+                for param in params
             )
         )
-        text_by_param: dict[str, str] = {}
-        run_day = run.timestamp.date()
-        for param, result in zip(params_to_fetch, results, strict=True):
-            text_by_param[param] = result.text
-            if result.block_start is not None:
-                # Fold the block offset into the shared per-file hint so the
-                # daily path reuses it on the next run of this UTC day.
-                header = result.text.split("\n", 1)[0] + "\n"
-                self._hints[param] = FileHint(
-                    layout=result.layout,
-                    utc_day=run_day,
-                    header=header,
-                    block_start=result.block_start,
-                )
-
-        # Only fold in cached block texts for params this call requested, so a
-        # temperature-only (near/far) fetch stays temperature-only.
-        text_by_param.update({p: t for p, t in block_cache.items() if p in params})
+        text_by_param: dict[str, str] = {
+            param: text
+            for param, text in zip(params, results, strict=True)
+            if text is not None
+        }
 
         # The download is the cost this option pays for; record it so a user can
         # see what enabling the hourly forecast actually spends (ADR-0002).
         total_bytes = sum(len(text.encode(FORECAST_ENCODING)) for text in
                           text_by_param.values())
         _LOGGER.debug(
-            "hourly forecast run %s (horizon_days=%s): fetched %d bytes across "
-            "%d files",
+            "hourly forecast run %s (horizon_days=%s): %d bytes across %d files",
             run.timestamp.isoformat(),
             horizon_days,
             total_bytes,

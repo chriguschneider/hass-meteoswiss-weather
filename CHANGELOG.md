@@ -11,6 +11,20 @@ using the matching section below as release notes.
 
 ### Changed
 
+- **Hourly forecast fetched through the ladder, with a two-way shared cache**
+  (#123, [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). The hourly
+  forecast no longer downloads a date-major file (`tre200h0`) as a multi-MB
+  horizon prefix: every parameter is fetched through the escalation ladder for
+  the window `[start of the current hour, horizon)`, so a date-major file is
+  row-addressed for the horizon (~100–300 KB) and a point-major file returns its
+  ~5 KB block. Since MeteoSwiss re-sorted `zprfr0hs` to date-major, this removes
+  a hidden ~10 MB per run whenever the hourly option was on. The daily and hourly
+  paths now share **one per-run cache keyed by parameter** that records the window
+  each text covers: a file either path fetched for the current run is reused by
+  the other without a second download, in either order, and a windowed cache
+  entry (the daily 48 h zero-degree window) never silently shortens a longer
+  hourly horizon.
+
 - **Daily forecast files fetched by row addressing** (#122,
   [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). The four daily files
   (`tre200px`, `tre200pn`, `rka150p0`, `jp2000d0`, ~1.3 MB each) are now routed

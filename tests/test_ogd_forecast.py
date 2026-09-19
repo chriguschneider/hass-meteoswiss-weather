@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import random
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import aiohttp
@@ -851,12 +851,14 @@ def _point_major_wind_text(param: str, hours: int = 24) -> str:
 def _date_major_block_text(param: str, hours: int = 24) -> str:
     """Synthetic date-major CSV for one block parameter: rows sorted by Date.
 
-    The layout the daily block fetch must refuse (guardrail: never a full
-    download for a default feature).
+    Two points per hour block so the layout classifier reads it as date-major and
+    the ladder row-addresses it. ``hours`` may span several days; the value for
+    point 309800;2 is the hour offset, so a caller can check which hours survived.
     """
+    base = datetime(2026, 8, 27, 0, 0, tzinfo=UTC)
     rows = [f"point_id;point_type_id;Date;{param}"]
     for h in range(hours):
-        stamp = datetime(2026, 8, 27, h, 0, tzinfo=UTC).strftime("%Y%m%d%H%M")
+        stamp = (base + timedelta(hours=h)).strftime("%Y%m%d%H%M")
         rows.append(f"1;1;{stamp};{h:.1f}")
         rows.append(f"309800;2;{stamp};{h:.1f}")
     return "\n".join(rows) + "\n"
@@ -1098,10 +1100,10 @@ async def test_bulk_backend_date_major_blocks_are_served_by_escalation(
     assert len(bundle.zero_degree_level) == 23
     assert bundle.zero_degree_level[datetime(2026, 8, 27, 3, 0, tzinfo=UTC)] == 3.0
     assert datetime(2026, 8, 27, 0, 0, tzinfo=UTC) not in bundle.zero_degree_level
-    # Only whole-run texts may stand in for an hourly fetch; the windowed
-    # zero-degree text must not.
-    assert set(DAILY_WIND_PARAMS) <= backend._block_whole
-    assert HOURLY_ZERO_DEGREE not in backend._block_whole
+    # Only whole-run cache entries may stand in for a longer hourly window; the
+    # windowed zero-degree entry must record its window so it does not (#123).
+    assert all(backend._series[p].whole_run for p in DAILY_WIND_PARAMS)
+    assert not backend._series[HOURLY_ZERO_DEGREE].whole_run
     assert backend._hints[HOURLY_ZERO_DEGREE].geometry is not None
 
 
@@ -1185,9 +1187,9 @@ async def test_get_block_texts_missing_assets_are_skipped(session) -> None:
     # No aioresponses mock registered: any HTTP attempt would raise, proving the
     # guardrail returns before touching the network.
     assert await backend._get_block_texts(_koeniz_point(), run) == {}
-    # Sentinel cached so a repeat call for the same run short-circuits.
-    assert backend._block_run == run.timestamp
-    assert backend._block_texts == {}
+    # The per-run cache is stamped for this run; no block file was fetched.
+    assert backend._series_run == run.timestamp
+    assert backend._series == {}
 
 
 async def test_get_block_texts_missing_zero_degree_keeps_wind(session) -> None:
@@ -1243,9 +1245,10 @@ async def test_bulk_backend_fetch_daily_wind_fetch_error_degrades_to_none(
     assert all(d.wind_bearing is None for d in daily)
     assert all(d.precipitation_probability is None for d in daily)
     assert bundle.zero_degree_level == {}
-    # Sentinel cached so a repeat call for the same run short-circuits.
-    assert backend._block_run is not None
-    assert backend._block_texts == {}
+    # The daily-required files are cached for the run; the failed blocks are not,
+    # so a later refresh retries only them (ADR-0008, issue #123).
+    assert backend._series_run is not None
+    assert all(param not in backend._series for param in DAILY_BLOCK_PARAMS)
 
 
 @freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC))
@@ -1298,3 +1301,95 @@ async def test_bulk_backend_fetch_hourly_reuses_daily_wind_cache(session) -> Non
     assert hourly[0].wind_speed_kmh == pytest.approx(5.0)
     assert hourly[0].precipitation_probability == pytest.approx(0.0)
     assert hourly[0].zero_degree_level == 2500.0
+
+@freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC))
+async def test_bulk_backend_fetch_daily_reuses_hourly_cache(session) -> None:
+    """The shared per-run cache flows both ways (ADR-0008 section 4, issue #123).
+
+    When fetch_hourly() runs first, the point-major blocks it fetched (wind,
+    probability and the whole-run zero-degree file) are reused by a following
+    fetch_daily() of the same run — so zprfr0hs is fetched once per run whichever
+    path runs first. Each block URL is registered once, so a second download
+    would fail the test. Frozen at 00:00 UTC so all 24 fixture hours survive.
+    """
+    with aioresponses() as mock:
+        # STAC listed once per resolve (fetch_hourly then fetch_daily).
+        mock.get(ITEMS_URL, status=200,
+                 body=_fixture_bytes("ogd-local-forecasting_items.json"))
+        mock.get(ITEMS_URL, status=200,
+                 body=_fixture_bytes("ogd-local-forecasting_items.json"))
+        for param in DAILY_REQUIRED_PARAMS:
+            mock.get(_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        # Point-major blocks registered *once*: fetch_daily reuses the cache.
+        for param in DAILY_BLOCK_PARAMS:
+            mock.get(_asset_url(param), status=200,
+                     body=_point_major_wind_text(param).encode("iso-8859-1"))
+        hourly_only = [
+            p for p in HOURLY_REQUIRED_PARAMS if p not in DAILY_BLOCK_PARAMS
+        ]
+        for param in hourly_only:
+            mock.get(_hourly_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+
+        backend = BulkCsvBackend(session)
+        point = _koeniz_point()
+        hourly = await backend.fetch_hourly(point)
+        bundle = await backend.fetch_daily(point)
+
+    # Hourly came through; daily wind/probability/zero-degree served from cache.
+    assert len(hourly) == 24
+    assert hourly[0].zero_degree_level == 2500.0
+    assert bundle.daily[0].native_wind_speed == pytest.approx(15.5)
+    assert bundle.daily[0].precipitation_probability == pytest.approx(21.0)
+    assert bundle.zero_degree_level[datetime(2026, 8, 27, 0, 0, tzinfo=UTC)] == 2500.0
+
+
+@freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC))
+async def test_hourly_not_shortened_by_daily_zero_degree_window(session) -> None:
+    """A longer hourly horizon is never cut to the daily 48 h window (#123).
+
+    When ``zprfr0hs`` is date-major, the daily path row-addresses only
+    ``[now, now+48h)`` (a windowed, non-whole-run cache entry). That entry must
+    not stand in for a longer hourly horizon: fetch_hourly() refetches and
+    carries every hour up to the horizon (ADR-0008 section 4). The file is
+    registered with ``repeat`` because the second fetch is the whole point.
+    """
+    zero_degree_72h = _date_major_block_text(HOURLY_ZERO_DEGREE, hours=72)
+    with aioresponses() as mock:
+        mock.get(ITEMS_URL, status=200,
+                 body=_fixture_bytes("ogd-local-forecasting_items.json"))
+        mock.get(ITEMS_URL, status=200,
+                 body=_fixture_bytes("ogd-local-forecasting_items.json"))
+        for param in DAILY_REQUIRED_PARAMS:
+            mock.get(_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        for param in (*DAILY_WIND_PARAMS, HOURLY_PRECIP_PROBABILITY):
+            mock.get(_asset_url(param), status=200,
+                     body=_point_major_wind_text(param).encode("iso-8859-1"),
+                     repeat=True)
+        # Date-major zero-degree, fetched by both paths: the daily 48 h window
+        # does not cover the ~70 h hourly horizon, so hourly refetches it.
+        mock.get(_asset_url(HOURLY_ZERO_DEGREE), status=200,
+                 body=zero_degree_72h.encode("iso-8859-1"), repeat=True)
+        hourly_only = [
+            p for p in HOURLY_REQUIRED_PARAMS if p not in DAILY_BLOCK_PARAMS
+        ]
+        for param in hourly_only:
+            mock.get(_hourly_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"),
+                     repeat=True)
+
+        backend = BulkCsvBackend(session)
+        point = _koeniz_point()
+        bundle = await backend.fetch_daily(point)
+        hourly = await backend.fetch_hourly(point, horizon_days=2)
+
+    # The daily path cached only the 48 h window (not the whole run).
+    assert not backend._series[HOURLY_ZERO_DEGREE].whole_run
+    assert len(bundle.zero_degree_level) == 48
+    # The hourly forecast is not shortened to 48 h: it carries hours past +48 h,
+    # up to the horizon (Europe/Zurich local midnight of today + 3 days).
+    zero_hours = sorted(h.time for h in hourly if h.zero_degree_level is not None)
+    assert datetime(2026, 8, 29, 0, 0, tzinfo=UTC) in zero_hours  # +48 h
+    assert max(zero_hours) >= datetime(2026, 8, 29, 12, 0, tzinfo=UTC)
