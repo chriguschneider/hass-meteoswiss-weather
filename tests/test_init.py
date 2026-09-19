@@ -467,15 +467,23 @@ async def test_options_change_reloads_entry(
     assert provider.last_fetch is None
 
 
-async def test_setup_lists_stac_once(
+async def test_setup_uses_day_item_not_listing(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """The run discovered by the coordinator is handed to the daily fetch, so a
-    refresh costs one ~600 KB STAC listing, not two (ADR-0008 section 3)."""
+    """The coordinator discovers the run via the day item, not the full listing.
+
+    The day item (~80 KB, ETag-capable) is the primary discovery path (issue
+    #120, ADR-0008). A setup that hits the cheaper day item and never fetches
+    the 600 KB listing is the expected behaviour. The run is handed down to the
+    backend so nothing below re-discovers it (ADR-0008 section 3).
+    """
+    from datetime import UTC, datetime
+
     from custom_components.meteoswiss_weather.ogd.const import (
         COLLECTION_FORECAST,
+        stac_day_item_url,
         stac_items_url,
     )
 
@@ -483,7 +491,13 @@ async def test_setup_lists_stac_once(
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
 
+    today_id = datetime.now(UTC).strftime("%Y%m%d") + "-ch"
+    day_item = stac_day_item_url(COLLECTION_FORECAST, today_id)
     listing = stac_items_url(COLLECTION_FORECAST)
-    calls = [1 for _m, url, *_ in mock_ogd.mock_calls if str(url) == listing]
-    assert len(calls) == 1
+
+    day_item_calls = [1 for _m, url, *_ in mock_ogd.mock_calls if str(url) == day_item]
+    listing_calls = [1 for _m, url, *_ in mock_ogd.mock_calls if str(url) == listing]
+
+    assert len(day_item_calls) == 1, "day item must be fetched exactly once"
+    assert len(listing_calls) == 0, "listing must not be fetched when day item succeeds"
     assert config_entry.runtime_data.forecast_coordinator.run is not None

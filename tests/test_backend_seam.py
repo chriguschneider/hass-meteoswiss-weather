@@ -47,6 +47,7 @@ from custom_components.meteoswiss_weather.ogd.const import (
     DAILY_REQUIRED_PARAMS,
     HOURLY_REQUIRED_PARAMS,
     META_DATAINVENTORY_URL,
+    stac_day_item_url,
     stac_items_url,
     station_now_url,
 )
@@ -178,6 +179,8 @@ def mock_station_and_stac(aioclient_mock: AiohttpClientMocker) -> AiohttpClientM
     unregistered URL and raise an OgdConnectionError, causing setup to fail.
     A successful setup therefore proves FakeBackend was used end-to-end.
     """
+    from datetime import UTC, datetime
+
     aioclient_mock.get(
         station_now_url(_STATION_ABBR),
         content=(_FIXTURES / "ogd-smn_ber_t_now.csv").read_bytes(),
@@ -186,6 +189,13 @@ def mock_station_and_stac(aioclient_mock: AiohttpClientMocker) -> AiohttpClientM
         META_DATAINVENTORY_URL,
         content=(_FIXTURES / "ogd-smn_meta_datainventory.csv").read_bytes(),
     )
+    # Day item for today (coordinator's primary discovery path, issue #120).
+    today_id = datetime.now(UTC).strftime("%Y%m%d") + "-ch"
+    aioclient_mock.get(
+        stac_day_item_url(COLLECTION_FORECAST, today_id),
+        content=(_FIXTURES / "ogd-local-forecasting_20260827-ch.json").read_bytes(),
+    )
+    # Full listing as fallback.
     aioclient_mock.get(
         stac_items_url(COLLECTION_FORECAST),
         content=(_FIXTURES / "ogd-local-forecasting_items.json").read_bytes(),

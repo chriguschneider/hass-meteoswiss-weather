@@ -20,12 +20,14 @@ from freezegun import freeze_time
 
 from custom_components.meteoswiss_weather.ogd import (
     BulkCsvBackend,
+    CachedResponse,
     ForecastPoint,
     OgdParseError,
     aggregate_daily_precip_probability,
     aggregate_daily_wind,
     fetch_points,
     latest_run,
+    latest_run_from_day_item,
     nearest_point,
     parse_daily,
     parse_hourly,
@@ -48,6 +50,7 @@ from custom_components.meteoswiss_weather.ogd.const import (
     HOURLY_TEMP_PERCENTILE_PARAMS,
     HOURLY_ZERO_DEGREE,
     META_POINT_URL,
+    stac_day_item_url,
     stac_items_url,
 )
 
@@ -222,6 +225,191 @@ async def test_latest_run_follows_pagination(session) -> None:
 
     # The run is only complete once assets from both pages are merged.
     assert run.timestamp == datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+
+
+# --- day-item discovery (issue #120) ----------------------------------------
+
+# Day IDs used in the day-item tests.
+_TODAY_ID = "20260827-ch"
+_YESTERDAY_ID = "20260826-ch"
+_TODAY_URL = stac_day_item_url(COLLECTION_FORECAST, _TODAY_ID)
+_YESTERDAY_URL = stac_day_item_url(COLLECTION_FORECAST, _YESTERDAY_ID)
+
+
+def _complete_day_item_body() -> bytes:
+    """Day item JSON carrying the complete run 202608270200."""
+    return _fixture_bytes("ogd-local-forecasting_20260827-ch.json")
+
+
+def _incomplete_day_item_body() -> bytes:
+    """Day item JSON that has only the 03:00 run (missing jp2000d0)."""
+    doc = {
+        "type": "Feature",
+        "id": _TODAY_ID,
+        "assets": {
+            f"vnut12.lssw.202608270300.{p}.csv": {
+                "href": f"{ASSET_BASE}/vnut12.lssw.202608270300.{p}.csv"
+            }
+            for p in ("tre200px", "tre200pn", "rka150p0")
+        },
+    }
+    return json.dumps(doc).encode()
+
+
+@freeze_time(datetime(2026, 8, 27, 6, 0, tzinfo=UTC))
+async def test_day_item_unchanged_returns_run_no_listing(session) -> None:
+    """An unchanged day item (304) returns the cached run; listing never called.
+
+    Acceptance: a tick with an unchanged day item performs one conditional
+    request and no listing (issue #120).
+    """
+    today_cache = CachedResponse(body="")
+    yesterday_cache = CachedResponse(body="")
+
+    with aioresponses() as mock:
+        # First call: full 200 response with ETag.
+        mock.get(_TODAY_URL, status=200, body=_complete_day_item_body(),
+                 headers={"ETag": '"v1"'})
+        run1 = await latest_run_from_day_item(
+            session, COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS,
+            today_cache, yesterday_cache,
+        )
+
+    assert run1.timestamp == datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+    assert today_cache.etag == '"v1"'
+
+    with aioresponses() as mock:
+        # Second call: 304 (item unchanged) → cache returned, no listing.
+        mock.get(_TODAY_URL, status=304, body=b"")
+        run2 = await latest_run_from_day_item(
+            session, COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS,
+            today_cache, yesterday_cache,
+        )
+
+    assert run2.timestamp == run1.timestamp
+    # Listing URL must not have been registered/called.
+    assert not any(str(r[1]) == ITEMS_URL for r in mock.requests.get(("GET", None), []))
+
+
+@freeze_time(datetime(2026, 8, 27, 6, 0, tzinfo=UTC))
+async def test_day_item_changed_returns_new_run(session) -> None:
+    """A changed day item (200 with new ETag) yields the updated run."""
+    today_cache = CachedResponse(body="")
+    yesterday_cache = CachedResponse(body="")
+
+    # Simulate a changed item: different ETag, same run stamp in fixture.
+    with aioresponses() as mock:
+        mock.get(_TODAY_URL, status=200, body=_complete_day_item_body(),
+                 headers={"ETag": '"v2"'})
+        run = await latest_run_from_day_item(
+            session, COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS,
+            today_cache, yesterday_cache,
+        )
+
+    assert run.timestamp == datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+    assert today_cache.etag == '"v2"'
+
+
+@freeze_time(datetime(2026, 8, 27, 0, 5, tzinfo=UTC))
+async def test_day_item_today_404_falls_back_to_yesterday(session) -> None:
+    """Today's item answers 404 (minutes after 00:00 UTC) → yesterday's is used.
+
+    Acceptance: day rollover — today's item 404 falls back to yesterday's item.
+    """
+    today_cache = CachedResponse(body="")
+    yesterday_cache = CachedResponse(body="")
+
+    # Yesterday's day item carries the complete run.
+    yesterday_body = _complete_day_item_body()
+
+    with aioresponses() as mock:
+        mock.get(_TODAY_URL, status=404, body=b"")
+        mock.get(_YESTERDAY_URL, status=200, body=yesterday_body)
+        run = await latest_run_from_day_item(
+            session, COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS,
+            today_cache, yesterday_cache,
+        )
+
+    assert run.timestamp == datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+
+
+@freeze_time(datetime(2026, 8, 27, 6, 0, tzinfo=UTC))
+async def test_day_item_today_no_complete_run_falls_back_to_yesterday(
+    session,
+) -> None:
+    """Today's item has only an incomplete run → yesterday's item is used.
+
+    Acceptance: day rollover — today's item with no complete run falls back.
+    """
+    today_cache = CachedResponse(body="")
+    yesterday_cache = CachedResponse(body="")
+
+    with aioresponses() as mock:
+        mock.get(_TODAY_URL, status=200, body=_incomplete_day_item_body())
+        mock.get(_YESTERDAY_URL, status=200, body=_complete_day_item_body())
+        run = await latest_run_from_day_item(
+            session, COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS,
+            today_cache, yesterday_cache,
+        )
+
+    assert run.timestamp == datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+
+
+@freeze_time(datetime(2026, 8, 27, 0, 2, tzinfo=UTC))
+async def test_day_item_both_404_falls_back_to_listing(session) -> None:
+    """Both day items 404 → the full listing is the last resort.
+
+    Acceptance: both fallback steps exhausted → listing is used.
+    """
+    today_cache = CachedResponse(body="")
+    yesterday_cache = CachedResponse(body="")
+
+    with aioresponses() as mock:
+        mock.get(_TODAY_URL, status=404, body=b"")
+        mock.get(_YESTERDAY_URL, status=404, body=b"")
+        mock.get(ITEMS_URL, status=200,
+                 body=_fixture_bytes("ogd-local-forecasting_items.json"))
+        run = await latest_run_from_day_item(
+            session, COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS,
+            today_cache, yesterday_cache,
+        )
+
+    assert run.timestamp == datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+
+
+@freeze_time(datetime(2026, 8, 27, 6, 0, tzinfo=UTC))
+async def test_day_item_malformed_json_raises_parse_error(session) -> None:
+    """A malformed day item raises OgdParseError (structural, not a fallback)."""
+    today_cache = CachedResponse(body="")
+    yesterday_cache = CachedResponse(body="")
+
+    with aioresponses() as mock:
+        mock.get(_TODAY_URL, status=200, body=b"not json at all {")
+        with pytest.raises(OgdParseError):
+            await latest_run_from_day_item(
+                session, COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS,
+                today_cache, yesterday_cache,
+            )
+
+
+@freeze_time(datetime(2026, 8, 27, 6, 0, tzinfo=UTC))
+async def test_day_item_skips_the_incomplete_newer_run(session) -> None:
+    """The day item's incomplete 03:00 run is skipped; the complete 02:00 wins."""
+    today_cache = CachedResponse(body="")
+    yesterday_cache = CachedResponse(body="")
+
+    with aioresponses() as mock:
+        mock.get(_TODAY_URL, status=200, body=_complete_day_item_body())
+        run = await latest_run_from_day_item(
+            session, COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS,
+            today_cache, yesterday_cache,
+        )
+
+    # 03:00 is in the fixture but lacks jp2000d0 → 02:00 wins.
+    assert run.timestamp == datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+    assert run.asset_url("jp2000d0").endswith(
+        "vnut12.lssw.202608270200.jp2000d0.csv"
+    )
 
 
 # --- daily parser -----------------------------------------------------------

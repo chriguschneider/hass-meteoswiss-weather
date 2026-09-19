@@ -39,7 +39,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -79,7 +79,7 @@ from .ogd import (
     fetch_current,
     fetch_pollen_current,
     fetch_precip_current,
-    latest_run,
+    latest_run_from_day_item,
 )
 from .ogd.const import (
     COLLECTION_FORECAST,
@@ -577,6 +577,12 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         self.run: Run | None = None
         # Timestamp of the last successful update; exposed for diagnostics.
         self.last_success: datetime | None = None
+        # Day-item caches for conditional run discovery (issue #120, ADR-0008).
+        # Two caches survive between ticks so ETag-based 304 responses are
+        # possible; they are rotated on a UTC day boundary (today → yesterday).
+        self._day_item_date: date | None = None
+        self._today_item_cache = CachedResponse(body="")
+        self._yesterday_item_cache = CachedResponse(body="")
         # Per-parameter series of the point; the one source for entities that
         # show an hour of the forecast, whichever path fetched it (ADR-0008).
         self.store = ForecastStore()
@@ -596,9 +602,21 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         )
 
     async def _async_update_data(self) -> ForecastData:
+        # Rotate the day-item caches on a UTC day boundary so the ETag for
+        # today's item does not pollute yesterday's URL on the following day.
+        today_date = dt_util.utcnow().date()
+        if self._day_item_date != today_date:
+            self._yesterday_item_cache = self._today_item_cache
+            self._today_item_cache = CachedResponse(body="")
+            self._day_item_date = today_date
+
         try:
-            run = await latest_run(
-                self._session, COLLECTION_FORECAST, DAILY_REQUIRED_PARAMS
+            run = await latest_run_from_day_item(
+                self._session,
+                COLLECTION_FORECAST,
+                DAILY_REQUIRED_PARAMS,
+                self._today_item_cache,
+                self._yesterday_item_cache,
             )
         except OgdParseError as err:
             async_create_issue(

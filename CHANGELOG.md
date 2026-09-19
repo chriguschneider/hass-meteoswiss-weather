@@ -9,6 +9,16 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- **Day-item run discovery** (#120, [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)).
+  Run discovery now fetches today's UTC day item (~80 KB, ETag-capable) instead
+  of the full collection listing (~620 KB, no ETag). An unchanged item costs a
+  single conditional 304 with 0 bytes. Falls back to yesterday's day item (for
+  the brief window after 00:00 UTC when the new day's item is not yet published)
+  and then to the full listing as a last resort. Traffic for discovery drops from
+  ~15 MB/day to a few KB/day per instance.
+
 ## [v0.3.1] — 2026-09-19
 
 ### Changed

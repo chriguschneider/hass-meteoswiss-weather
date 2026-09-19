@@ -319,7 +319,7 @@ async def test_forecast_parse_error_creates_repair_issue(
     coordinator = config_entry.runtime_data.forecast_coordinator
 
     with patch(
-        "custom_components.meteoswiss_weather.coordinator.latest_run",
+        "custom_components.meteoswiss_weather.coordinator.latest_run_from_day_item",
         side_effect=OgdParseError("stac broken"),
     ):
         await coordinator.async_refresh()
@@ -340,7 +340,7 @@ async def test_forecast_parse_error_repair_issue_cleared_on_success(
     coordinator = config_entry.runtime_data.forecast_coordinator
 
     with patch(
-        "custom_components.meteoswiss_weather.coordinator.latest_run",
+        "custom_components.meteoswiss_weather.coordinator.latest_run_from_day_item",
         side_effect=OgdParseError("stac broken"),
     ):
         await coordinator.async_refresh()
@@ -371,7 +371,7 @@ async def test_forecast_connection_error_creates_no_repair_issue(
     coordinator = config_entry.runtime_data.forecast_coordinator
 
     with patch(
-        "custom_components.meteoswiss_weather.coordinator.latest_run",
+        "custom_components.meteoswiss_weather.coordinator.latest_run_from_day_item",
         side_effect=OgdConnectionError("stac unreachable"),
     ):
         await coordinator.async_refresh()

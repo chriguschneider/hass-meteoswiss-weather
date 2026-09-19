@@ -15,6 +15,7 @@ need this fixture.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,7 @@ from custom_components.meteoswiss_weather.ogd.const import (
     META_STATIONS_URL,
     pollen_now_url,
     precip_station_now_url,
+    stac_day_item_url,
     stac_items_url,
     station_now_url,
 )
@@ -110,7 +112,24 @@ def _register_mock_ogd(
         content=_fixture_bytes("ogd-local-forecasting_meta_point.csv"),
     )
 
-    # STAC items listing for the local-forecast collection.
+    # Day item URLs for the primary discovery path (issue #120, ADR-0008).
+    # The fixture carries the same run stamp (202608270200) for all dates.
+    # Register all dates that freeze_time-based tests need, plus actual today
+    # for tests that do not freeze time.
+    _DAY_ITEM_DATES = {
+        "20260827",  # fixture week (most tests)
+        "20260828",  # test_sensor _DAY1
+        "20260829",  # test_weather daytime/nighttime
+        "20260910",  # test_sensor zero-degree-outside-run
+        datetime.now(UTC).strftime("%Y%m%d"),  # actual today for unfrozen tests
+    }
+    for _date_str in _DAY_ITEM_DATES:
+        aioclient_mock.get(
+            stac_day_item_url(COLLECTION_FORECAST, f"{_date_str}-ch"),
+            content=_fixture_bytes("ogd-local-forecasting_20260827-ch.json"),
+        )
+
+    # STAC items listing for the local-forecast collection (last-resort fallback).
     aioclient_mock.get(
         stac_items_url(COLLECTION_FORECAST),
         content=_fixture_bytes("ogd-local-forecasting_items.json"),

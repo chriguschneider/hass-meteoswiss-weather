@@ -54,7 +54,7 @@ from .pollen import (
     nearest_pollen_station,
     nearest_pollen_stations,
 )
-from .stac import Run, latest_run
+from .stac import Run, latest_run, latest_run_from_day_item
 from .stations import (
     fetch_current,
     fetch_datainventory,
@@ -110,6 +110,7 @@ __all__ = [
     "horizon_end_utc",
     "hourly_date_major_params",
     "latest_run",
+    "latest_run_from_day_item",
     "nearest_point",
     "nearest_pollen_station",
     "nearest_pollen_stations",
