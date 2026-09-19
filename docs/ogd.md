@@ -309,6 +309,20 @@ each file's layout at runtime from offset probes, then
 For the minimum set at the default horizon this is **~7–11 MB per refresh**
 instead of ~125 MB. See ADR-0002 (revised) for the budget and the option.
 
+**Shared request-concurrency limit (issue #132, measured 2026-09-19):** a cold
+refresh with the hourly option and the cloud/percentile layers on fetches ~19
+files, each row-addressed with several byte-range probes under one
+`asyncio.gather` — **about 800 requests in ~2 s** against `data.geo.admin.ch`
+(daily files 115, daily blocks 211, hourly date-major group 311, hourly
+point-major group 159). The byte volume is small (~2.7 MB), but the *burst* is
+not: the terms of use name access frequency as well as volume, and swisstopo
+may throttle a client that strains the service. One `asyncio.Semaphore` owned
+by the backend and shared across every file of a refresh caps the requests in
+flight to `OGD_MAX_CONCURRENT_REQUESTS` (6, `ogd/const.py`), turning the burst
+into a steady trickle — a cold refresh then takes ~10–20 s instead of ~2 s. The
+limit is *across* files; the per-file request cap (`SERIES_REQUEST_CAP`, 96) is
+unchanged. Setup still blocks on the first refresh and does not time out.
+
 #### Change rhythm across runs (measured 2026-08-27, all 24 runs, `tre200h0`)
 
 A new file is published every hour, but the content of one point moves in

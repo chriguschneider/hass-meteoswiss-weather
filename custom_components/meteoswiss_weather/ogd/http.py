@@ -7,6 +7,8 @@ the current-observations client (#4) and the forecast client (#10).
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from dataclasses import dataclass
 
 import aiohttp
@@ -15,6 +17,18 @@ from .models import OgdConnectionError
 
 # aiohttp's default has no ceiling; a stuck socket must not hang a poll.
 DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=30)
+
+
+def _gate(limiter: asyncio.Semaphore | None):
+    """Hold ``limiter`` for the duration of one request, or nothing when ``None``.
+
+    A caller that fans out many files of one refresh under ``asyncio.gather``
+    passes a shared :class:`asyncio.Semaphore` so at most
+    :data:`~.const.OGD_MAX_CONCURRENT_REQUESTS` requests are in flight at once
+    (issue #132): the burst against ``data.geo.admin.ch`` becomes a steady
+    trickle. A ``None`` limiter is an unbounded no-op (a single-request caller).
+    """
+    return limiter if limiter is not None else contextlib.nullcontext()
 
 
 @dataclass(slots=True)
@@ -38,14 +52,16 @@ async def get_text(
     cache: CachedResponse | None = None,
     timeout: aiohttp.ClientTimeout = DEFAULT_TIMEOUT,
     encoding: str = "utf-8",
+    limiter: asyncio.Semaphore | None = None,
 ) -> CachedResponse:
     """Fetch ``url`` as text, revalidating against ``cache`` when given.
 
     Returns a :class:`CachedResponse`. When ``cache`` is supplied its
     validators are sent as ``If-None-Match`` / ``If-Modified-Since``; on a
     304 the same object is returned unchanged, on a 200 it is updated in
-    place and returned. Any transport error or non-2xx/304 status raises
-    :class:`OgdConnectionError`.
+    place and returned. ``limiter`` bounds how many requests of one refresh
+    are in flight at once (issue #132). Any transport error or non-2xx/304
+    status raises :class:`OgdConnectionError`.
     """
     headers: dict[str, str] = {}
     if cache is not None:
@@ -55,7 +71,10 @@ async def get_text(
             headers["If-Modified-Since"] = cache.last_modified
 
     try:
-        async with session.get(url, headers=headers, timeout=timeout) as response:
+        async with (
+            _gate(limiter),
+            session.get(url, headers=headers, timeout=timeout) as response,
+        ):
             if cache is not None and response.status == 304:
                 return cache
             if response.status != 200:
@@ -109,6 +128,7 @@ async def get_bytes(
     end: int | None = None,
     etag: str | None = None,
     timeout: aiohttp.ClientTimeout = DEFAULT_TIMEOUT,
+    limiter: asyncio.Semaphore | None = None,
 ) -> RangeResponse:
     """Fetch ``url`` as bytes, optionally only the ``start``–``end`` range.
 
@@ -118,7 +138,9 @@ async def get_bytes(
     so an unchanged object answers 304 — this keeps working together with a
     ``Range`` (measured, issue #50). A server that ignores ``Range`` and
     answers 200 with the full body is handled by the caller (the range reader
-    caches the body and slices locally). Any transport error or unexpected
+    caches the body and slices locally). ``limiter`` bounds how many requests of
+    one refresh are in flight at once (issue #132), so the many byte-range
+    probes of a refresh do not burst the host. Any transport error or unexpected
     status raises :class:`OgdConnectionError`.
     """
     headers: dict[str, str] = {}
@@ -130,7 +152,10 @@ async def get_bytes(
         headers["If-None-Match"] = etag
 
     try:
-        async with session.get(url, headers=headers, timeout=timeout) as response:
+        async with (
+            _gate(limiter),
+            session.get(url, headers=headers, timeout=timeout) as response,
+        ):
             status = response.status
             if status == 304:
                 return RangeResponse(status=304, body=b"", etag=etag)

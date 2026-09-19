@@ -246,6 +246,19 @@ HOURLY_RANGE_SAFETY = 1.5
 # saving bytes never turns into a request storm. 96 lets a 72 h horizon stay on
 # row addressing. Owner decision 2026-09-18; tests/test_const.py asserts it.
 SERIES_REQUEST_CAP = 96
+
+# Shared concurrency limit for the open-data host (issue #132, ADR-0008). A cold
+# refresh fans out ~19 files, each row-addressed with several byte-range probes,
+# all under one ``asyncio.gather`` — about 800 requests in ~2 s against
+# ``data.geo.admin.ch``. The byte volume is well inside the budget (ADR-0002),
+# but the *burst* is not: the MeteoSwiss terms of use name access frequency as
+# well as volume, and swisstopo may throttle a client that strains the service.
+# One ``asyncio.Semaphore`` shared across all the files of a refresh caps the
+# requests in flight to this many, so a refresh is a steady trickle (~10-20 s
+# cold) instead of a spike. This bounds concurrency *across* files; the per-file
+# request cap (:data:`SERIES_REQUEST_CAP`) is unchanged. tests/test_const.py
+# asserts the value.
+OGD_MAX_CONCURRENT_REQUESTS = 6
 # Hours of zero-degree level fetched with the daily refresh: the sensor shows
 # the current hour and steps through the cached hours between refreshes.
 DAILY_ZERO_DEGREE_WINDOW_HOURS = 48

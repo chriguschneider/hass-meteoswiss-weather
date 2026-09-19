@@ -31,6 +31,18 @@ using the matching section below as release notes.
 
 ### Changed
 
+- **A refresh is a steady trickle, not an ~800-request burst** (#132,
+  [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). A cold forecast
+  refresh fans out every demanded file at once, each row-addressed with several
+  small byte-range reads; with the hourly option and the cloud/percentile layers
+  on this was ~800 requests in ~2 s against `data.geo.admin.ch`. The volume was
+  always inside the budget, but the burst was not (the MeteoSwiss terms of use
+  name access frequency as well as volume). All requests of a refresh now share
+  one concurrency limiter (`OGD_MAX_CONCURRENT_REQUESTS` = 6), so at most six are
+  in flight at once. User-visible effect: a cold refresh takes ~10–20 s instead
+  of ~2 s; the first refresh still blocks setup and setup does not time out. The
+  per-file request cap is unchanged.
+
 - **A canary read decides whether a new run is refreshed** (#125,
   [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). Whether a new forecast
   run is worth downloading is no longer decided by a timetable measured once

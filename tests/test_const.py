@@ -148,6 +148,21 @@ def test_series_request_cap_is_the_owner_decision() -> None:
     assert SERIES_REQUEST_CAP == 96
 
 
+def test_shared_request_concurrency_is_bounded() -> None:
+    """Issue #132: a refresh is a trickle, not a burst against the open-data host.
+
+    One shared semaphore caps the requests in flight across all the files of a
+    refresh. The value is deliberately small (the terms of use name access
+    frequency as well as volume); guard it against an accidental widening that
+    would bring the ~800-request burst back.
+    """
+    from custom_components.meteoswiss_weather.ogd.const import (
+        OGD_MAX_CONCURRENT_REQUESTS,
+    )
+
+    assert OGD_MAX_CONCURRENT_REQUESTS == 6
+
+
 def test_station_and_forecast_intervals() -> None:
     """Station polls every 10 min; the forecast run is checked hourly."""
     assert STATION_UPDATE_INTERVAL == timedelta(minutes=10)
