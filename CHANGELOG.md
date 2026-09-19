@@ -9,6 +9,8 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+## [v0.3.1] — 2026-09-19
+
 ### Changed
 
 - **One forecast store per entry** (#116, [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)).
@@ -315,7 +317,8 @@ integration produces a weather entity (see the tracking issue in the README).
   tag-triggered release gate with a zip asset, and the opt-in Claude agent
   workflows (label, mention, autopilot, reviewer)
 
-[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.3.1...HEAD
+[v0.3.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.3.0...v0.3.1
 [v0.3.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.2.2...v0.3.0
 [v0.2.2]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.2.1...v0.2.2
 [v0.2.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.2.0...v0.2.1
