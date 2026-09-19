@@ -67,8 +67,9 @@ lands (checked hourly). Per day:
 | `wind_gust_speed` | Highest hourly gust of the day | km/h |
 | `wind_bearing` | Wind direction at the hour of the strongest wind | ° |
 
-**Hourly forecast** — opt-in ([why](#why-another-meteoswiss-integration)),
-fetched only while a card or automation subscribes to it. Per hour:
+**Hourly forecast** — opt-in ([why](#why-another-meteoswiss-integration)).
+With the option on it is fetched on every forecast refresh, so the data is
+always there when a card opens. Per hour:
 
 | Field | Description | Unit |
 |---|---|---|
@@ -161,12 +162,12 @@ Two honest consequences:
   integration for them (regional, official).
 - **The hourly forecast is published as whole-of-Switzerland files, about
   30 MB per parameter per hour.** Daily forecasts are tiny and are the
-  default. The hourly option is opt-in and fetched lazily — only while a card
-  or automation is watching it — with HTTP Range requests so only the
-  configured point's block (and, for the one file that needs it, a prefix
-  covering your horizon) is downloaded. It refreshes in tiers tied to the
-  model run rhythm: the near term at the ICON-CH1 runs (or every 3 h), days 2+
-  at the ICON-CH2 runs (or every 6 h). That is roughly **70 MB/day worst case
+  default. The hourly option is opt-in; with it on, the data is fetched on the
+  integration's own forecast refresh (whether or not a card is open), using
+  HTTP Range requests so only the configured point's block (and, for the one
+  file that needs it, a prefix covering your horizon) is downloaded. It refreshes
+  in tiers tied to the model run rhythm: the near term at the ICON-CH1 runs (or
+  every 3 h), days 2+ at the ICON-CH2 runs (or every 6 h). That is roughly **70 MB/day worst case
   at the default 2-day horizon** instead of the ~1 GB/day a full hourly
   download would cost. A `hourly_horizon_days` option trades horizon for
   traffic. MeteoSwiss has announced a per-point API for the end of 2026, after

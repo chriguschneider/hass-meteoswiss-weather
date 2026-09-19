@@ -7,16 +7,18 @@ Two coordinators back a config entry (ADR-0002):
   costs a single 304.
 - :class:`ForecastCoordinator` checks the newest local-forecast run once an
   hour and only downloads the (small) daily parameter files when the run
-  stamp actually changed, so a quiet hour costs one small STAC request.
+  stamp actually changed, so a quiet hour costs one small STAC request. When
+  the hourly option is on it also refreshes the demanded hourly series into the
+  :class:`~.store.ForecastStore` as part of the same tick.
 
-The hourly forecast is the whole traffic budget (~30 MB per file), so it is no
-longer fetched from the coordinator's eager path. It hangs off a lazy
-:class:`HourlyForecastProvider` that ``weather.async_forecast_hourly`` awaits:
-Home Assistant only calls that method while a card or automation subscribes, or
-on a ``weather.get_forecasts`` service call, so an instance nobody looks at pays
-nothing (ADR-0002 revision 2, issue #54). The coordinator keeps tracking the run
-stamp; the weather entity turns a run change into an ``async_update_listeners``
-push, which downloads only when someone is actually listening.
+The hourly forecast used to hang off a lazy provider that only ran while a card
+or automation subscribed (ADR-0002 revision 2, issue #54). ADR-0008 removes it:
+with the hourly option on, the demanded files are fetched whether or not
+anything subscribes, driven by :class:`HourlyRefresher` from the coordinator's
+own refresh. Every consumer — the daily forecast, the zero-degree sensor, the
+hourly forecast — reads the store and nothing else, so no entity depends on
+another consumer's fetch (the class of bug behind issue #107). The cost still
+gates on the **option**: a feature that is off demands nothing (:mod:`.demand`).
 
 Everything upstream-specific lives in the pure ``ogd`` client (ADR-0001);
 the coordinators only translate its :class:`OgdError` into ``UpdateFailed``
@@ -35,9 +37,7 @@ clear it as soon as parsing succeeds again.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
@@ -65,6 +65,7 @@ from .const import (
     POLLEN_UPDATE_INTERVAL,
     STATION_UPDATE_INTERVAL,
 )
+from .demand import hourly_demand
 from .ogd import (
     CachedResponse,
     DailyForecast,
@@ -84,9 +85,7 @@ from .ogd import (
 from .ogd.const import (
     COLLECTION_FORECAST,
     DAILY_REQUIRED_PARAMS,
-    HOURLY_POINT_MAJOR_PARAMS,
     HOURLY_ZERO_DEGREE,
-    hourly_date_major_params,
 )
 from .ogd.forecast import HOURLY_FIELD_BY_PARAM
 from .store import ForecastStore
@@ -104,11 +103,12 @@ _LOGGER = logging.getLogger(__name__)
 class ForecastData:
     """The forecast coordinator's payload: the daily forecast.
 
-    The hourly forecast is not carried here — it is fetched lazily through
-    :class:`HourlyForecastProvider` only when something asks for it (issue #54).
-    Per-hour values that entities read ("the current hour's zero-degree level")
-    live in the coordinator's :class:`~.store.ForecastStore` instead, because
-    more than one path can deliver them (ADR-0008).
+    The hourly forecast is not carried here — its per-parameter series live in
+    the coordinator's :class:`~.store.ForecastStore`, filled by the daily
+    refresh and by :class:`HourlyRefresher`. Entities that show an hour of the
+    forecast (the hourly forecast, the current-hour condition, the zero-degree
+    sensor) read the store, because more than one path can deliver them
+    (ADR-0008).
     """
 
     daily: list[DailyForecast]
@@ -138,35 +138,29 @@ def _tier_due(
     return run != last_run and run.hour in landing_hours
 
 
-class HourlyForecastProvider:
-    """Lazily fetches and caches the bulk hourly forecast (ADR-0002 revision 2).
+class HourlyRefresher:
+    """Refreshes the demanded hourly series into the store (ADR-0008).
 
-    The hourly parameter files are ~30 MB each — the whole traffic budget — so
-    they are downloaded only when the hourly forecast is actually requested:
-    ``weather.async_forecast_hourly`` awaits :meth:`async_get_hourly`, which
-    Home Assistant calls while a card or automation subscribes or on a
-    ``weather.get_forecasts`` service call. No caller means no download.
+    Owned by :class:`ForecastCoordinator` and driven from its refresh once per
+    tick with the run the coordinator already discovered. When the hourly option
+    is on the demanded files are fetched **whether or not anything subscribes**
+    (ADR-0008, "Decided by the owner", item 1) — the lazy, card-driven provider
+    of ADR-0002 revision 2 is gone. Everything it fetches is filed in the store,
+    per parameter, so every forecast consumer reads the store and nothing else.
 
-    The set is fetched in three independently scheduled groups tied to the
-    measured model run rhythm (docs/ogd.md, "Change rhythm across runs";
-    issue #68), instead of the flat 3 h floor B14a used:
+    The near/far/point-major schedule of ADR-0002 revision 2 is kept for now
+    (the canary is a separate issue, ADR-0008 section 3): the date-major
+    temperature file — plus the gated cloud and percentile files (issue #69) —
+    refreshes on the near/far horizon tiers, and the point-major group (precip,
+    symbol, wind, gust, direction, the B7/B8/B10 additions) refreshes with every
+    new run. Which files those groups hold comes from the demand registry
+    (:func:`~.demand.hourly_demand`), so a disabled feature demands nothing.
 
-    - the **near tier** — the date-major temperature prefix up to the end of
-      tomorrow — refreshes at the ICON-CH1 landing hours or after 3 h;
-    - the **far tier** — the temperature out to the configured horizon —
-      refreshes at the ICON-CH2 landing hours or after 6 h; a far fetch spans
-      the near window too, so it doubles as a near refresh;
-    - the **point-major group** (precipitation, symbol, wind, gust, direction)
-      refreshes with every new run — each file's point block is ~5 KB.
-
-    The three groups are merged by hour into one forecast, cached until the next
-    tier is due. A :class:`asyncio.Lock` serialises concurrent callers so a card
-    and a service call arriving together still download the set once.
-
-    Errors never propagate out of the forecast method: a structural
-    :class:`~ogd.OgdParseError` posts the shared forecast repair issue and a
-    transient :class:`~ogd.OgdConnectionError` is logged, both keeping the last
-    good data so the entity degrades rather than raises.
+    A refresh that fails for one parameter keeps its last good series (the store
+    does this) and must never fail the daily forecast: :meth:`async_refresh`
+    swallows :class:`~ogd.OgdParseError` (posting the shared forecast repair
+    issue) and :class:`~ogd.OgdConnectionError` (logging it), always returning
+    to the coordinator so the daily payload is unaffected.
     """
 
     def __init__(
@@ -174,34 +168,26 @@ class HourlyForecastProvider:
         hass: HomeAssistant,
         backend: ForecastBackend,
         point: ForecastPoint,
+        store: ForecastStore,
         *,
         enabled: bool,
         horizon_days: int,
         cloud_layers: bool = False,
         temp_percentiles: bool = False,
-        store: ForecastStore | None = None,
-        run_source: Callable[[], Run | None] | None = None,
-        on_store_change: Callable[[], None] | None = None,
     ) -> None:
         self._hass = hass
         self._backend = backend
         self._point = point
-        # ADR-0008: what this provider fetches is filed in the entry's store so
-        # other entities can read it; ``run_source`` hands over the run the
-        # coordinator already discovered; ``on_store_change`` lets the
-        # coordinator re-render its entities when the store gained data outside
-        # its own refresh.
         self._store = store
-        self._run_source = run_source
-        self._on_store_change = on_store_change
         self._enabled = enabled
         self._horizon_days = horizon_days
-        # The date-major files to fetch on the near/far schedule: always the
-        # temperature file, plus the B9 cloud and B11 percentile files only when
-        # their option is on (the fetch-set registry, issue #69). Nothing extra
-        # is fetched when neither is enabled.
-        self._date_major_params = hourly_date_major_params(
-            cloud_layers=cloud_layers, temp_percentiles=temp_percentiles
+        # The fetch plan for the enabled features, split by fetch strategy
+        # (ADR-0008 section 2). ``None`` when the hourly option is off, so a run
+        # demands nothing hourly and no hourly-only file is ever requested.
+        self._demand = hourly_demand(
+            enabled=enabled,
+            cloud_layers=cloud_layers,
+            temp_percentiles=temp_percentiles,
         )
         # The near tier is a cheap prefix of the far window, so it must never
         # reach past the configured horizon: a user who narrows the horizon
@@ -217,15 +203,7 @@ class HourlyForecastProvider:
             )
             else HOURLY_NEAR_HORIZON_DAYS
         )
-        self._lock = asyncio.Lock()
-        # The merged forecast last built from the groups below.
-        self._hourly: list[HourlyForecast] | None = None
-        # The date-major fields by hour (temperature, and — when enabled — cloud
-        # layers and temperature percentiles) from the near/far fetches, and the
-        # point-major fields (precip, symbol, wind, gust, bearing) by hour.
-        self._date_major: dict[datetime, HourlyForecast] = {}
-        self._point_major: dict[datetime, HourlyForecast] = {}
-        # Per-group bookkeeping: the run each was last fetched at and when.
+        # Per-group bookkeeping: the run each tier last fetched at and when.
         self._near_run: datetime | None = None
         self._near_fetch: datetime | None = None
         self._far_run: datetime | None = None
@@ -239,6 +217,11 @@ class HourlyForecastProvider:
         return self._enabled
 
     @property
+    def demanded_params(self) -> tuple[str, ...]:
+        """Every hourly parameter the enabled features demand (empty when off)."""
+        return self._demand.params if self._demand is not None else ()
+
+    @property
     def last_fetch(self) -> datetime | None:
         """When the most recent tier download completed; for diagnostics."""
         stamps = [
@@ -248,37 +231,21 @@ class HourlyForecastProvider:
         ]
         return max(stamps) if stamps else None
 
-    @property
-    def cached_hourly(self) -> list[HourlyForecast] | None:
-        """The cached hourly forecast without triggering a fetch.
+    async def async_refresh(self, run: Run | None) -> bool:
+        """Refresh whichever tiers are due for ``run``; return if the store changed.
 
-        The weather ``condition`` reads this so it can sharpen to the current
-        hour's symbol *if* the data is already here, without paying the download
-        just to compute a condition (issue #54).
+        A no-op when the hourly option is off or no run has been discovered yet.
+        Never raises: a structural parse error posts the shared forecast repair
+        issue and a transient connection error is logged, both keeping the last
+        good series so the daily forecast is unaffected (ADR-0008 section 1).
         """
-        return self._hourly
-
-    async def async_get_hourly(
-        self, run: datetime | None
-    ) -> list[HourlyForecast] | None:
-        """Return the hourly forecast for ``run``, fetching only if due.
-
-        ``run`` is the newest run stamp the coordinator tracked. Each tier is
-        refreshed only when :func:`_tier_due` says so; a run that no tier is due
-        for serves the cache untouched.
-        """
-        if not self._enabled or run is None:
-            return None
-        async with self._lock:
-            await self._refresh(run)
-            return self._hourly
-
-    async def _refresh(self, run: datetime) -> None:
-        """Refresh whichever tiers are due for ``run``; keep last-good on error."""
+        if self._demand is None or run is None:
+            return False
         now = dt_util.utcnow()
+        stamp = run.timestamp
         try:
-            changed = await self._refresh_date_major(run, now)
-            changed = await self._refresh_point_major(run, now) or changed
+            changed = await self._refresh_date_major(run, stamp, now)
+            changed = await self._refresh_point_major(run, stamp, now) or changed
         except OgdParseError as err:
             async_create_issue(
                 self._hass,
@@ -289,16 +256,17 @@ class HourlyForecastProvider:
                 translation_key="parse_error_forecast",
             )
             _LOGGER.warning("hourly forecast parse failed: %s", err)
-            return
+            return False
         except OgdConnectionError as err:
             _LOGGER.warning("hourly forecast fetch failed: %s", err)
-            return
+            return False
 
         async_delete_issue(self._hass, DOMAIN, _ISSUE_FORECAST_PARSE)
-        if changed:
-            self._hourly = self._merge()
+        return changed
 
-    async def _refresh_date_major(self, run: datetime, now: datetime) -> bool:
+    async def _refresh_date_major(
+        self, run: Run, stamp: datetime, now: datetime
+    ) -> bool:
         """Refresh the date-major group via the far then near tiers.
 
         The date-major group is the temperature file plus, when enabled, the B9
@@ -307,80 +275,77 @@ class HourlyForecastProvider:
         due far fetch supersedes and also satisfies the near tier; only when far
         is not due but near is does the cheaper near prefix run.
         """
+        params = self._demand.date_major
         if _tier_due(
-            run=run,
+            run=stamp,
             landing_hours=HOURLY_FAR_RUN_HOURS,
             max_age=HOURLY_FAR_MAX_AGE,
             last_run=self._far_run,
             last_fetch=self._far_fetch,
             now=now,
         ):
-            far = await self._backend.fetch_hourly(
+            hours = await self._backend.fetch_hourly(
                 self._point,
                 horizon_days=self._horizon_days,
-                params=self._date_major_params,
-                run=self._discovered_run(run),
+                params=params,
+                run=run,
             )
-            self._date_major = {hour.time: hour for hour in far}
-            self._far_run = self._near_run = run
+            self._far_run = self._near_run = stamp
             self._far_fetch = self._near_fetch = now
-            return True
+            return self._publish(hours, params, stamp, now)
 
         if _tier_due(
-            run=run,
+            run=stamp,
             landing_hours=HOURLY_NEAR_RUN_HOURS,
             max_age=HOURLY_NEAR_MAX_AGE,
             last_run=self._near_run,
             last_fetch=self._near_fetch,
             now=now,
         ):
-            near = await self._backend.fetch_hourly(
+            hours = await self._backend.fetch_hourly(
                 self._point,
                 horizon_days=self._near_horizon_days,
-                params=self._date_major_params,
-                run=self._discovered_run(run),
+                params=params,
+                run=run,
             )
-            # Overwrite only the near-window hours; keep the far-window values
-            # from the last far fetch (that tier refreshes slower).
-            for hour in near:
-                self._date_major[hour.time] = hour
-            self._near_run = run
+            self._near_run = stamp
             self._near_fetch = now
-            return True
+            return self._publish(hours, params, stamp, now)
 
         return False
 
-    async def _refresh_point_major(self, run: datetime, now: datetime) -> bool:
+    async def _refresh_point_major(
+        self, run: Run, stamp: datetime, now: datetime
+    ) -> bool:
         """Refresh the point-major group whenever a new run has landed."""
-        if run == self._point_major_run:
+        if stamp == self._point_major_run:
             return False
-        point_major = await self._backend.fetch_hourly(
+        params = self._demand.point_major
+        hours = await self._backend.fetch_hourly(
             self._point,
             horizon_days=self._horizon_days,
-            params=HOURLY_POINT_MAJOR_PARAMS,
-            run=self._discovered_run(run),
+            params=params,
+            run=run,
         )
-        self._point_major = {hour.time: hour for hour in point_major}
-        self._point_major_run = run
+        self._point_major_run = stamp
         self._point_major_fetch = now
-        self._publish(point_major, run, now)
-        return True
-
-    def _discovered_run(self, stamp: datetime) -> Run | None:
-        """The coordinator's already-discovered run, if it is the one for ``stamp``."""
-        if self._run_source is None:
-            return None
-        run = self._run_source()
-        return run if run is not None and run.timestamp == stamp else None
+        return self._publish(hours, params, stamp, now)
 
     def _publish(
-        self, hours: list[HourlyForecast], run: datetime, now: datetime
-    ) -> None:
-        """File the fetched point-major fields in the store, per parameter."""
-        if self._store is None:
-            return
+        self,
+        hours: list[HourlyForecast],
+        params: tuple[str, ...],
+        run: datetime,
+        now: datetime,
+    ) -> bool:
+        """File each fetched parameter's series in the store; return if it changed.
+
+        An empty series (the file degraded) never replaces a stored one, so a
+        partial refresh keeps the previous run's series for that parameter
+        (ADR-0008 section 1, handled by :meth:`~.store.ForecastStore.put`).
+        """
         changed = False
-        for param in HOURLY_POINT_MAJOR_PARAMS:
+        for param in params:
             field = HOURLY_FIELD_BY_PARAM[param]
             values = {
                 hour.time: value
@@ -393,59 +358,47 @@ class HourlyForecastProvider:
                 )
                 or changed
             )
-        if changed and self._on_store_change is not None:
-            self._on_store_change()
+        return changed
 
-    def _merge(self) -> list[HourlyForecast]:
-        """Combine the date-major and point-major groups by hour, sorted.
 
-        The date-major group carries temperature and — when their option is on —
-        the cloud layers and temperature percentiles (issue #69); the
-        point-major group carries precipitation, symbol, wind and the B7/B8/B10
-        additions. Each hour reads its fields from whichever group holds them.
+def hourly_from_store(
+    store: ForecastStore, params: tuple[str, ...]
+) -> list[HourlyForecast]:
+    """Rebuild the hourly forecast from the store's per-parameter series (ADR-0008).
 
-        Hours that are missing any of the four fields a weather card must render
-        (temperature, symbol, precipitation, wind_speed_kmh) are dropped so a
-        tier boundary or ragged file head never emits a blank or half-filled
-        entry (issue #92).
-        """
-        result: list[HourlyForecast] = []
-        for when in sorted(set(self._date_major) | set(self._point_major)):
-            dm = self._date_major.get(when)
-            block = self._point_major.get(when)
-            temperature = dm.temperature if dm else None
-            precipitation = block.precipitation if block else None
-            symbol = block.symbol if block else None
-            wind_speed_kmh = block.wind_speed_kmh if block else None
-            if (
-                temperature is None
-                or symbol is None
-                or precipitation is None
-                or wind_speed_kmh is None
-            ):
-                continue
-            result.append(
-                HourlyForecast(
-                    time=when,
-                    temperature=temperature,
-                    precipitation=precipitation,
-                    symbol=symbol,
-                    wind_speed_kmh=wind_speed_kmh,
-                    gust_kmh=block.gust_kmh if block else None,
-                    wind_bearing=block.wind_bearing if block else None,
-                    precipitation_probability=(
-                        block.precipitation_probability if block else None
-                    ),
-                    zero_degree_level=block.zero_degree_level if block else None,
-                    radiation=block.radiation if block else None,
-                    cloud_high=dm.cloud_high if dm else None,
-                    cloud_mid=dm.cloud_mid if dm else None,
-                    cloud_low=dm.cloud_low if dm else None,
-                    temperature_p10=dm.temperature_p10 if dm else None,
-                    temperature_p90=dm.temperature_p90 if dm else None,
-                )
-            )
-        return result
+    The store holds one series ``{hour → value}`` per parameter, whichever path
+    filed it. This reassembles them by hour into :class:`~ogd.HourlyForecast`
+    entries over the union of hours present in ``params``. Hours missing any of
+    the four fields a weather card must render (temperature, symbol,
+    precipitation, wind speed) are dropped so a tier boundary or a ragged file
+    head never emits a blank or half-filled entry (issue #92).
+    """
+    series_by_param: dict[str, object] = {}
+    hours: set[datetime] = set()
+    for param in params:
+        series = store.get(param)
+        if series is None:
+            continue
+        series_by_param[param] = series.values
+        hours.update(series.values)
+
+    result: list[HourlyForecast] = []
+    for when in sorted(hours):
+        fields: dict[str, float | int] = {}
+        for param, values in series_by_param.items():
+            value = values.get(when)  # type: ignore[attr-defined]
+            if value is not None:
+                fields[HOURLY_FIELD_BY_PARAM[param]] = value
+        hour = HourlyForecast(time=when, **fields)  # type: ignore[arg-type]
+        if (
+            hour.temperature is None
+            or hour.symbol is None
+            or hour.precipitation is None
+            or hour.wind_speed_kmh is None
+        ):
+            continue
+        result.append(hour)
+    return result
 
 
 class StationCoordinator(DataUpdateCoordinator[Observation]):
@@ -539,10 +492,12 @@ class PrecipStationCoordinator(StationCoordinator):
 class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
     """Refresh the daily local forecast, skipping unchanged runs (ADR-0002).
 
-    Keeps the daily forecast fresh from the newest complete run and tracks the
-    run stamp so the weather entity can push a lazy hourly refresh when it
-    changes. The bulk hourly download itself lives in :attr:`hourly_provider`,
-    off the coordinator's eager path (issue #54).
+    Keeps the daily forecast fresh from the newest complete run. When the hourly
+    option is on it also refreshes the demanded hourly series into
+    :attr:`store` through :attr:`hourly_refresher`, as part of the same tick and
+    whether or not anything subscribes (ADR-0008). Entities that show an hour of
+    the forecast read the store via :meth:`hourly_forecast` and
+    :meth:`~.store.ForecastStore.value_at`.
     """
 
     def __init__(
@@ -586,19 +541,18 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         # Per-parameter series of the point; the one source for entities that
         # show an hour of the forecast, whichever path fetched it (ADR-0008).
         self.store = ForecastStore()
-        # The lazy hourly download hangs here; the coordinator never calls it,
-        # the weather entity does when HA asks (ADR-0002 revision 2, issue #54).
-        self.hourly_provider = HourlyForecastProvider(
+        # The eager hourly refresh: the coordinator drives it once per tick from
+        # its own refresh, so the demanded files are fetched whenever the option
+        # is on, with no dependency on a subscriber (ADR-0008).
+        self.hourly_refresher = HourlyRefresher(
             hass,
             backend,
             point,
+            self.store,
             enabled=hourly_enabled,
             horizon_days=hourly_horizon_days,
             cloud_layers=hourly_cloud_layers,
             temp_percentiles=hourly_temp_percentiles,
-            store=self.store,
-            run_source=lambda: self.run,
-            on_store_change=self.async_update_listeners,
         )
 
     async def _async_update_data(self) -> ForecastData:
@@ -671,8 +625,26 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
             self.last_run = run.timestamp
 
         async_delete_issue(self.hass, DOMAIN, _ISSUE_FORECAST_PARSE)
+        # With the hourly option on, refresh the demanded hourly series into the
+        # store as part of the coordinator's own tick (ADR-0008): no card,
+        # subscription or service call is needed. It swallows its own errors, so
+        # an hourly fetch failure keeps the last good series and never fails the
+        # daily forecast (ADR-0008 section 1).
+        await self.hourly_refresher.async_refresh(run)
         self.last_success = dt_util.utcnow()
         return ForecastData(daily=daily)
+
+    def hourly_forecast(self) -> list[HourlyForecast] | None:
+        """Rebuild the hourly forecast from the store, or ``None`` (ADR-0008).
+
+        Reads the store — the single source the eager hourly refresh fills — and
+        never triggers a download of its own. ``None`` when the hourly option is
+        off or nothing has been delivered yet.
+        """
+        if not self.hourly_refresher.enabled:
+            return None
+        hourly = hourly_from_store(self.store, self.hourly_refresher.demanded_params)
+        return hourly or None
 
 
 class PollenCoordinator(DataUpdateCoordinator[PollenObservation]):
