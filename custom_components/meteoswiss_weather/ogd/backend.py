@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Protocol
 
 import aiohttp
@@ -21,6 +21,7 @@ from .const import (
     DAILY_BLOCK_PARAMS,
     DAILY_REQUIRED_PARAMS,
     DAILY_WIND_PARAMS,
+    DAILY_ZERO_DEGREE_WINDOW_HOURS,
     FORECAST_ENCODING,
     HOURLY_HORIZON_FULL_RUN,
     HOURLY_PRECIP_PROBABILITY,
@@ -33,7 +34,7 @@ from .forecast import (
     parse_daily,
     parse_hourly,
 )
-from .hourly import fetch_hourly_file, fetch_point_block, horizon_end_utc
+from .hourly import RowGeometry, fetch_hourly_file, fetch_series, horizon_end_utc
 from .http import get_text
 from .models import (
     DailyBundle,
@@ -96,53 +97,80 @@ class BulkCsvBackend:
         # simply absent from the dict.
         self._block_texts: dict[str, str] = {}
         self._block_run: datetime | None = None
+        # The cached texts that hold the point's *whole* run. Only those may
+        # stand in for an hourly fetch; a text cut to the daily path's window
+        # (a row-addressed date-major file) would silently shorten the hourly
+        # forecast (ADR-0008 section 4).
+        self._block_whole: set[str] = set()
+        # Row-addressing hint per date-major file, like _block_starts for the
+        # point-major ones. Hints only save requests; every use is verified.
+        self._geometry: dict[str, RowGeometry] = {}
+        # Files proven (by a full download) to carry no row for the point,
+        # remembered for the UTC day so the proof is not repeated every run.
+        self._absent: dict[str, date] = {}
 
     async def _get_block_texts(
         self, point: ForecastPoint, run: Run
     ) -> dict[str, str]:
-        """Return the point-major block texts for ``run``, fetching only if needed.
+        """Return the point's rows of every daily block file for ``run``.
 
         Every parameter in :data:`DAILY_BLOCK_PARAMS` is fetched independently
-        and the result holds only the ones that came back; a file that is not
-        point-major, not yet published for this run or unreachable is left out
-        with a warning (ADR-0002 guardrail: the full 30 MB download is never
-        triggered for a default feature, and one file's trouble never takes the
-        others down with it). On success the texts are cached so the hourly
-        path reuses them for the same run without a second download.
+        through the escalation ladder (:func:`~.hourly.fetch_series`, ADR-0008
+        section 4): the cheapest strategy the file's layout admits, climbing to
+        the whole file when nothing cheaper proves complete. A file is left out
+        only when upstream has nothing to give — it is not published for this
+        run yet, it is unreachable, or it carries no row for the point — and
+        one file's trouble never takes the others down with it. The texts are
+        cached so the hourly path reuses the whole-run ones for the same run.
         """
         # _block_run set means we already tried this run; _block_texts is the
-        # result (possibly empty when every guardrail fired).
+        # result (possibly empty when upstream had nothing).
         if self._block_run == run.timestamp:
             return self._block_texts
 
+        now = datetime.now(UTC)
+        today = now.date()
         # The daily run is selected on DAILY_REQUIRED_PARAMS alone, so it can be
-        # complete for the small daily files while the ~30 MB hourly files of
-        # the same run have not landed yet (they publish last). A missing asset
-        # must degrade like the point-major guardrail, never crash the default
-        # daily refresh with a KeyError from asset_url() (issue #60).
-        present = [param for param in DAILY_BLOCK_PARAMS if param in run.assets]
+        # complete for the small daily files while an hourly file of the same
+        # run has not landed yet. A missing asset must degrade, never crash the
+        # default daily refresh with a KeyError from asset_url() (issue #60).
+        present: list[str] = []
         for param in DAILY_BLOCK_PARAMS:
-            if param not in present:
+            if param not in run.assets:
                 _LOGGER.warning(
-                    "block %s skipped for run %s: file not published yet; its "
-                    "fields will be None",
+                    "block %s skipped for run %s: file not published yet",
                     param,
                     run.timestamp.isoformat(),
                 )
+            elif self._absent.get(param) == today:
+                _LOGGER.debug("block %s skipped: no row for the point today", param)
+            else:
+                present.append(param)
 
-        # The blocks are a best-effort bonus on the default daily refresh: a
-        # transient connection error while probing/fetching one must degrade
-        # its fields to None, never fail the whole daily update and lose the
-        # temperature, precipitation and symbol that fetched fine (ADR-0002
-        # revision 3, the same "never crash the default daily refresh" contract
-        # as the missing-asset and non-point-major guardrails).
+        # The zero-degree sensor needs the coming hours, not the whole run, so
+        # a date-major file is row-addressed for this window only. The wind and
+        # probability files feed per-day aggregates and need the whole run.
+        this_hour = now.replace(minute=0, second=0, microsecond=0)
+        windows: dict[str, tuple[datetime, datetime]] = {
+            HOURLY_ZERO_DEGREE: (
+                this_hour,
+                this_hour + timedelta(hours=DAILY_ZERO_DEGREE_WINDOW_HOURS),
+            )
+        }
+
+        # A connection error on one file degrades that file only, never the
+        # whole daily update (ADR-0002 revision 3); the store keeps the last
+        # good series for it (ADR-0008 section 1).
         results = await asyncio.gather(
             *(
-                fetch_point_block(
+                fetch_series(
                     self._session,
                     run.asset_url(param),
                     point,
-                    cached_start=self._block_starts.get(param),
+                    window_start=windows.get(param, (None, None))[0],
+                    window_end=windows.get(param, (None, None))[1],
+                    block_start=self._block_starts.get(param),
+                    geometry=self._geometry.get(param),
                 )
                 for param in present
             ),
@@ -150,10 +178,11 @@ class BulkCsvBackend:
         )
 
         texts: dict[str, str] = {}
+        whole: set[str] = set()
         for param, result in zip(present, results, strict=True):
             if isinstance(result, OgdConnectionError):
                 _LOGGER.warning(
-                    "block %s skipped for run %s: %s; its fields will be None",
+                    "block %s skipped for run %s: %s",
                     param,
                     run.timestamp.isoformat(),
                     result,
@@ -161,19 +190,32 @@ class BulkCsvBackend:
                 continue
             if isinstance(result, BaseException):
                 raise result
-            if result is None:
-                _LOGGER.warning(
-                    "block %s skipped for run %s: file is not point-major; its "
-                    "fields will be None",
-                    param,
-                    run.timestamp.isoformat(),
-                )
-                continue
-            texts[param] = result.text
+            # Escalating to a prefix or the whole file is correct but worth
+            # seeing: it usually means upstream re-sorted the file.
+            log = _LOGGER.warning if result.level >= 3 else _LOGGER.debug
+            log(
+                "block %s for run %s: layout %s, level %d, %d requests, %d bytes",
+                param,
+                run.timestamp.isoformat(),
+                result.layout.value,
+                result.level,
+                result.requests,
+                result.bytes,
+            )
             if result.block_start is not None:
                 self._block_starts[param] = result.block_start
+            if result.geometry is not None:
+                self._geometry[param] = result.geometry
+            if not result.has_rows:
+                if result.level == 4:
+                    self._absent[param] = today
+                continue
+            texts[param] = result.text
+            if result.whole_run:
+                whole.add(param)
 
         self._block_texts = texts
+        self._block_whole = whole
         self._block_run = run.timestamp
         return texts
 
@@ -299,7 +341,9 @@ class BulkCsvBackend:
         # this very run. A block that degraded on the daily path is absent from
         # the cache and is fetched here like any other hourly file.
         block_cache = (
-            self._block_texts if self._block_run == run.timestamp else {}
+            {p: t for p, t in self._block_texts.items() if p in self._block_whole}
+            if self._block_run == run.timestamp
+            else {}
         )
         params_to_fetch = [p for p in params if p not in block_cache]
 

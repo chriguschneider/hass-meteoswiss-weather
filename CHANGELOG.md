@@ -21,12 +21,17 @@ using the matching section below as release notes.
 ### Fixed
 
 - **The zero-degree level sensor no longer depends on which path fetched the
-  file** (#116). MeteoSwiss re-sorted `zprfr0hs`, so the small block fetch of
-  v0.3.0 stopped applying and the sensor read `unknown`. With the hourly
-  forecast option on, the value now arrives through the hourly fetch as soon
-  as it runs, and a refresh that cannot deliver keeps the previous run's
-  series instead of blanking the sensor. Serving the sensor for every file
-  layout without the hourly option follows with the fetch ladder of ADR-0008.
+  file, or how MeteoSwiss sorts it** (#116). MeteoSwiss re-sorted `zprfr0hs`,
+  so the small block fetch of v0.3.0 stopped applying and the sensor read
+  `unknown`. Files are now fetched through an escalation ladder: the cheapest
+  read the file's layout admits (a point block, or the point's row addressed
+  directly inside each hour block), then wider reads, a prefix and finally the
+  whole file, until every demanded hour is proven present. The integration
+  never again answers `unknown` to save traffic; it does so only when
+  MeteoSwiss has no data, and even then the previous run's series stays in
+  place. For the re-sorted file this costs about 100–300 KB per refresh
+  instead of the 33 MB file. The same applies to the daily wind and
+  precipitation-probability blocks should their files ever be re-sorted.
 
 ## [v0.3.0] — 2026-09-17
 

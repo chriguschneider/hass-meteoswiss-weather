@@ -8,6 +8,9 @@
 - **Revised again:** 2026-08-28 (issue #55) — see [Revision 4](#revision-4-2026-08-28-issue-55)
 - **Revised again:** 2026-09-17 (issue #112) — see [Revision 5](#revision-5-2026-09-17-issue-112)
 - **Revised again:** 2026-09-17 (issue #107) — see [Revision 6](#revision-6-2026-09-17-issue-107)
+- **Partly superseded:** 2026-09-18 by [ADR-0008](0008-run-scoped-forecast-store.md) — the
+  "never a full download for a default feature" guardrail of Revisions 3, 5 and 6 is
+  replaced by the escalation ladder (issue #116); the lazy provider of Revision 2 follows
 
 ## Context
 

@@ -23,9 +23,11 @@ from .forecast import (
 from .history import fetch_station_history, select_history_files
 from .hourly import (
     AiohttpRangeReader,
+    RowGeometry,
+    SeriesResult,
     classify_layout,
     fetch_hourly_file,
-    fetch_point_block,
+    fetch_series,
     horizon_end_utc,
 )
 from .http import CachedResponse, get_text
@@ -90,7 +92,9 @@ __all__ = [
     "fetch_current",
     "fetch_datainventory",
     "fetch_hourly_file",
-    "fetch_point_block",
+    "RowGeometry",
+    "SeriesResult",
+    "fetch_series",
     "fetch_points",
     "mountain_points",
     "fetch_pollen_current",
