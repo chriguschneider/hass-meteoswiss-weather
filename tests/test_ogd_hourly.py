@@ -424,7 +424,8 @@ def _counting(data: bytes, cap: int | None = 96) -> H._CountingReader:
 
 
 async def _series(
-    data: bytes, *, start=None, end=None, cap=96, hint=None, utc_day=None
+    data: bytes, *, start=None, end=None, cap=96, hint=None, utc_day=None,
+    step=timedelta(hours=1),
 ):
     return await H._fetch_series(
         _counting(data, cap),
@@ -433,6 +434,7 @@ async def _series(
         window_end=end,
         hint=hint,
         utc_day=utc_day,
+        step=step,
     )
 
 
@@ -528,8 +530,27 @@ async def test_ladder_skips_addressing_beyond_the_request_cap() -> None:
     assert _stamp(start) in hours and _stamp(end - timedelta(hours=1)) in hours
 
 
-async def test_ladder_whole_run_of_a_date_major_file_is_the_full_file() -> None:
-    result = await _series(_big_date_major())
+async def test_ladder_whole_run_within_the_cap_is_row_addressed() -> None:
+    """A whole-run demand on a date-major file with few blocks is served by row
+    addressing, not the full file (issue #122): decide by the block count."""
+    result = await _series(_big_date_major())  # 60 blocks, cap 60+overhead < 96
+    assert result.layout is FileLayout.DATE_MAJOR
+    assert result.level <= 2
+    assert result.whole_run
+    assert _series_hours(result) == [
+        _stamp(_H0 + timedelta(hours=h)) for h in range(_BIG_HOURS)
+    ]
+    assert all(
+        line.startswith(f"{_TARGET.point_id};{_TARGET.point_type_id};")
+        for line in _series_lines(result)
+    )
+    assert result.bytes < len(_big_date_major()) / 4
+
+
+async def test_ladder_whole_run_beyond_the_cap_is_the_full_file() -> None:
+    """When the block count would overrun the request cap, a whole-run demand
+    climbs to the full file rather than storming the origin (ADR-0008)."""
+    result = await _series(_big_date_major(), cap=20)  # 60 blocks > cap
     assert result.level == 4
     assert result.whole_run
     assert len(_series_hours(result)) == _BIG_HOURS
@@ -638,3 +659,114 @@ async def test_hint_for_another_layout_costs_a_fresh_look() -> None:
     assert _series_lines(result) == _series_lines(good)
     assert result.level <= 1
     assert result.bytes < len(data) / 4
+
+
+# --- the daily files: nine day blocks at a one-day step (issue #122) ---------
+#
+# The daily p-variants are date-major with nine day blocks, ``Date`` stamped
+# ``YYYYMMDD0000`` (one per local day), and the point sits at the same row index
+# in every block (docs/ogd.md §E4 "Row order"). Row addressing must step by one
+# day, not one hour, and serve a whole-run demand from the nine blocks rather
+# than downloading the ~1.3 MB file.
+
+_DAY0 = datetime(2026, 8, 27, 0, 0, tzinfo=UTC)  # first day block stamp
+_DAILY_DAYS = 9
+# ~4000 points per day block so each block is ~110 KB — larger than the geometry
+# learn chunk, like the real ~148 KB day blocks — and the whole file is ~1 MB,
+# far more than the point's nine rows. Values of varying width so the blocks
+# differ in size and a naive extrapolation from the file start drifts, as
+# measured upstream (docs/ogd.md §E4).
+_DAILY_POINTS = (
+    [(pid, 1) for pid in range(1, 2001)]
+    + [(309800, 2), (309801, 2)]
+    + [(pid, 2) for pid in range(310000, 311998)]
+)
+
+
+def _daily_date_major(*, drop: tuple[int, int, int] | None = None) -> bytes:
+    """A date-major daily file: nine day blocks, all points per block.
+
+    ``drop`` removes one ``(point_id, point_type_id, day_index)`` row so a
+    missing day can be exercised.
+    """
+    lines = ["point_id;point_type_id;Date;tre200px"]
+    for d in range(_DAILY_DAYS):
+        when = _DAY0 + timedelta(days=d)
+        for pid, ptype in _DAILY_POINTS:
+            if drop == (pid, ptype, d):
+                continue
+            value = ((pid * 7 + d * 131) % 4000) / 10  # "0.7" … "399.9"
+            lines.append(f"{pid};{ptype};{_stamp(when)};{value}")
+    return ("\n".join(lines) + "\n").encode("iso-8859-1")
+
+
+_ONE_DAY = timedelta(days=1)
+
+
+async def test_daily_whole_run_is_row_addressed_all_nine_days() -> None:
+    """The nine day blocks are addressed at a one-day step: every day, only the
+    point's rows, far fewer bytes than the whole file (issue #122 acceptance)."""
+    data = _daily_date_major()
+    result = await _series(data, step=_ONE_DAY)
+
+    assert result.layout is FileLayout.DATE_MAJOR
+    assert result.level <= 2
+    assert result.whole_run
+    # All nine days, in order, stamped YYYYMMDD0000.
+    assert _series_hours(result) == [
+        _stamp(_DAY0 + timedelta(days=d)) for d in range(_DAILY_DAYS)
+    ]
+    # Only the target point's rows.
+    assert all(
+        line.startswith(f"{_TARGET.point_id};{_TARGET.point_type_id};")
+        for line in _series_lines(result)
+    )
+    # Bytes far below the whole file.
+    assert result.bytes < len(data) / 4
+    # The daily parser reads the returned text unchanged.
+    from custom_components.meteoswiss_weather.ogd.forecast import parse_daily
+
+    daily = parse_daily({"tre200px": result.text}, _TARGET)
+    assert len(daily) == _DAILY_DAYS
+
+
+async def test_daily_missing_day_climbs_to_the_full_file() -> None:
+    """When a day cannot be addressed, the ladder reads the whole file and
+    returns what upstream has (quality first, ADR-0008)."""
+    data = _daily_date_major(drop=(_TARGET.point_id, _TARGET.point_type_id, 4))
+    result = await _series(data, step=_ONE_DAY)
+
+    assert result.level == 4
+    assert result.whole_run
+    days = _series_hours(result)
+    assert len(days) == _DAILY_DAYS - 1
+    assert _stamp(_DAY0 + timedelta(days=4)) not in days
+
+
+async def test_daily_warm_hint_saves_requests() -> None:
+    """A same-day hint skips classification and geometry learning for the daily
+    file, exactly as for the hourly files (issue #121)."""
+    data = _daily_date_major()
+    day = date(2026, 8, 26)  # the file's UTC day (first block is 2026-08-27)
+    cold = await _series(data, step=_ONE_DAY, utc_day=day)
+    warm = await _series(data, step=_ONE_DAY, hint=cold.hint, utc_day=day)
+
+    assert cold.hint is not None and cold.hint.geometry is not None
+    assert _series_hours(warm) == _series_hours(cold)
+    assert warm.level == 0
+    assert warm.requests < cold.requests
+
+
+async def test_daily_hourly_step_would_miss_the_day_blocks() -> None:
+    """Guard: addressing a daily file with the default one-hour step cannot
+    prove the nine daily blocks and would climb, so the one-day step matters."""
+    data = _daily_date_major()
+    hourly_step = await _series(data, step=timedelta(hours=1))
+    day_step = await _series(data, step=_ONE_DAY)
+
+    # The one-hour step treats the run as ~193 h and blows the request cap, so it
+    # falls back to the whole file; the one-day step addresses the nine blocks.
+    assert hourly_step.level == 4
+    assert day_step.level <= 2
+    # Both still return the same nine day rows.
+    assert _series_hours(hourly_step) == _series_hours(day_step)

@@ -270,7 +270,15 @@ of `zprfr0hs`: 63 requests / 307 KB cold, 61 requests / 113 KB with the
 remembered position, instead of a 1.5–4 MB prefix or the 33 MB file.
 
 **The daily files are date-major too:** `tre200px` has nine day blocks of 5632
-rows (~148 KB each, ±100 bytes) with the point at a fixed row index.
+rows (~148 KB each, ±100 bytes) with the point at a fixed row index. The four
+daily files are therefore row-addressed at a **one-day step** (`Date` stamped
+`YYYYMMDD0000`) exactly like the hourly ones: the whole nine-day run of one
+point is 36 row reads well under 100 KB, instead of ~5.3 MB of full downloads
+per changed run (the largest regular cost of a default installation, issue
+#122). With only nine day blocks the probes of the layout classifier see
+repeated rather than strictly increasing dates, so the classifier accepts a
+non-decreasing date order as date-major once the point-major orders are ruled
+out; addressing falls back to the whole file if it cannot prove all nine days.
 
 **Run discovery:** the items listing is ~620 KB, `Cache-Control: max-age=600`,
 no `ETag`. The single day item (`/items/<yyyymmdd>-ch`) is ~80 KB, carries an

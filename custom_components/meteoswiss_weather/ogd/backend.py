@@ -35,7 +35,6 @@ from .forecast import (
     parse_hourly,
 )
 from .hourly import FileHint, fetch_hourly_file, fetch_series, horizon_end_utc
-from .http import get_text
 from .models import (
     DailyBundle,
     ForecastPoint,
@@ -217,6 +216,54 @@ class BulkCsvBackend:
         self._block_run = run.timestamp
         return texts
 
+    async def _fetch_daily_texts(
+        self, point: ForecastPoint, run: Run
+    ) -> dict[str, str]:
+        """Return the point's rows of the four daily files, via the ladder.
+
+        The daily ``p``-variants are date-major with nine day blocks (~148 KB
+        each), so each is row-addressed for the whole run at a one-day step and
+        climbs to the full file only when addressing cannot prove all nine days
+        (issue #122, ADR-0008 section 4). The shared per-file hint (issue #121)
+        skips classification on the next run of the same UTC day; ``parse_daily``
+        reads the returned text — header plus the point's rows — unchanged.
+
+        Unlike the optional blocks, these files are required to build any daily
+        forecast, so a connection error propagates rather than degrading to a
+        partial bundle (the coordinator keeps the last good data, ADR-0008).
+        """
+        results = await asyncio.gather(
+            *(
+                fetch_series(
+                    self._session,
+                    run.asset_url(param),
+                    point,
+                    hint=self._hints.get(param),
+                    utc_day=run.timestamp.date(),
+                    step=timedelta(days=1),
+                )
+                for param in DAILY_REQUIRED_PARAMS
+            )
+        )
+        texts: dict[str, str] = {}
+        for param, result in zip(DAILY_REQUIRED_PARAMS, results, strict=True):
+            # Reaching the full file (level 4) means addressing could not prove
+            # every day — usually an upstream re-sort — and is worth seeing.
+            log = _LOGGER.warning if result.level >= 3 else _LOGGER.debug
+            log(
+                "daily %s for run %s: layout %s, level %d, %d requests, %d bytes",
+                param,
+                run.timestamp.isoformat(),
+                result.layout.value,
+                result.level,
+                result.requests,
+                result.bytes,
+            )
+            if result.hint is not None:
+                self._hints[param] = result.hint
+            texts[param] = result.text
+        return texts
+
     async def _resolve_run(self, run: Run | None, params: tuple[str, ...]) -> Run:
         """Use the caller's run when it carries ``params``, else discover one.
 
@@ -231,24 +278,14 @@ class BulkCsvBackend:
         self, point: ForecastPoint, *, run: Run | None = None
     ) -> DailyBundle:
         run = await self._resolve_run(run, DAILY_REQUIRED_PARAMS)
-        # Daily files are small; fetch them concurrently, one per parameter.
-        # Fetch the point-major blocks concurrently with the daily files (each
-        # ~5 KB via the block strategy — well inside the daily budget).
-        bodies, block_texts = await asyncio.gather(
-            asyncio.gather(
-                *(
-                    get_text(
-                        self._session, run.asset_url(param), encoding=FORECAST_ENCODING
-                    )
-                    for param in DAILY_REQUIRED_PARAMS
-                )
-            ),
+        # Route the daily files through the escalation ladder, concurrently with
+        # the point-major blocks. Each daily p-variant is date-major with nine
+        # ~148 KB day blocks, so row addressing at a one-day step reads a few KB
+        # per file instead of the ~1.3 MB whole file (issue #122, ADR-0008).
+        text_by_param, block_texts = await asyncio.gather(
+            self._fetch_daily_texts(point, run),
             self._get_block_texts(point, run),
         )
-        text_by_param = {
-            param: response.body
-            for param, response in zip(DAILY_REQUIRED_PARAMS, bodies, strict=True)
-        }
         # Parsing scans several MB per file; keep it off the event loop.
         loop = asyncio.get_running_loop()
         daily = await loop.run_in_executor(None, parse_daily, text_by_param, point)
