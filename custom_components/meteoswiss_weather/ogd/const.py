@@ -280,6 +280,15 @@ def stac_items_url(collection: str) -> str:
     return f"{OGD_STAC_BASE}/collections/{collection}/items"
 
 
+def stac_day_item_url(collection: str, day_id: str) -> str:
+    """STAC item URL for a single UTC-day forecast item (e.g. ``20260827-ch``).
+
+    The day item is ~80 KB, carries an ``ETag``, and an ``If-None-Match`` round-trip
+    costs 304 with 0 bytes when the item is unchanged (docs/ogd.md §E4 "Run discovery").
+    """
+    return f"{OGD_STAC_BASE}/collections/{collection}/items/{day_id}"
+
+
 def pollen_now_url(abbr: str) -> str:
     """URL of a pollen station's hourly ``now`` file (the one to poll)."""
     lower = abbr.lower()

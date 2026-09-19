@@ -1,0 +1,96 @@
+{
+  "type": "Feature",
+  "id": "20260827-ch",
+  "assets": {
+    "vnut12.lssw.202608270300.tre200px.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270300.tre200px.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270300.tre200pn.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270300.tre200pn.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270300.rka150p0.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270300.rka150p0.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.tre200px.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.tre200px.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.tre200pn.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.tre200pn.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.rka150p0.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.rka150p0.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.jp2000d0.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.jp2000d0.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.tre200h0.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.tre200h0.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.rre150h0.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.rre150h0.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.jww003i0.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.jww003i0.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.fu3010h0.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.fu3010h0.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.fu3010h1.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.fu3010h1.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.dkl010h0.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.dkl010h0.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.rp0003i0.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.rp0003i0.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.zprfr0hs.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.zprfr0hs.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.gre000h0.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.gre000h0.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.nprohihs.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.nprohihs.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.npromths.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.npromths.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.nprolohs.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.nprolohs.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.treq10h0.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.treq10h0.csv",
+      "type": "text/csv"
+    },
+    "vnut12.lssw.202608270200.treq90h0.csv": {
+      "href": "https://data.geo.admin.ch/ch.meteoschweiz.ogd-local-forecasting/20260827-ch/vnut12.lssw.202608270200.treq90h0.csv",
+      "type": "text/csv"
+    }
+  },
+  "links": [
+    {
+      "rel": "self",
+      "href": "https://data.geo.admin.ch/api/stac/v1/collections/ch.meteoschweiz.ogd-local-forecasting/items/20260827-ch"
+    }
+  ]
+}

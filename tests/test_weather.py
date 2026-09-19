@@ -238,15 +238,21 @@ async def test_transient_forecast_failure_keeps_entity_available(
     The forecast coordinator retains the previous run's data so a brief STAC
     outage does not silence current conditions from the station coordinator.
     """
-    from custom_components.meteoswiss_weather.ogd.const import stac_items_url
+    from datetime import UTC, datetime
+
+    from custom_components.meteoswiss_weather.ogd.const import stac_day_item_url
 
     await _setup(hass, config_entry)
     assert hass.states.get(_ENTITY_ID).state != "unavailable"
 
     forecast_coordinator = config_entry.runtime_data.forecast_coordinator
     mock_ogd.clear_requests()
-    # Fail the STAC run-discovery call so _async_update_data raises UpdateFailed.
-    mock_ogd.get(stac_items_url("ch.meteoschweiz.ogd-local-forecasting"), status=503)
+    # Fail STAC run-discovery: only the day item (503) is registered; yesterday's
+    # item and the full listing are not, so every fallback path raises
+    # OgdConnectionError → UpdateFailed.
+    today_id = datetime.now(UTC).strftime("%Y%m%d") + "-ch"
+    day_item_url = stac_day_item_url("ch.meteoschweiz.ogd-local-forecasting", today_id)
+    mock_ogd.get(day_item_url, status=503)
 
     await forecast_coordinator.async_refresh()
     await hass.async_block_till_done()
