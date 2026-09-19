@@ -95,9 +95,9 @@ One sensor entity per measured field from the SwissMetNet station. All are disab
 
 **Default:** Off
 
-**Cost:** Roughly **70 MB per day per Home Assistant instance** worst case at the default 2-day horizon, and only while something is actually looking at the hourly forecast. A naive full download would cost ~1 GB/day; the integration avoids that with HTTP-Range fetches and a tiered refresh (see below). This is still a real cost that sums across the HACS install base, so please enable it only if you actually need an hourly view.
+**Cost:** Roughly **70 MB per day per Home Assistant instance** worst case at the default 2-day horizon. A naive full download would cost ~1 GB/day; the integration avoids that with HTTP-Range fetches and a tiered refresh (see below). This is still a real cost that sums across the HACS install base, so please enable it only if you actually need an hourly view.
 
-**How it works:** The hourly download is **lazy** — it happens only while a card or automation subscribes to the hourly forecast, or on a `weather.get_forecasts` call. An instance nobody looks at pays nothing. When something is watching, the integration follows the measured model run rhythm instead of downloading every hour:
+**How it works:** With the option on, the hourly data is fetched on the integration's own forecast refresh, whether or not a card is open, so it is always ready when you look at it (an instance with the option on pays for it even when idle — ADR-0008). The integration follows the measured model run rhythm instead of downloading every hour:
 
 - **Near term (today + tomorrow):** refreshed at the ICON-CH1 model runs (02, 05, 08, 11, 14, 17, 20, 23 UTC), or at least every 3 hours.
 - **Days 2 and beyond:** refreshed at the ICON-CH2 model runs (05, 11, 17, 23 UTC), or at least every 6 hours.
@@ -249,7 +249,7 @@ Changing only the **forecast point** never touches history — forecast entities
 
 - **Current conditions (station):** Every 10 minutes. The station file is polled, but unchanged files cost only a single 304 (Not Modified) response.
 - **Daily forecast:** Every hour. The integration checks the forecast run stamp hourly and only downloads the daily files if the run changed.
-- **Hourly forecast (if enabled):** Lazily and in tiers, only while something is watching it. The near term (today + tomorrow) refreshes at the ICON-CH1 runs or at least every 3 hours; days 2+ refresh at the ICON-CH2 runs or at least every 6 hours; precipitation, symbol and wind refresh with every new run. See the [Hourly Forecast](#hourly-forecast) option above.
+- **Hourly forecast (if enabled):** In tiers, on the integration's own forecast refresh — whether or not a card is open. The near term (today + tomorrow) refreshes at the ICON-CH1 runs or at least every 3 hours; days 2+ refresh at the ICON-CH2 runs or at least every 6 hours; precipitation, symbol and wind refresh with every new run. See the [Hourly Forecast](#hourly-forecast) option above.
 
 See [ADR-0002](adr/0002-traffic-budget-bulk-local-forecast.md) for details on traffic optimization.
 

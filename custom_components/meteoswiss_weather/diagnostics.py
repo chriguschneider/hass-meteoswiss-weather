@@ -71,10 +71,10 @@ async def async_get_config_entry_diagnostics(
                 # them (ADR-0008).
                 "store": fc.store.as_diagnostics(fc.last_run),
                 "hourly": {
-                    "enabled": fc.hourly_provider.enabled,
+                    "enabled": fc.hourly_refresher.enabled,
                     "last_fetch": (
-                        fc.hourly_provider.last_fetch.isoformat()
-                        if fc.hourly_provider.last_fetch
+                        fc.hourly_refresher.last_fetch.isoformat()
+                        if fc.hourly_refresher.last_fetch
                         else None
                     ),
                 },

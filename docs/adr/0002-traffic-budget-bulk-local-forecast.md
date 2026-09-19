@@ -10,7 +10,10 @@
 - **Revised again:** 2026-09-17 (issue #107) — see [Revision 6](#revision-6-2026-09-17-issue-107)
 - **Partly superseded:** 2026-09-18 by [ADR-0008](0008-run-scoped-forecast-store.md) — the
   "never a full download for a default feature" guardrail of Revisions 3, 5 and 6 is
-  replaced by the escalation ladder (issue #116); the lazy provider of Revision 2 follows
+  replaced by the escalation ladder (issue #116), and the **lazy hourly provider of
+  Revision 2 is removed** (issue #124): with the hourly option on, the demanded files
+  are fetched by the coordinator's own refresh whether or not a card subscribes. The
+  cost gate moves from "while something is watching" to the option itself
 
 ## Context
 
@@ -121,6 +124,14 @@ constants (`hourly_horizon_days`, the Range budget) live in `const.py`; raising
 the traffic still means revisiting this ADR, not just editing a constant.
 
 ## Revision 2 (2026-08-28, issue #54)
+
+> **Superseded 2026-09-18 by [ADR-0008](0008-run-scoped-forecast-store.md),
+> implemented in issue #124.** The lazy fetch below is gone: with the hourly
+> option on, the coordinator refreshes the demanded files into the forecast
+> store on its own tick, whether or not a card subscribes. The near/far/point-major
+> **schedule** described here is kept; only its "no subscriber means no download"
+> trigger is replaced by the option itself. The rest of this section is retained
+> for history.
 
 Revision 1 kept the rule "never more often than every 3 hours". Measuring
 all 24 runs of 2026-08-27 for two points (`docs/ogd.md`, "Change rhythm
