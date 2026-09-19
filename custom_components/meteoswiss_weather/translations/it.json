@@ -15,6 +15,10 @@
     "parse_error_precip": {
       "title": "MeteoSwiss: formato del file della stazione di precipitazione modificato",
       "description": "Il file di osservazione della stazione di precipitazione non è stato possibile analizzare. Il formato a monte potrebbe essere cambiato. Consultare `docs/ogd.md` nel repository dell'integrazione per il formato attuale e aprire un issue di deriva se il layout non corrisponde più."
+    },
+    "forecast_fetch_escalated": {
+      "title": "Il file di previsione MeteoSwiss ha richiesto un download completo",
+      "description": "Il file di previsione `{param}` ha richiesto un download completo o un grande prefisso (livello 3 o 4 della scala di recupero) in ognuno degli ultimi tre aggiornamenti. Ciò indica solitamente che MeteoSwiss ha riordinato le righe del file. L'ultimo recupero escalato è costato {bytes} byte. Aprire il dump diagnostico dell'integrazione per vedere il livello e il layout per parametro e consultare `docs/ogd.md` (\"How to read the fetch diagnostics\"). Il problema si cancellerà automaticamente non appena la scala di recupero troverà di nuovo una strategia economica."
     }
   },
   "entity": {

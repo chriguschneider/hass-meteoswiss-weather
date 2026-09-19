@@ -155,11 +155,18 @@ class BulkCsvBackend:
         # point-major blocks. Reset never lives longer than DAILY_MAX_AGE.
         self._last_daily: DailyBundle | None = None
         self._last_daily_at: datetime | None = None
+        # Escalation metadata (level, requests, bytes, layout) for each parameter
+        # that was freshly fetched (not served from the per-run cache) in the
+        # current run. Reset with the per-run series cache on every new run so
+        # only parameters actually fetched in the current run appear here
+        # (ADR-0008 section 5).
+        self._last_meta: dict[str, tuple[int, int, int, str | None]] = {}
 
     def _reset_series_cache(self, run: Run) -> None:
         """Drop the per-run series cache when a new run has landed (issue #123)."""
         if self._series_run != run.timestamp:
             self._series = {}
+            self._last_meta = {}
             self._series_run = run.timestamp
 
     async def _fetch_one(
@@ -219,6 +226,14 @@ class BulkCsvBackend:
         )
         if result.hint is not None:
             self._hints[param] = result.hint
+        # Remember the fetch metadata so the coordinator can pass it to the store
+        # (ADR-0008 section 5). Stored per-run (reset with the series cache above).
+        self._last_meta[param] = (
+            result.level,
+            result.requests,
+            result.bytes,
+            result.layout.value if result.layout is not None else None,
+        )
         if degrade_absent and not result.has_rows:
             if result.level == 4:
                 self._absent[param] = today
@@ -352,6 +367,20 @@ class BulkCsvBackend:
             if text is not None
         }
 
+    def get_fetch_meta(
+        self, param: str
+    ) -> tuple[int, int, int, str | None] | None:
+        """Fetch metadata ``(level, requests, bytes, layout)`` for the last real
+        fetch of ``param`` in the current run.
+
+        Returns ``None`` when ``param`` was not freshly fetched this run (served
+        from the per-run series cache, or the run cache was reset before
+        ``param`` was fetched). The coordinator uses this to decide between a
+        provenanced :meth:`~.store.ForecastStore.put` and a lightweight
+        :meth:`~.store.ForecastStore.confirm` (ADR-0008 section 5).
+        """
+        return self._last_meta.get(param)
+
     async def _resolve_run(self, run: Run | None, params: tuple[str, ...]) -> Run:
         """Use the caller's run when it carries ``params``, else discover one.
 
@@ -481,7 +510,17 @@ class BulkCsvBackend:
                 if h.zero_degree_level is not None
             }
 
-        bundle = DailyBundle(daily=daily, zero_degree_level=zero_degree)
+        # Collect fetch metadata for every parameter actually fetched in this
+        # call (not served from cache). The coordinator uses it to pass
+        # provenance to the store and to decide put vs confirm (ADR-0008 §5).
+        fetch_meta = {
+            p: meta
+            for p in list(DAILY_REQUIRED_PARAMS) + list(DAILY_BLOCK_PARAMS)
+            if (meta := self._last_meta.get(p)) is not None
+        }
+        bundle = DailyBundle(
+            daily=daily, zero_degree_level=zero_degree, fetch_meta=fetch_meta
+        )
         # Remember it so the next run's canary can prove it still holds (#125).
         self._last_daily = bundle
         self._last_daily_at = now

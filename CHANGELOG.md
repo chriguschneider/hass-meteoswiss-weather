@@ -9,6 +9,26 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Fetch provenance in diagnostics** (#126,
+  [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). The integration's
+  diagnostics dump now reports, per stored forecast parameter, the escalation
+  ladder level (0–4), the number of HTTP requests, bytes fetched, and the last
+  observed row-order layout of the upstream file. A short "How to read the
+  fetch diagnostics" section in `docs/ogd.md` explains each field.
+
+- **Escalated-fetch repair issue** (`forecast_fetch_escalated`, #126). When
+  the same parameter needs a full or large-prefix download (fetch ladder level
+  3 or 4) on three consecutive refreshes — usually because MeteoSwiss
+  re-sorted the file's rows — the integration raises a Home Assistant repair
+  issue naming the file and the bytes spent. The issue clears automatically
+  once the fetch ladder finds a cheap strategy again.
+
+- **Smoke-test layout report** (#126). The weekly smoke test now prints the
+  observed row-order layout for every hourly file so a layout drift is visible
+  in the CI log without waiting for three escalated fetches.
+
 ### Changed
 
 - **A canary read decides whether a new run is refreshed** (#125,

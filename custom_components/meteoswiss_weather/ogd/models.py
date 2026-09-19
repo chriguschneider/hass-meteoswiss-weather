@@ -148,10 +148,21 @@ class DailyBundle:
     parameter exists only at hourly resolution upstream, so the daily bundle
     carries it by hour; it is empty when the block could not be fetched
     without a full download (the point-major guardrail) or is not published.
+
+    ``fetch_meta`` carries the escalation ladder metadata for every parameter
+    that was freshly fetched (not served from cache) in this bundle
+    construction: ``{param: (level, requests, bytes, layout_value)}``. Absent
+    for a canary-confirmed bundle (canary said nothing changed — no file was
+    re-fetched). The coordinator uses it to pass provenance to the store and
+    to decide between :meth:`~.store.ForecastStore.put` and
+    :meth:`~.store.ForecastStore.confirm` (ADR-0008 section 5).
     """
 
     daily: list[DailyForecast]
     zero_degree_level: dict[datetime, float] = field(default_factory=dict)
+    fetch_meta: dict[str, tuple[int, int, int, str | None]] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(frozen=True, slots=True)

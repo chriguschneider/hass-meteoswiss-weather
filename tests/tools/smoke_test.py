@@ -354,6 +354,9 @@ def check_hourly_layouts(hrefs: dict[str, str]) -> None:
     the symbol/precip/wind files being point-major; a re-sort upstream would
     silently degrade the integration to full downloads. Probing a few byte
     offsets per file is cheap (a handful of KB total).
+
+    Also prints the observed layout per file so a drift is visible in the CI
+    log without requiring an escalated fetch (ADR-0008 section 5, issue #126).
     """
     label = "Hourly files have their expected Range layout (issue #50)"
     problems: list[str] = []
@@ -366,6 +369,9 @@ def check_hourly_layouts(hrefs: dict[str, str]) -> None:
             got = _classify_layout_live(href)
         except Exception as exc:  # noqa: BLE001 - report, keep checking others
             got = f"error: {exc}"
+        # Always print the observed layout (issue #126) so the CI log records
+        # any change, even when the layout still matches an accepted value.
+        print(f"   {param}: layout={got}")
         if got not in allowed:
             problems.append(
                 f"{param}: expected {'/'.join(sorted(allowed))}, got {got}"

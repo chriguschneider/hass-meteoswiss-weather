@@ -458,6 +458,40 @@ the run-staleness check by always fetching; alternatively, the coordinator
 can be taught to skip the STAC call when the configured backend does not
 need it — that is an ADR-worthy change.
 
+## How to read the fetch diagnostics
+
+The integration's HA diagnostics dump (`Developer Tools → Diagnostics → Download
+Diagnostics`) includes a `store` section under `forecast_coordinator`. Each key
+is a forecast parameter code (e.g. `zprfr0hs`, `tre200h0`); the value records
+where the stored series came from and what the last real fetch cost.
+
+| field | meaning |
+|---|---|
+| `run` | UTC timestamp of the run whose values are stored |
+| `fetched_at` | when the integration fetched or confirmed this series |
+| `source` | `"daily"` (the daily refresh path) or `"hourly"` (the eager hourly refresher) |
+| `confirmed` | `true` when a canary read proved the new run's values match the stored ones and no re-download was needed (ADR-0008 §3) |
+| `hours` | number of hour slots in the stored series |
+| `stale` | `true` when the stored series is from an older run than the last discovered run |
+| `level` | fetch-ladder level used: 0 = remembered positions, 1 = layout-aware addressing, 2 = widened window, 3 = prefix, 4 = full file |
+| `requests` | HTTP requests made by the fetch (absent when the series was confirmed, not fetched) |
+| `bytes` | bytes fetched (absent when confirmed) |
+| `layout` | row-order layout last classified for the file: `date_major`, `point_major_type`, `point_major_id`, or `fallback` |
+
+**Level 0–2** is cheap (a few KB per parameter). **Level 3** (a prefix of MBs)
+or **level 4** (the whole ~30 MB file) means the cheap strategies could not
+prove completeness — usually because MeteoSwiss re-sorted the file's rows.
+This is correct but expensive. If the same parameter shows level 3 or 4 on
+three consecutive refreshes, the integration raises a `forecast_fetch_escalated`
+repair issue (ADR-0008 §5).
+
+**Layout drift:** compare the `layout` field with the expected layouts in
+`docs/ogd.md` (section "Row order"). A change from `point_major_*` to
+`date_major` (or vice versa) is the usual cause of an escalated fetch.
+The weekly smoke test (`tests/tools/smoke_test.py`) also prints the observed
+layout per file so drift is visible in CI logs without waiting for three
+consecutive escalated fetches.
+
 ## What is NOT in the open data
 
 - **Weather warnings.** No dataset, not on the 2026 roadmap. The README

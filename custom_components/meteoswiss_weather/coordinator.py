@@ -96,6 +96,11 @@ _ISSUE_STATION_PARSE = "parse_error_station"
 _ISSUE_PRECIP_PARSE = "parse_error_precip"
 _ISSUE_FORECAST_PARSE = "parse_error_forecast"
 _ISSUE_POLLEN_PARSE = "parse_error_pollen"
+# Prefix for per-parameter escalated-fetch repair issues (ADR-0008 section 5).
+# Full ID: f"{_ISSUE_ESCALATED_PREFIX}{param}".
+_ISSUE_ESCALATED_PREFIX = "forecast_fetch_escalated_"
+# Number of consecutive L3+ fetches that triggers the repair issue.
+_ESCALATION_THRESHOLD = 3
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -392,7 +397,12 @@ class HourlyRefresher:
         An empty series (the file degraded) never replaces a stored one, so a
         partial refresh keeps the previous run's series for that parameter
         (ADR-0008 section 1, handled by :meth:`~.store.ForecastStore.put`).
+
+        Passes escalation-ladder metadata (level, requests, bytes, layout) to
+        the store when the backend exposes ``get_fetch_meta`` (ADR-0008 §5).
+        Duck-typed so the future OGC Features backend need not implement it.
         """
+        get_meta = getattr(self._backend, "get_fetch_meta", None)
         changed = False
         for param in params:
             field = HOURLY_FIELD_BY_PARAM[param]
@@ -401,9 +411,18 @@ class HourlyRefresher:
                 for hour in hours
                 if (value := getattr(hour, field)) is not None
             }
+            meta = get_meta(param) if get_meta is not None else None
             changed = (
                 self._store.put(
-                    param, values, run=run, fetched_at=now, source="hourly"
+                    param,
+                    values,
+                    run=run,
+                    fetched_at=now,
+                    source="hourly",
+                    level=meta[0] if meta is not None else None,
+                    requests=meta[1] if meta is not None else None,
+                    bytes_fetched=meta[2] if meta is not None else None,
+                    layout=meta[3] if meta is not None else None,
                 )
                 or changed
             )
@@ -590,6 +609,9 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         # Per-parameter series of the point; the one source for entities that
         # show an hour of the forecast, whichever path fetched it (ADR-0008).
         self.store = ForecastStore()
+        # Parameters that currently have an active escalation repair issue, so
+        # the issue can be cleared when the streak drops below the threshold.
+        self._escalation_issue_params: set[str] = set()
         # The eager hourly refresh: the coordinator drives it once per tick from
         # its own refresh, so the demanded files are fetched whenever the option
         # is on, with no dependency on a subscriber (ADR-0008).
@@ -662,15 +684,31 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
             except OgdConnectionError as err:
                 raise UpdateFailed(f"daily forecast fetch failed: {err}") from err
             daily = bundle.daily
-            # An empty map (the block degraded) leaves the previous run's
-            # series in place: it still covers the coming hours.
-            self.store.put(
-                HOURLY_ZERO_DEGREE,
-                bundle.zero_degree_level,
-                run=run.timestamp,
-                fetched_at=dt_util.utcnow(),
-                source="daily",
-            )
+            # Pass escalation-ladder metadata when the backend freshly fetched
+            # zprfr0hs; use confirm() when the daily canary said nothing changed
+            # (fetch_meta is empty) so the store keeps the last good provenance
+            # (ADR-0008 section 5).
+            zmeta = bundle.fetch_meta.get(HOURLY_ZERO_DEGREE)
+            now = dt_util.utcnow()
+            if zmeta is not None:
+                self.store.put(
+                    HOURLY_ZERO_DEGREE,
+                    bundle.zero_degree_level,
+                    run=run.timestamp,
+                    fetched_at=now,
+                    source="daily",
+                    level=zmeta[0],
+                    requests=zmeta[1],
+                    bytes_fetched=zmeta[2],
+                    layout=zmeta[3],
+                )
+            else:
+                # Canary confirmed: keep the stored series, re-stamp to new run.
+                self.store.confirm(
+                    HOURLY_ZERO_DEGREE,
+                    run=run.timestamp,
+                    fetched_at=now,
+                )
             self.last_run = run.timestamp
 
         async_delete_issue(self.hass, DOMAIN, _ISSUE_FORECAST_PARSE)
@@ -680,8 +718,55 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         # an hourly fetch failure keeps the last good series and never fails the
         # daily forecast (ADR-0008 section 1).
         await self.hourly_refresher.async_refresh(run)
+        # Sync escalation repair issues once per tick after all paths have
+        # written to the store (ADR-0008 section 5).
+        self._sync_escalation_issues(run)
         self.last_success = dt_util.utcnow()
         return ForecastData(daily=daily)
+
+    def _sync_escalation_issues(self, run: Run) -> None:
+        """Post or clear ``forecast_fetch_escalated_<param>`` repair issues.
+
+        A parameter whose escalation streak reaches :data:`_ESCALATION_THRESHOLD`
+        consecutive L3+ fetches raises an issue naming the file and the bytes
+        spent on the last fetch, so an upstream re-sort is visible within hours
+        (ADR-0008 section 5). The issue is cleared as soon as the streak drops
+        below the threshold (the fetch ladder found a cheap strategy again).
+        """
+        params_with_issue: set[str] = set()
+        for param, series in self.store._series.items():
+            streak = self.store.escalation_streak(param)
+            issue_id = f"{_ISSUE_ESCALATED_PREFIX}{param}"
+            if streak >= _ESCALATION_THRESHOLD:
+                prov = series.provenance
+                file_url = run.assets.get(param, param)
+                async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    issue_id,
+                    is_fixable=False,
+                    severity=IssueSeverity.WARNING,
+                    translation_key="forecast_fetch_escalated",
+                    translation_placeholders={
+                        "param": param,
+                        "file": file_url,
+                        "bytes": str(
+                            prov.bytes_fetched
+                            if prov.bytes_fetched is not None
+                            else "unknown"
+                        ),
+                    },
+                )
+                params_with_issue.add(param)
+            elif param in self._escalation_issue_params:
+                async_delete_issue(self.hass, DOMAIN, issue_id)
+        # Clear issues for params that are no longer in the store at all.
+        for param in self._escalation_issue_params - params_with_issue:
+            if param not in self.store._series:
+                async_delete_issue(
+                    self.hass, DOMAIN, f"{_ISSUE_ESCALATED_PREFIX}{param}"
+                )
+        self._escalation_issue_params = params_with_issue
 
     def hourly_forecast(self) -> list[HourlyForecast] | None:
         """Rebuild the hourly forecast from the store, or ``None`` (ADR-0008).
