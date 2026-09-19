@@ -9,6 +9,15 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`radiation` and `zero_degree_level` now appear in the hourly forecast** (#135).
+  Both fields were already fetched and parsed (`gre000h0` / `zprfr0hs`, part of
+  `HOURLY_REQUIRED_PARAMS`) but were silently dropped by `_as_hourly_forecast`.
+  `weather.get_forecasts(type: hourly)` now carries `radiation` (W/m²) and
+  `zero_degree_level` (m) for every hour that has a value; hours without a value
+  omit the key rather than sending `null`.
+
 ### Added
 
 - **Persisted fetch-ladder hints across restarts** (#133,

@@ -69,7 +69,36 @@ One `weather` entity per config entry.
 **Forecast:**
 
 - **Daily forecast**: 9 days, always available. Temperature high/low, precipitation, precipitation probability, wind (speed, gust, bearing), and weather condition for each day.
-- **Hourly forecast**: When enabled in options (see below). Hourly temperature, precipitation, wind, and condition. Updated at most every 3 hours.
+- **Hourly forecast**: When enabled in options (see below). Per hour:
+
+  | Key | Description | Unit |
+  |---|---|---|
+  | `condition` | MeteoSwiss hourly symbol (day/night variant as sent) | — |
+  | `temperature` | Air temperature at 2 m (median) | °C |
+  | `precipitation` | Hourly precipitation sum | mm |
+  | `precipitation_probability` | Probability of precipitation in the 3-hour window ending at that hour | % |
+  | `wind_speed` / `wind_gust_speed` / `wind_bearing` | Hourly mean wind, gust and direction | km/h, km/h, ° |
+  | `radiation` | Global (incoming short-wave) solar radiation | W/m² |
+  | `zero_degree_level` | Altitude of the 0 °C isotherm (snow-line material) | m |
+  | `cloud_coverage` | Total cloud cover, maximum of the three layers — **only with the cloud-layers option** | % |
+  | `cloud_coverage_high` / `_mid` / `_low` | The three cloud layers — **only with the cloud-layers option** | % |
+  | `temperature_p10` / `temperature_p90` | 10th/90th percentile of the temperature forecast — **only with the temperature-percentiles option** | °C |
+
+  **Example — next-hour radiation from a template:**
+  ```yaml
+  {{ state_attr('weather.MY_ENTITY', 'forecast') }}
+  ```
+  Or with the `weather.get_forecasts` service:
+  ```yaml
+  action: weather.get_forecasts
+  data:
+    type: hourly
+  target:
+    entity_id: weather.MY_ENTITY
+  response_variable: hourly
+  ```
+  Each entry in `hourly['weather.MY_ENTITY']['forecast']` carries `radiation` (W/m²)
+  and `zero_degree_level` (m) alongside the standard fields.
 
 ### Station Sensors
 
