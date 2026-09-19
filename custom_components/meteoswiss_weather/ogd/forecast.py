@@ -94,6 +94,9 @@ _HOURLY_FIELDS: dict[str, str] = {
     HOURLY_TEMP_P10: "temperature_p10",
     HOURLY_TEMP_P90: "temperature_p90",
 }
+# Public view of the table: the forecast store files an hourly forecast's
+# fields under their upstream parameter codes (ADR-0008).
+HOURLY_FIELD_BY_PARAM = _HOURLY_FIELDS
 
 
 def _reader(body: str) -> csv.DictReader:

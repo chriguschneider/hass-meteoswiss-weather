@@ -397,11 +397,14 @@ async def test_zero_degree_block_fetched_with_daily_refresh_hourly_off(
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
 
-    data = config_entry.runtime_data.forecast_coordinator.data
-    assert data is not None
+    coordinator = config_entry.runtime_data.forecast_coordinator
+    series = coordinator.store.get(HOURLY_ZERO_DEGREE)
+    assert series is not None
     # Fixture: 24 hours for Köniz, 2500 m at 00:00 UTC rising 5 m per hour.
-    assert len(data.zero_degree_level) == 24
-    assert data.zero_degree_level[datetime(2026, 8, 27, 0, 0, tzinfo=UTC)] == 2500.0
+    assert len(series.values) == 24
+    assert series.values[datetime(2026, 8, 27, 0, 0, tzinfo=UTC)] == 2500.0
+    assert series.provenance.source == "daily"
+    assert not coordinator.store.is_stale(HOURLY_ZERO_DEGREE, coordinator.last_run)
     assert _block_calls(mock_ogd, HOURLY_ZERO_DEGREE) == 1
     assert _hourly_calls(mock_ogd) == 0
 
@@ -462,3 +465,25 @@ async def test_options_change_reloads_entry(
     assert provider.enabled is True
     assert _hourly_calls(mock_ogd) == 0
     assert provider.last_fetch is None
+
+
+async def test_setup_lists_stac_once(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """The run discovered by the coordinator is handed to the daily fetch, so a
+    refresh costs one ~600 KB STAC listing, not two (ADR-0008 section 3)."""
+    from custom_components.meteoswiss_weather.ogd.const import (
+        COLLECTION_FORECAST,
+        stac_items_url,
+    )
+
+    config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    listing = stac_items_url(COLLECTION_FORECAST)
+    calls = [1 for _m, url, *_ in mock_ogd.mock_calls if str(url) == listing]
+    assert len(calls) == 1
+    assert config_entry.runtime_data.forecast_coordinator.run is not None

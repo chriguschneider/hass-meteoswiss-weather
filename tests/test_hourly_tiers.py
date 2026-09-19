@@ -137,10 +137,10 @@ class _RecordingBackend:
     def __init__(self) -> None:
         self.calls: list[tuple[tuple[str, ...], int]] = []
 
-    async def fetch_daily(self, point):  # pragma: no cover - unused here
+    async def fetch_daily(self, point, *, run=None):  # pragma: no cover
         return DailyBundle(daily=[])
 
-    async def fetch_hourly(self, point, *, horizon_days=-1, params=()):
+    async def fetch_hourly(self, point, *, horizon_days=-1, params=(), run=None):
         self.calls.append((tuple(params), horizon_days))
         base = datetime(2026, 8, 27, 0, 0, tzinfo=UTC)
         return [
@@ -332,10 +332,10 @@ class _TrimmingBackend:
     def __init__(self) -> None:
         self.calls: list[tuple[tuple[str, ...], int]] = []
 
-    async def fetch_daily(self, point):  # pragma: no cover - unused here
+    async def fetch_daily(self, point, *, run=None):  # pragma: no cover
         return DailyBundle(daily=[])
 
-    async def fetch_hourly(self, point, *, horizon_days=-1, params=()):
+    async def fetch_hourly(self, point, *, horizon_days=-1, params=(), run=None):
         self.calls.append((tuple(params), horizon_days))
         from custom_components.meteoswiss_weather.ogd.hourly import horizon_end_utc
 
@@ -431,10 +431,10 @@ class _GatedRecordingBackend:
     def __init__(self) -> None:
         self.calls: list[tuple[tuple[str, ...], int]] = []
 
-    async def fetch_daily(self, point):  # pragma: no cover - unused here
+    async def fetch_daily(self, point, *, run=None):  # pragma: no cover
         return DailyBundle(daily=[])
 
-    async def fetch_hourly(self, point, *, horizon_days=-1, params=()):
+    async def fetch_hourly(self, point, *, horizon_days=-1, params=(), run=None):
         self.calls.append((tuple(params), horizon_days))
         want = set(params)
         base = datetime(2026, 8, 27, 0, 0, tzinfo=UTC)
@@ -678,3 +678,101 @@ async def test_merge_near_only_refresh_drops_ragged_head(
     # h0 is dropped (no point-major data); h1 is complete.
     assert len(result) == 1
     assert result[0].time == h1
+
+
+# --- the provider files what it fetched in the forecast store (ADR-0008) -------
+
+
+class _ZeroDegreeBackend:
+    """Returns hours that carry a zero-degree level and records the run it got."""
+
+    def __init__(self) -> None:
+        self.runs: list = []
+
+    async def fetch_daily(self, point, *, run=None):  # pragma: no cover
+        return DailyBundle(daily=[])
+
+    async def fetch_hourly(self, point, *, horizon_days=-1, params=(), run=None):
+        self.runs.append(run)
+        base = datetime(2026, 8, 27, 0, 0, tzinfo=UTC)
+        return [
+            HourlyForecast(
+                time=base + timedelta(hours=h),
+                temperature=10.0,
+                precipitation=0.0,
+                symbol=1,
+                wind_speed_kmh=5.0,
+                zero_degree_level=2500.0 + 5 * h,
+            )
+            for h in range(24)
+        ]
+
+
+async def test_provider_publishes_point_major_series_to_the_store(
+    hass: HomeAssistant,
+) -> None:
+    """Whatever the hourly path fetched is readable from the store, and the
+    coordinator is told so it can re-render (ADR-0008 section 1)."""
+    from custom_components.meteoswiss_weather.ogd.const import (
+        HOURLY_SYMBOL,
+        HOURLY_ZERO_DEGREE,
+    )
+    from custom_components.meteoswiss_weather.store import ForecastStore
+
+    store = ForecastStore()
+    notified: list[bool] = []
+    provider = HourlyForecastProvider(
+        hass,
+        _ZeroDegreeBackend(),
+        _POINT,
+        enabled=True,
+        horizon_days=_HORIZON_DAYS,
+        store=store,
+        on_store_change=lambda: notified.append(True),
+    )
+    run = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+    with freeze_time(run):
+        await provider.async_get_hourly(run)
+
+    at = datetime(2026, 8, 27, 3, 0, tzinfo=UTC)
+    assert store.value_at(HOURLY_ZERO_DEGREE, at) == 2515.0
+    assert store.value_at(HOURLY_SYMBOL, at) == 1
+    series = store.get(HOURLY_ZERO_DEGREE)
+    assert series is not None
+    assert series.provenance.source == "hourly"
+    assert series.provenance.run == run
+    assert notified == [True]
+
+    # Same run again: served from the cache, nothing new, no second notification.
+    with freeze_time(run + timedelta(minutes=5)):
+        await provider.async_get_hourly(run)
+    assert notified == [True]
+
+
+async def test_provider_hands_the_discovered_run_to_the_backend(
+    hass: HomeAssistant,
+) -> None:
+    """The run the coordinator discovered is reused, not discovered again; a
+    run for another stamp is not passed on (ADR-0008 section 3)."""
+    from custom_components.meteoswiss_weather.ogd import Run
+
+    stamp = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+    discovered = Run(timestamp=stamp, assets={})
+    backend = _ZeroDegreeBackend()
+    provider = HourlyForecastProvider(
+        hass,
+        backend,
+        _POINT,
+        enabled=True,
+        horizon_days=_HORIZON_DAYS,
+        run_source=lambda: discovered,
+    )
+    with freeze_time(stamp):
+        await provider.async_get_hourly(stamp)
+    assert backend.runs and all(run is discovered for run in backend.runs)
+
+    backend.runs.clear()
+    later = stamp + timedelta(hours=3)
+    with freeze_time(later):
+        await provider.async_get_hourly(later)
+    assert backend.runs and all(run is None for run in backend.runs)

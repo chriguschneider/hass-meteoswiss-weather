@@ -104,6 +104,12 @@ async def test_diagnostics_payload(
     assert fc["last_success"] is not None
     assert fc["last_run"] is not None
     assert fc["last_exception"] is None
+    # The store reports which run and path delivered each series (ADR-0008).
+    zero_degree = fc["store"]["zprfr0hs"]
+    assert zero_degree["source"] == "daily"
+    assert zero_degree["run"] == fc["last_run"]
+    assert zero_degree["hours"] == 24
+    assert zero_degree["stale"] is False
 
 
 async def test_diagnostics_after_station_failure(

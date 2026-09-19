@@ -37,7 +37,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import aiohttp
@@ -74,6 +75,7 @@ from .ogd import (
     OgdConnectionError,
     OgdParseError,
     PollenObservation,
+    Run,
     fetch_current,
     fetch_pollen_current,
     fetch_precip_current,
@@ -83,8 +85,11 @@ from .ogd.const import (
     COLLECTION_FORECAST,
     DAILY_REQUIRED_PARAMS,
     HOURLY_POINT_MAJOR_PARAMS,
+    HOURLY_ZERO_DEGREE,
     hourly_date_major_params,
 )
+from .ogd.forecast import HOURLY_FIELD_BY_PARAM
+from .store import ForecastStore
 
 # Issue IDs used in the HA repair-issue registry.
 _ISSUE_STATION_PARSE = "parse_error_station"
@@ -101,15 +106,12 @@ class ForecastData:
 
     The hourly forecast is not carried here — it is fetched lazily through
     :class:`HourlyForecastProvider` only when something asks for it (issue #54).
-    The one exception is ``zero_degree_level``: the zero-degree level exists
-    only at hourly resolution upstream, and its ~5 KB point block rides along
-    with every daily refresh so the sensor works without the hourly opt-in
-    (issue #107). It maps each forecast hour (aware UTC) to metres above sea
-    level and is empty when the block could not be fetched.
+    Per-hour values that entities read ("the current hour's zero-degree level")
+    live in the coordinator's :class:`~.store.ForecastStore` instead, because
+    more than one path can deliver them (ADR-0008).
     """
 
     daily: list[DailyForecast]
-    zero_degree_level: dict[datetime, float] = field(default_factory=dict)
 
 
 def _tier_due(
@@ -177,10 +179,21 @@ class HourlyForecastProvider:
         horizon_days: int,
         cloud_layers: bool = False,
         temp_percentiles: bool = False,
+        store: ForecastStore | None = None,
+        run_source: Callable[[], Run | None] | None = None,
+        on_store_change: Callable[[], None] | None = None,
     ) -> None:
         self._hass = hass
         self._backend = backend
         self._point = point
+        # ADR-0008: what this provider fetches is filed in the entry's store so
+        # other entities can read it; ``run_source`` hands over the run the
+        # coordinator already discovered; ``on_store_change`` lets the
+        # coordinator re-render its entities when the store gained data outside
+        # its own refresh.
+        self._store = store
+        self._run_source = run_source
+        self._on_store_change = on_store_change
         self._enabled = enabled
         self._horizon_days = horizon_days
         # The date-major files to fetch on the near/far schedule: always the
@@ -306,6 +319,7 @@ class HourlyForecastProvider:
                 self._point,
                 horizon_days=self._horizon_days,
                 params=self._date_major_params,
+                run=self._discovered_run(run),
             )
             self._date_major = {hour.time: hour for hour in far}
             self._far_run = self._near_run = run
@@ -324,6 +338,7 @@ class HourlyForecastProvider:
                 self._point,
                 horizon_days=self._near_horizon_days,
                 params=self._date_major_params,
+                run=self._discovered_run(run),
             )
             # Overwrite only the near-window hours; keep the far-window values
             # from the last far fetch (that tier refreshes slower).
@@ -343,11 +358,43 @@ class HourlyForecastProvider:
             self._point,
             horizon_days=self._horizon_days,
             params=HOURLY_POINT_MAJOR_PARAMS,
+            run=self._discovered_run(run),
         )
         self._point_major = {hour.time: hour for hour in point_major}
         self._point_major_run = run
         self._point_major_fetch = now
+        self._publish(point_major, run, now)
         return True
+
+    def _discovered_run(self, stamp: datetime) -> Run | None:
+        """The coordinator's already-discovered run, if it is the one for ``stamp``."""
+        if self._run_source is None:
+            return None
+        run = self._run_source()
+        return run if run is not None and run.timestamp == stamp else None
+
+    def _publish(
+        self, hours: list[HourlyForecast], run: datetime, now: datetime
+    ) -> None:
+        """File the fetched point-major fields in the store, per parameter."""
+        if self._store is None:
+            return
+        changed = False
+        for param in HOURLY_POINT_MAJOR_PARAMS:
+            field = HOURLY_FIELD_BY_PARAM[param]
+            values = {
+                hour.time: value
+                for hour in hours
+                if (value := getattr(hour, field)) is not None
+            }
+            changed = (
+                self._store.put(
+                    param, values, run=run, fetched_at=now, source="hourly"
+                )
+                or changed
+            )
+        if changed and self._on_store_change is not None:
+            self._on_store_change()
 
     def _merge(self) -> list[HourlyForecast]:
         """Combine the date-major and point-major groups by hour, sorted.
@@ -525,8 +572,14 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         # diagnostics and used to skip re-downloading an unchanged run. The
         # weather entity also watches it to trigger the lazy hourly refresh.
         self.last_run: datetime | None = None
+        # The run discovered by the latest tick, handed down to every fetch of
+        # that tick so nothing below lists STAC again (ADR-0008 section 3).
+        self.run: Run | None = None
         # Timestamp of the last successful update; exposed for diagnostics.
         self.last_success: datetime | None = None
+        # Per-parameter series of the point; the one source for entities that
+        # show an hour of the forecast, whichever path fetched it (ADR-0008).
+        self.store = ForecastStore()
         # The lazy hourly download hangs here; the coordinator never calls it,
         # the weather entity does when HA asks (ADR-0002 revision 2, issue #54).
         self.hourly_provider = HourlyForecastProvider(
@@ -537,6 +590,9 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
             horizon_days=hourly_horizon_days,
             cloud_layers=hourly_cloud_layers,
             temp_percentiles=hourly_temp_percentiles,
+            store=self.store,
+            run_source=lambda: self.run,
+            on_store_change=self.async_update_listeners,
         )
 
     async def _async_update_data(self) -> ForecastData:
@@ -556,6 +612,7 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
             raise UpdateFailed(f"forecast run discovery parse failed: {err}") from err
         except OgdConnectionError as err:
             raise UpdateFailed(f"forecast run discovery failed: {err}") from err
+        self.run = run
 
         # An unchanged run means the MB-scale daily files would be identical:
         # skip the download entirely and keep serving what we have (ADR-0002).
@@ -565,13 +622,12 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
             and self.data is not None
         ):
             daily = self.data.daily
-            zero_degree_level = self.data.zero_degree_level
         else:
             try:
                 # The backend downloads the small daily files (plus the
                 # point-major wind and zero-degree blocks) and parses them off
                 # the event loop; a future per-point backend swaps in here.
-                bundle = await self._backend.fetch_daily(self._point)
+                bundle = await self._backend.fetch_daily(self._point, run=run)
             except OgdParseError as err:
                 async_create_issue(
                     self.hass,
@@ -585,12 +641,20 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
             except OgdConnectionError as err:
                 raise UpdateFailed(f"daily forecast fetch failed: {err}") from err
             daily = bundle.daily
-            zero_degree_level = bundle.zero_degree_level
+            # An empty map (the block degraded) leaves the previous run's
+            # series in place: it still covers the coming hours.
+            self.store.put(
+                HOURLY_ZERO_DEGREE,
+                bundle.zero_degree_level,
+                run=run.timestamp,
+                fetched_at=dt_util.utcnow(),
+                source="daily",
+            )
             self.last_run = run.timestamp
 
         async_delete_issue(self.hass, DOMAIN, _ISSUE_FORECAST_PARSE)
         self.last_success = dt_util.utcnow()
-        return ForecastData(daily=daily, zero_degree_level=zero_degree_level)
+        return ForecastData(daily=daily)
 
 
 class PollenCoordinator(DataUpdateCoordinator[PollenObservation]):

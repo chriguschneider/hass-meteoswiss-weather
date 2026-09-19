@@ -10,6 +10,7 @@ from __future__ import annotations
 from .backend import BulkCsvBackend, ForecastBackend
 from .const import POINT_TYPE_MOUNTAIN, hourly_date_major_params
 from .forecast import (
+    HOURLY_FIELD_BY_PARAM,
     aggregate_daily_precip_probability,
     aggregate_daily_wind,
     fetch_points,
@@ -63,6 +64,7 @@ from .stations import (
 )
 
 __all__ = [
+    "HOURLY_FIELD_BY_PARAM",
     "AiohttpRangeReader",
     "BulkCsvBackend",
     "POINT_TYPE_MOUNTAIN",
