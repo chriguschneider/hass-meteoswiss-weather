@@ -10,7 +10,7 @@ in, covering the fallback and the aiohttp seam.
 from __future__ import annotations
 
 import random
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -423,14 +423,16 @@ def _counting(data: bytes, cap: int | None = 96) -> H._CountingReader:
     return H._CountingReader(_MemReader(data), cap)
 
 
-async def _series(data: bytes, *, start=None, end=None, cap=96, **hints):
+async def _series(
+    data: bytes, *, start=None, end=None, cap=96, hint=None, utc_day=None
+):
     return await H._fetch_series(
         _counting(data, cap),
         _TARGET,
         window_start=start,
         window_end=end,
-        block_start=hints.get("block_start"),
-        geometry=hints.get("geometry"),
+        hint=hint,
+        utc_day=utc_day,
     )
 
 
@@ -468,9 +470,9 @@ async def test_ladder_geometry_hint_saves_the_learning_scan() -> None:
     data = _big_date_major()
     start, end = _H0 + timedelta(hours=10), _H0 + timedelta(hours=20)
     cold = await _series(data, start=start, end=end)
-    warm = await _series(data, start=start, end=end, geometry=cold.geometry)
+    warm = await _series(data, start=start, end=end, hint=cold.hint)
 
-    assert cold.geometry is not None
+    assert cold.hint is not None and cold.hint.geometry is not None
     assert _series_hours(warm) == _series_hours(cold)
     assert warm.level == 0
     assert warm.requests < cold.requests
@@ -481,13 +483,19 @@ async def test_ladder_wrong_geometry_hint_is_detected_not_trusted() -> None:
     data = _big_date_major()
     start, end = _H0 + timedelta(hours=5), _H0 + timedelta(hours=15)
     good = await _series(data, start=start, end=end)
-    bad_hint = H.RowGeometry(
-        block_bytes=good.geometry.block_bytes * 0.8,
-        row_offset=17,
-        anchor_stamp=_stamp(start),
-        anchor_offset=123,
+    bad_hint = H.FileHint(
+        layout=FileLayout.DATE_MAJOR,
+        header=good.hint.header,
+        first_stamp=good.hint.first_stamp,
+        last_stamp=good.hint.last_stamp,
+        geometry=H.RowGeometry(
+            block_bytes=good.hint.geometry.block_bytes * 0.8,
+            row_offset=17,
+            anchor_stamp=_stamp(start),
+            anchor_offset=123,
+        ),
     )
-    result = await _series(data, start=start, end=end, geometry=bad_hint)
+    result = await _series(data, start=start, end=end, hint=bad_hint)
 
     assert _series_lines(result) == _series_lines(good)
     assert result.level <= 2  # a fresh look, not a prefix or the whole file
@@ -541,7 +549,7 @@ async def test_ladder_point_major_block_is_whole_run_and_hint_is_level_zero() ->
     data = _point_major_type()
     start, end = _H0 + timedelta(hours=3), _H0 + timedelta(hours=9)
     cold = await _series(data, start=start, end=end)
-    warm = await _series(data, start=start, end=end, block_start=cold.block_start)
+    warm = await _series(data, start=start, end=end, hint=cold.hint)
 
     assert cold.level == 1 and warm.level == 0
     assert cold.whole_run and warm.whole_run
@@ -564,3 +572,69 @@ async def test_ladder_absent_point_is_proven_by_the_full_file() -> None:
     )
     assert result.level == 4
     assert not result.has_rows
+
+
+# --- the per-file hint, remembered per UTC day (issue #121) ------------------
+
+# The file's UTC day: _big_date_major starts at 21:00 the previous day.
+_DAY = date(2026, 8, 27)
+
+
+async def test_warm_date_major_window_is_about_one_request_per_hour() -> None:
+    """A same-day hint skips classification and the probes: a warm 30 h window
+    stays within ``hours + 4`` requests (ADR-0008 acceptance, issue #121)."""
+    data = _big_date_major()
+    hours = 30
+    start, end = _H0 + timedelta(hours=10), _H0 + timedelta(hours=10 + hours)
+    cold = await _series(data, start=start, end=end, utc_day=_DAY)
+    warm = await _series(data, start=start, end=end, hint=cold.hint, utc_day=_DAY)
+
+    assert _series_hours(warm) == _series_hours(cold)
+    assert warm.level == 0
+    assert warm.requests <= hours + 4
+
+
+async def test_warm_point_major_fetch_is_at_most_three_requests() -> None:
+    """A same-day point-major hint verifies the block with a couple of probes."""
+    data = _point_major_type()
+    start, end = _H0 + timedelta(hours=3), _H0 + timedelta(hours=9)
+    cold = await _series(data, start=start, end=end, utc_day=_DAY)
+    warm = await _series(data, start=start, end=end, hint=cold.hint, utc_day=_DAY)
+
+    assert warm.level == 0
+    assert _series_hours(warm) == _series_hours(cold)
+    assert warm.requests <= 3
+
+
+async def test_hint_from_another_utc_day_costs_a_fresh_look() -> None:
+    """Byte offsets are only stable within a UTC day: a hint from another day is
+    dropped and the file is classified afresh, never read as a prefix or whole."""
+    data = _big_date_major()
+    start, end = _H0 + timedelta(hours=10), _H0 + timedelta(hours=25)
+    good = await _series(data, start=start, end=end, utc_day=_DAY)
+    stale = await _series(
+        data, start=start, end=end, hint=good.hint, utc_day=date(2026, 8, 28)
+    )
+
+    assert _series_lines(stale) == _series_lines(good)
+    assert stale.level <= 1  # a fresh classification, not a prefix or the file
+    assert stale.bytes < len(data) / 4
+
+
+async def test_hint_for_another_layout_costs_a_fresh_look() -> None:
+    """A hint that names the wrong layout for the file is detected by the rows it
+    fails to yield and retried with a fresh classification (never wrong data)."""
+    data = _big_date_major()  # date-major
+    start, end = _H0 + timedelta(hours=10), _H0 + timedelta(hours=25)
+    good = await _series(data, start=start, end=end, utc_day=_DAY)
+    wrong = H.FileHint(
+        layout=FileLayout.POINT_MAJOR_TYPE,
+        utc_day=_DAY,
+        header=good.hint.header,
+        block_start=123,
+    )
+    result = await _series(data, start=start, end=end, hint=wrong, utc_day=_DAY)
+
+    assert _series_lines(result) == _series_lines(good)
+    assert result.level <= 1
+    assert result.bytes < len(data) / 4

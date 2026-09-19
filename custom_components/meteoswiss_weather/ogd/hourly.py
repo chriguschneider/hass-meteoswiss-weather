@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from math import ceil
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -370,14 +370,17 @@ async def _fetch_point_major(
     layout: FileLayout,
     point: ForecastPoint,
     cached_start: int | None,
+    header: bytes | None = None,
 ) -> tuple[str, int | None]:
     """Fetch the point's contiguous block; returns ``(csv_text, block_start)``.
 
     ``csv_text`` carries the header so the shared parser reads it unchanged;
-    ``block_start`` is the offset to cache for the next run.
+    ``block_start`` is the offset to cache for the next run. ``header`` is the
+    already-known header line (from a same-day hint); ``None`` reads it.
     """
     target = _target_key(layout, point)
-    header = await _read_header(reader)
+    if header is None:
+        header = await _read_header(reader)
 
     start: int | None = None
     if cached_start is not None and await _cached_start_valid(
@@ -514,11 +517,17 @@ async def fetch_hourly_file(
 # *verifies complete*; the last rung is the whole file. It never gives up for
 # cost — only upstream errors (raised as OgdConnectionError) end it early.
 #
-#   L0  remembered position verified with a single read per block/row
+#   L0  a same-day FileHint: skip classification and the header/first/last
+#       probes, address straight from the remembered positions, verify the rows
 #   L1  layout-aware addressing (binary-searched block / row addressing)
 #   L2  a window of whole hour blocks around a row that L1 could not find
 #   L3  the prefix up to the end of the demanded window
 #   L4  the whole file
+#
+# A hint (one object per file, remembered per UTC day, issue #121) only ever
+# saves requests: a stale one — from another day or naming the wrong layout — is
+# detected by the rows it fails to yield and retried once with a fresh
+# classification before the ladder climbs.
 
 # Row-addressing windows around a predicted row position: L1 tries these in
 # turn; L2 then reads a few whole hour blocks around the prediction.
@@ -589,6 +598,33 @@ class RowGeometry:
 
 
 @dataclass(frozen=True, slots=True)
+class FileHint:
+    """Everything learned about one file, remembered per UTC day (ADR-0008).
+
+    A file's layout and byte offsets are stable across the runs of one UTC day
+    (date-major files start at 21:00 UTC of the previous day, docs/ogd.md), so a
+    same-day hint lets :func:`fetch_series` skip classification and the
+    header/first/last probes and verify through the rows it finds instead.
+
+    ``utc_day`` is the UTC day the offsets were learned on; a hint from another
+    day is not trusted (a layout can flip between days without notice), so it
+    costs a fresh look rather than a wrong or oversized read. ``header`` is the
+    file's header line (with its trailing newline) so the point's rows can be
+    re-emitted without reading it. ``block_start`` is the point-major block
+    offset; ``geometry`` plus ``first_stamp``/``last_stamp`` are the date-major
+    row-addressing hint. Only the fields that apply to the file's layout are set.
+    """
+
+    layout: FileLayout
+    utc_day: date | None = None
+    header: str = ""
+    block_start: int | None = None
+    geometry: RowGeometry | None = None
+    first_stamp: str | None = None
+    last_stamp: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SeriesResult:
     """The point's rows of one file, and what it took to get them."""
 
@@ -600,8 +636,10 @@ class SeriesResult:
     # True when ``text`` holds every row of the point in the file, so any
     # consumer may reuse it; False when it was cut to the demanded window.
     whole_run: bool
-    block_start: int | None = None  # point-major hint for the next fetch
-    geometry: RowGeometry | None = None  # date-major hint for the next fetch
+    # What was learned about the file, to hand back on the next fetch of the
+    # same UTC day (one object per file, ADR-0008). ``None`` after an escalation
+    # that learned no reusable position, so the caller keeps its previous hint.
+    hint: FileHint | None = None
 
     @property
     def has_rows(self) -> bool:
@@ -689,11 +727,23 @@ async def _learn_geometry(
 
 
 async def _find_row(
-    reader: RangeReader, predicted: float, needle: bytes, windows: tuple[int, ...]
-) -> tuple[int, bytes] | None:
-    """Look for ``needle`` in windows centred on ``predicted``; (offset, line)."""
+    reader: RangeReader,
+    predicted: float,
+    needle: bytes,
+    windows: tuple[int, ...],
+    *,
+    from_window: int = 0,
+) -> tuple[int, bytes, int] | None:
+    """Look for ``needle`` in windows centred on ``predicted``.
+
+    Returns ``(offset, line, window_index)`` — the index of the window that hit,
+    so the caller can start the next row's search there. ``from_window`` skips
+    the smaller windows a previous row already found too tight, so a drifting
+    file does not pay a miss on every hour.
+    """
     size = await reader.size()
-    for window in windows:
+    for idx in range(from_window, len(windows)):
+        window = windows[idx]
         start = max(0, int(predicted) - window // 2)
         if start >= size:
             return None
@@ -708,8 +758,20 @@ async def _find_row(
             end = data.find(b"\n", line_start)
             if end == -1:
                 end = len(data)
-        return start + line_start, data[line_start:end]
+        return start + line_start, data[line_start:end], idx
     return None
+
+
+@dataclass(frozen=True, slots=True)
+class _DateMajorRows:
+    """The row-addressing result of one date-major fetch, plus what it learned."""
+
+    text: str
+    level: int
+    geometry: RowGeometry
+    header: str
+    first_stamp: str
+    last_stamp: str
 
 
 async def _fetch_rows_date_major(
@@ -717,34 +779,63 @@ async def _fetch_rows_date_major(
     point: ForecastPoint,
     window_start: datetime,
     window_end: datetime,
-    geometry: RowGeometry | None,
-) -> tuple[str, RowGeometry | None, int]:
-    """Row-address the point's rows for the window; ``(text, geometry, level)``.
+    hint: FileHint | None,
+) -> _DateMajorRows:
+    """Row-address the point's rows for the window.
 
     Each verified row re-anchors the prediction for the next hour, because hour
     blocks differ by a few dozen bytes (variable-width values) and a position
-    extrapolated from the file start drifts by kilobytes over a day.
+    extrapolated from the file start drifts by kilobytes over a day. A same-day
+    ``hint`` supplies the header, the file's first/last stamp and the geometry,
+    so classification and the header/first/last probes are skipped; the rows
+    found still verify it. Once a row needs a wider search window, the following
+    rows start there too, so a drifting file does not pay a miss every hour.
     """
-    header = await _read_header(reader)
-    size = await reader.size()
-    first = await _read_row_after(reader, 0)
-    last = await _read_row_before(reader, size)
-    first_dt = _dt_from_stamp(first.date) if first is not None else None
-    last_dt = _dt_from_stamp(last.date) if last is not None else None
-    if first is None or first_dt is None or last_dt is None:
-        raise _NotProven("could not read the file's first/last row")
+    geometry = hint.geometry if hint is not None else None
+    level = 0 if geometry is not None else 1
+
+    # Same-day offsets are stable: take the header and the file's first/last
+    # stamps from the hint when it has them, else read them.
+    if hint is not None and hint.header and hint.first_stamp and hint.last_stamp:
+        header = hint.header.encode(FORECAST_ENCODING)
+        first_start = len(header)
+        first_stamp, last_stamp = hint.first_stamp, hint.last_stamp
+        first_dt = _dt_from_stamp(first_stamp)
+        last_dt = _dt_from_stamp(last_stamp)
+    else:
+        header = await _read_header(reader)
+        size = await reader.size()
+        first = await _read_row_after(reader, 0)
+        last = await _read_row_before(reader, size)
+        first_dt = _dt_from_stamp(first.date) if first is not None else None
+        last_dt = _dt_from_stamp(last.date) if last is not None else None
+        if first is None or first_dt is None or last_dt is None:
+            raise _NotProven("could not read the file's first/last row")
+        first_start = first.start
+        first_stamp, last_stamp = first.date, last.date
+
+    if first_dt is None or last_dt is None:
+        raise _NotProven("could not read the file's first/last stamp")
 
     hours = _window_hours(window_start, window_end, first_dt, last_dt)
     if not hours:
-        return header.decode(FORECAST_ENCODING), geometry, 0
+        return _DateMajorRows(
+            text=header.decode(FORECAST_ENCODING),
+            level=0,
+            geometry=geometry or RowGeometry(block_bytes=0.0, row_offset=0),
+            header=header.decode(FORECAST_ENCODING),
+            first_stamp=first_stamp,
+            last_stamp=last_stamp,
+        )
 
-    level = 0 if geometry is not None else 1
     if geometry is None:
-        geometry = await _learn_geometry(reader, point, first)
+        first_row = _Row(first_start, point.point_id, point.point_type_id, first_stamp)
+        geometry = await _learn_geometry(reader, point, first_row)
     block = geometry.block_bytes
-    anchor_idx, anchor_off = 0, first.start + geometry.row_offset
-    # A remembered row is only trusted after it is seen again at its place: on
-    # a new UTC day the file starts 24 blocks later and the offset is stale.
+    # The anchor is a row found on the last same-day run; predictions start from
+    # it (offsets are stable across a day) and fall back to the first block when
+    # it is out of range. The rows found below verify it either way.
+    anchor_idx, anchor_off = 0, first_start + geometry.row_offset
     anchor_dt = (
         _dt_from_stamp(geometry.anchor_stamp) if geometry.anchor_stamp else None
     )
@@ -753,34 +844,37 @@ async def _fetch_rows_date_major(
         and geometry.anchor_offset is not None
         and anchor_dt >= first_dt
     ):
-        seen = await _find_row(
-            reader,
-            geometry.anchor_offset,
-            _needle(point, geometry.anchor_stamp or ""),
-            _ROW_WINDOWS[:1],
-        )
-        if seen is not None:
-            anchor_idx = int((anchor_dt - first_dt).total_seconds() // 3600)
-            anchor_off = seen[0]
+        anchor_idx = int((anchor_dt - first_dt).total_seconds() // 3600)
+        anchor_off = geometry.anchor_offset
 
     lines: list[bytes] = []
     first_found: tuple[str, int] | None = None
+    from_window = 0
     for when in hours:
         idx = int((when - first_dt).total_seconds() // 3600)
         predicted = anchor_off + (idx - anchor_idx) * block
         needle = _needle(point, _stamp(when))
-        found = await _find_row(reader, predicted, needle, _ROW_WINDOWS[:1])
-        if found is None:
-            level = max(level, 1)
-            found = await _find_row(reader, predicted, needle, _ROW_WINDOWS[1:])
+        found = await _find_row(
+            reader, predicted, needle, _ROW_WINDOWS, from_window=from_window
+        )
         if found is None:
             level = 2
             found = await _find_row(
                 reader, predicted, needle, (int(block * _BLOCK_WINDOW_BLOCKS),)
             )
+            if found is not None:
+                found = (found[0], found[1], len(_ROW_WINDOWS) - 1)
         if found is None:
             raise _NotProven(f"row for {_stamp(when)} not found by addressing")
-        offset, line = found
+        offset, line, hit_window = found
+        if hit_window > 0:
+            level = max(level, 1)
+        # Adapt the next row's starting window to the drift just observed: when
+        # the prediction lands well inside the small window keep using it (a few
+        # bytes per hour); when the row keeps sitting outside it, start wider so
+        # a drifting file does not pay a miss on every hour.
+        error = abs(offset - int(predicted))
+        from_window = 0 if 2 * error < _ROW_WINDOWS[0] else 1
         if idx != anchor_idx:
             block = (block + (offset - anchor_off) / (idx - anchor_idx)) / 2
         anchor_idx, anchor_off = idx, offset
@@ -795,7 +889,14 @@ async def _fetch_rows_date_major(
         anchor_stamp=first_found[0] if first_found else None,
         anchor_offset=first_found[1] if first_found else None,
     )
-    return text, learned, level
+    return _DateMajorRows(
+        text=text,
+        level=level,
+        geometry=learned,
+        header=header.decode(FORECAST_ENCODING),
+        first_stamp=first_stamp,
+        last_stamp=last_stamp,
+    )
 
 
 def _window_complete(
@@ -815,67 +916,135 @@ def _window_complete(
     ) and last_dt + timedelta(hours=1) >= window_end
 
 
+def _hint_is_current(hint: FileHint, utc_day: date | None) -> bool:
+    """Whether ``hint``'s remembered offsets can still be trusted.
+
+    Offsets are stable only across the runs of one UTC day (ADR-0008). A hint
+    from another day is not trusted — a layout can flip between days without
+    notice — so it is dropped and the file gets a fresh classification. When the
+    day of either side is unknown the rows found still verify the hint, so it is
+    used but its offsets are re-anchored against what is actually there.
+    """
+    if hint.utc_day is None or utc_day is None:
+        return True
+    return hint.utc_day == utc_day
+
+
+async def _address(
+    reader: _CountingReader,
+    point: ForecastPoint,
+    window_start: datetime | None,
+    window_end: datetime | None,
+    hint: FileHint | None,
+    layout: FileLayout,
+    utc_day: date | None,
+) -> SeriesResult:
+    """One addressing attempt for a known ``layout``; raises ``_NotProven`` to
+    climb. ``hint`` (when given) supplies the header and byte positions to skip
+    the probes; the rows found always verify it."""
+    windowed = window_start is not None and window_end is not None
+    if layout in (FileLayout.POINT_MAJOR_TYPE, FileLayout.POINT_MAJOR_ID):
+        header = _hint_header_bytes(hint)
+        block_start = hint.block_start if hint is not None else None
+        text, start = await _fetch_point_major(
+            reader, layout, point, block_start, header
+        )
+        stamps = _point_stamps(text)
+        # The block is read until the key changes, so it is complete by
+        # construction; an empty or unordered one is "not proven". When the
+        # layout came from a hint (never confirmed by classification), the block
+        # must also cover the demanded window: a hint that names the wrong layout
+        # yields at most a stray row on a date-major file, which fails this and
+        # falls back to a fresh classification (ADR-0008).
+        ordered = bool(stamps) and stamps == sorted(set(stamps))
+        proven = ordered and (
+            not windowed or _window_complete(text, window_start, window_end)
+        )
+        if proven:
+            header_line = text.split("\n", 1)[0] + "\n"
+            return SeriesResult(
+                text=text,
+                layout=layout,
+                level=0 if block_start is not None and start == block_start else 1,
+                requests=reader.requests,
+                bytes=reader.bytes,
+                whole_run=True,
+                hint=FileHint(
+                    layout=layout,
+                    utc_day=utc_day,
+                    header=header_line,
+                    block_start=start,
+                ),
+            )
+        raise _NotProven("empty or unordered point block")
+    if layout is FileLayout.DATE_MAJOR and windowed:
+        assert window_start is not None and window_end is not None
+        demanded = int((window_end - window_start).total_seconds() // 3600) + 1
+        if reader.cap is not None and (
+            demanded + _ADDRESSING_OVERHEAD_REQUESTS > reader.cap
+        ):
+            raise _RequestCapExceeded("window too long for row addressing")
+        rows = await _fetch_rows_date_major(
+            reader, point, window_start, window_end, hint
+        )
+        return SeriesResult(
+            text=rows.text,
+            layout=layout,
+            level=rows.level,
+            requests=reader.requests,
+            bytes=reader.bytes,
+            whole_run=False,
+            hint=FileHint(
+                layout=layout,
+                utc_day=utc_day,
+                header=rows.header,
+                geometry=rows.geometry,
+                first_stamp=rows.first_stamp,
+                last_stamp=rows.last_stamp,
+            ),
+        )
+    raise _NotProven("no addressing strategy for this layout and demand")
+
+
+def _hint_header_bytes(hint: FileHint | None) -> bytes | None:
+    """The header line of a same-day hint, or ``None`` to read it afresh."""
+    if hint is None or not hint.header:
+        return None
+    return hint.header.encode(FORECAST_ENCODING)
+
+
 async def _fetch_series(
     reader: _CountingReader,
     point: ForecastPoint,
     *,
     window_start: datetime | None,
     window_end: datetime | None,
-    block_start: int | None,
-    geometry: RowGeometry | None,
+    hint: FileHint | None,
+    utc_day: date | None,
 ) -> SeriesResult:
     """Climb the ladder over ``reader`` (the network-free core of fetch_series)."""
     loop = asyncio.get_running_loop()
     layout = FileLayout.FALLBACK
     windowed = window_start is not None and window_end is not None
+    fresh = hint if (hint is not None and _hint_is_current(hint, utc_day)) else None
     try:
-        layout = await classify_layout(reader)
-        if layout in (FileLayout.POINT_MAJOR_TYPE, FileLayout.POINT_MAJOR_ID):
-            text, start = await _fetch_point_major(reader, layout, point, block_start)
-            stamps = _point_stamps(text)
-            # The block is read until the key changes, so it is complete by
-            # construction; an empty or unordered one is "not proven".
-            if stamps and stamps == sorted(set(stamps)):
-                return SeriesResult(
-                    text=text,
-                    layout=layout,
-                    level=0 if block_start is not None and start == block_start else 1,
-                    requests=reader.requests,
-                    bytes=reader.bytes,
-                    whole_run=True,
-                    block_start=start,
-                )
-            raise _NotProven("empty or unordered point block")
-        if layout is FileLayout.DATE_MAJOR and windowed:
-            assert window_start is not None and window_end is not None
-            demanded = int((window_end - window_start).total_seconds() // 3600) + 1
-            if reader.cap is not None and (
-                demanded + _ADDRESSING_OVERHEAD_REQUESTS > reader.cap
-            ):
-                raise _RequestCapExceeded("window too long for row addressing")
+        if fresh is not None:
+            # A same-day hint skips classification and the probes; the rows it
+            # yields verify it. A cap overflow escalates (the layout is known);
+            # any other failure retries once with a fresh classification.
+            layout = fresh.layout
             try:
-                text, geometry, level = await _fetch_rows_date_major(
-                    reader, point, window_start, window_end, geometry
+                return await _address(
+                    reader, point, window_start, window_end, fresh, layout, utc_day
                 )
             except _RequestCapExceeded:
                 raise
-            except _NotProven:
-                if geometry is None:
-                    raise
-                # A stale hint must cost a fresh look, not a big download.
-                text, geometry, level = await _fetch_rows_date_major(
-                    reader, point, window_start, window_end, None
-                )
-            return SeriesResult(
-                text=text,
-                layout=layout,
-                level=level,
-                requests=reader.requests,
-                bytes=reader.bytes,
-                whole_run=False,
-                geometry=geometry,
-            )
-        raise _NotProven("no addressing strategy for this layout and demand")
+            except _NotProven as reason:
+                _LOGGER.debug("hint did not verify; fresh classification: %s", reason)
+        layout = await classify_layout(reader)
+        return await _address(
+            reader, point, window_start, window_end, None, layout, utc_day
+        )
     except _NotProven as reason:
         _LOGGER.debug("series fetch escalates past addressing: %s", reason)
 
@@ -893,7 +1062,6 @@ async def _fetch_series(
                 requests=reader.requests,
                 bytes=reader.bytes,
                 whole_run=False,
-                geometry=geometry,
             )
 
     full = (await reader.read_all()).decode(FORECAST_ENCODING)
@@ -915,17 +1083,20 @@ async def fetch_series(
     *,
     window_start: datetime | None = None,
     window_end: datetime | None = None,
-    block_start: int | None = None,
-    geometry: RowGeometry | None = None,
+    hint: FileHint | None = None,
+    utc_day: date | None = None,
     request_cap: int | None = SERIES_REQUEST_CAP,
 ) -> SeriesResult:
     """Fetch ``point``'s rows of one file, as cheaply as can be proven complete.
 
     ``window_start``/``window_end`` (aware UTC) name the hours the caller needs;
-    ``None`` means the whole run. ``block_start`` and ``geometry`` are the hints
-    a previous :class:`SeriesResult` returned; they only ever save requests, a
-    wrong hint is detected and costs a wider read. A level that would need more
-    than ``request_cap`` requests is skipped for the next one (ADR-0008: 96).
+    ``None`` means the whole run. ``hint`` is the :class:`FileHint` a previous
+    :class:`SeriesResult` returned for the same file; ``utc_day`` is the run's
+    UTC day, used to decide whether the hint's offsets are still stable. A hint
+    only ever saves requests — a stale or wrong one is detected by the rows it
+    fails to yield and costs a fresh look, never a prefix or the whole file
+    (unless upstream really lacks the rows). A level that would need more than
+    ``request_cap`` requests is skipped for the next one (ADR-0008: 96).
     """
     reader = _CountingReader(AiohttpRangeReader(session, url), request_cap)
     return await _fetch_series(
@@ -933,8 +1104,8 @@ async def fetch_series(
         point,
         window_start=window_start,
         window_end=window_end,
-        block_start=block_start,
-        geometry=geometry,
+        hint=hint,
+        utc_day=utc_day,
     )
 
 
