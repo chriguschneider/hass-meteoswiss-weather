@@ -470,56 +470,6 @@ async def _fetch_date_major(
 
 
 # ---------------------------------------------------------------------------
-# Public entry points
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class HourlyFileResult:
-    """One file's fetched CSV text, the layout used, and the offset to cache."""
-
-    text: str
-    layout: FileLayout
-    block_start: int | None
-
-
-async def fetch_hourly_file(
-    session: aiohttp.ClientSession,
-    url: str,
-    point: ForecastPoint,
-    *,
-    horizon_end: datetime | None,
-    cached_start: int | None = None,
-) -> HourlyFileResult:
-    """Fetch one hourly parameter file with the cheapest strategy for its layout."""
-    reader = AiohttpRangeReader(session, url)
-    layout = await classify_layout(reader)
-
-    if layout is FileLayout.DATE_MAJOR:
-        return HourlyFileResult(
-            text=await _fetch_date_major(reader, horizon_end),
-            layout=layout,
-            block_start=None,
-        )
-    if layout in (FileLayout.POINT_MAJOR_TYPE, FileLayout.POINT_MAJOR_ID):
-        text, block_start = await _fetch_point_major(
-            reader, layout, point, cached_start
-        )
-        return HourlyFileResult(text=text, layout=layout, block_start=block_start)
-
-    # FALLBACK: an unrecognised order — download the whole file and warn, so a
-    # layout change upstream is visible rather than silently over-trimming.
-    _LOGGER.warning(
-        "hourly file %s has an unrecognised row order; downloading it in full", url
-    )
-    return HourlyFileResult(
-        text=(await reader.read_all()).decode(FORECAST_ENCODING),
-        layout=FileLayout.FALLBACK,
-        block_start=None,
-    )
-
-
-# ---------------------------------------------------------------------------
 # The escalation ladder (ADR-0008 section 4)
 # ---------------------------------------------------------------------------
 #

@@ -2,9 +2,8 @@
 
 Pure and HA-free (ADR-0001): the strategies run against an in-memory
 :class:`_MemReader` with real byte-range semantics, so binary search, layout
-detection and the horizon prefix are exercised without any network. A couple of
-end-to-end tests drive :func:`fetch_hourly_file` with the reader monkeypatched
-in, covering the fallback and the aiohttp seam.
+detection and the horizon prefix are exercised without any network. The
+escalation ladder (:func:`fetch_series`) is driven through the same reader.
 """
 
 from __future__ import annotations
@@ -267,39 +266,6 @@ def test_horizon_late_local_evening_uses_local_today() -> None:
     # 22:30 UTC on 1 Jul is already 00:30 local on 2 Jul: "today" is 2 Jul.
     now = datetime(2026, 7, 1, 22, 30, tzinfo=UTC)
     assert horizon_end_utc(0, now) == datetime(2026, 7, 2, 22, 0, tzinfo=UTC)
-
-
-# --- end-to-end via fetch_hourly_file ---------------------------------------
-
-
-def _patch_reader(monkeypatch, data: bytes) -> None:
-    """Make AiohttpRangeReader(...) ignore its args and serve ``data``."""
-
-    def _factory(_session, _url):
-        return _MemReader(data)
-
-    monkeypatch.setattr(H, "AiohttpRangeReader", _factory)
-
-
-async def test_fetch_hourly_file_point_major(monkeypatch) -> None:
-    _patch_reader(monkeypatch, _point_major_type())
-    result = await H.fetch_hourly_file(
-        None, "http://x", _TARGET, horizon_end=None
-    )
-    assert result.layout is FileLayout.POINT_MAJOR_TYPE
-    assert result.block_start is not None
-    assert len(_block_rows(result.text)) == _HOURS
-
-
-async def test_fetch_hourly_file_fallback_downloads_full(monkeypatch, caplog) -> None:
-    _patch_reader(monkeypatch, _shuffled())
-    result = await H.fetch_hourly_file(
-        None, "http://x", _TARGET, horizon_end=None
-    )
-    assert result.layout is FileLayout.FALLBACK
-    # The whole file came back; parsing still finds the point's rows.
-    hourly = parse_hourly({"tre200h0": result.text}, _TARGET, None)
-    assert len(hourly) == _HOURS
 
 
 # --- horizon_start lower bound (issue #92) ----------------------------------

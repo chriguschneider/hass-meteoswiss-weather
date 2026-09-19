@@ -294,8 +294,10 @@ async def test_hourly_provider_tiers_fetch_and_cache(
 
     Drives the provider directly (standing in for the ``weather.get_forecasts``
     call that reaches it in production) and asserts the date-major temperature
-    file is refetched only when a tier is genuinely due (issue #68, ADR-0002
-    revision 2). The point-major group refreshes with every new run.
+    file is downloaded once per run: a due tier still asks the backend, but the
+    shared per-run cache serves an unchanged run without a second download (issue
+    #68, ADR-0002 revision 2; ADR-0008, issue #123). The point-major group
+    refreshes with every new run.
     """
     # Freeze at 00:00 UTC so all 24 fixture hours (starting 00:00) are current
     # and the horizon_start trim does not drop any of them (issue #92).
@@ -329,13 +331,17 @@ async def test_hourly_provider_tiers_fetch_and_cache(
         await provider.async_get_hourly(non_landing)
         assert _tre_calls(mock_ogd) == 1
 
-        # Past the far fallback (6 h): the far tier goes stale and refetches.
-        # By this point some past hours have been trimmed by the lower bound, so
-        # the count is ≤ 24; assert data still exists rather than an exact count.
+        # Past the far fallback (6 h): the far tier goes stale and asks the
+        # backend again. The discovered run has not moved (the STAC mock returns
+        # one run), and a run's file is immutable, so the shared per-run cache
+        # serves the temperature file without a second ~10 MB download (ADR-0008,
+        # issue #123). A genuinely new run would reset the cache and refetch; the
+        # tier schedule itself is untouched — it simply hits the cache here. Some
+        # past hours have been trimmed by the lower bound, so assert data exists.
         frozen.move_to(start + HOURLY_FAR_MAX_AGE + timedelta(seconds=1))
         hourly = await provider.async_get_hourly(non_landing)
         assert hourly is not None and len(hourly) > 0
-        assert _tre_calls(mock_ogd) == 2
+        assert _tre_calls(mock_ogd) == 1
 
 
 async def test_run_change_fetches_hourly_only_with_subscriber(

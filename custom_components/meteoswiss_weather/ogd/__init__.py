@@ -27,7 +27,6 @@ from .hourly import (
     RowGeometry,
     SeriesResult,
     classify_layout,
-    fetch_hourly_file,
     fetch_series,
     horizon_end_utc,
 )
@@ -92,7 +91,6 @@ __all__ = [
     "classify_layout",
     "fetch_current",
     "fetch_datainventory",
-    "fetch_hourly_file",
     "FileHint",
     "RowGeometry",
     "SeriesResult",
