@@ -10,11 +10,11 @@ from datetime import timedelta
 
 from custom_components.meteoswiss_weather.const import (
     FORECAST_CHECK_INTERVAL,
+    HOURLY_CANARY_HOURS,
     HOURLY_FAR_MAX_AGE,
-    HOURLY_FAR_RUN_HOURS,
     HOURLY_NEAR_HORIZON_DAYS,
     HOURLY_NEAR_MAX_AGE,
-    HOURLY_NEAR_RUN_HOURS,
+    HOURLY_POINT_MAJOR_MAX_AGE,
     STATION_UPDATE_INTERVAL,
 )
 from custom_components.meteoswiss_weather.ogd.const import (
@@ -33,32 +33,39 @@ from custom_components.meteoswiss_weather.ogd.const import (
 )
 
 
-def test_hourly_tier_landing_hours_match_measured_rhythm() -> None:
-    """ADR-0002 rev. 2: the near/far tiers land on the measured run hours.
+def test_no_landing_hour_sets_trigger_a_refresh() -> None:
+    """ADR-0008 owner decision 2: a canary decides, not the landing-hour sets.
 
-    Measured 2026-08-27 (docs/ogd.md, "Change rhythm across runs"): the near
-    term (today + tomorrow) moves at the ICON-CH1 runs every 3 h, days 2+ at the
-    ICON-CH2 runs every 6 h. The far hours must be a subset of the near hours so
-    a far fetch always doubles as a near refresh.
+    The refresh trigger used to be a timetable measured once on 2026-08-27
+    (``HOURLY_NEAR_RUN_HOURS``/``HOURLY_FAR_RUN_HOURS``). Issue #125 replaced it
+    with a cheap canary read of the point's coming hours (docs/ogd.md §E4, "Row
+    order"), so the landing-hour sets no longer exist — one August measurement is
+    not a contract. Only the ``max_age`` fallbacks remain.
     """
-    assert HOURLY_NEAR_RUN_HOURS == frozenset({2, 5, 8, 11, 14, 17, 20, 23})
-    assert HOURLY_FAR_RUN_HOURS == frozenset({5, 11, 17, 23})
-    assert HOURLY_FAR_RUN_HOURS <= HOURLY_NEAR_RUN_HOURS
+    from custom_components.meteoswiss_weather import const
+
+    assert not hasattr(const, "HOURLY_NEAR_RUN_HOURS")
+    assert not hasattr(const, "HOURLY_FAR_RUN_HOURS")
 
 
 def test_hourly_tier_staleness_fallbacks() -> None:
     """The near tier's fallback is tighter than the far tier's, both bounded.
 
-    The near term matters most, so it is never allowed to go stale longer than
-    3 h; the far range refreshes at most every 6 h. Neither may drop below the
-    old flat 3 h floor the tiers replaced.
+    With the canary deciding the refresh, these are only the fallbacks that force
+    a refresh anyway so a canary blind spot cannot let a series go stale unbounded
+    (issue #125). The near term matters most, so it is never allowed to go stale
+    longer than 3 h; the far range refreshes at most every 6 h; the point-major
+    group (cheap ~5 KB blocks) at most every 3 h.
     """
     assert HOURLY_NEAR_MAX_AGE == timedelta(hours=3)
     assert HOURLY_FAR_MAX_AGE == timedelta(hours=6)
+    assert HOURLY_POINT_MAJOR_MAX_AGE == timedelta(hours=3)
     assert HOURLY_NEAR_MAX_AGE >= timedelta(hours=3)
     assert HOURLY_FAR_MAX_AGE >= HOURLY_NEAR_MAX_AGE
     # The near tier covers today + tomorrow (one full local day beyond today).
     assert HOURLY_NEAR_HORIZON_DAYS == 1
+    # The canary reads a small, positive number of coming hours.
+    assert HOURLY_CANARY_HOURS >= 1
 
 
 def test_hourly_param_groups_partition_the_required_set() -> None:

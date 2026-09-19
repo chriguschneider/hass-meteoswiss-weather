@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -56,12 +56,12 @@ from .const import (
     DEFAULT_HOURLY_HORIZON_DAYS,
     DOMAIN,
     FORECAST_CHECK_INTERVAL,
+    HOURLY_CANARY_HOURS,
     HOURLY_FAR_MAX_AGE,
-    HOURLY_FAR_RUN_HOURS,
     HOURLY_HORIZON_FULL_RUN,
     HOURLY_NEAR_HORIZON_DAYS,
     HOURLY_NEAR_MAX_AGE,
-    HOURLY_NEAR_RUN_HOURS,
+    HOURLY_POINT_MAJOR_MAX_AGE,
     POLLEN_UPDATE_INTERVAL,
     STATION_UPDATE_INTERVAL,
 )
@@ -85,6 +85,7 @@ from .ogd import (
 from .ogd.const import (
     COLLECTION_FORECAST,
     DAILY_REQUIRED_PARAMS,
+    HOURLY_WIND_SPEED,
     HOURLY_ZERO_DEGREE,
 )
 from .ogd.forecast import HOURLY_FIELD_BY_PARAM
@@ -114,28 +115,11 @@ class ForecastData:
     daily: list[DailyForecast]
 
 
-def _tier_due(
-    *,
-    run: datetime,
-    landing_hours: frozenset[int],
-    max_age: timedelta,
-    last_run: datetime | None,
-    last_fetch: datetime | None,
-    now: datetime,
-) -> bool:
-    """Whether a tier is due to refresh (ADR-0002 revision 2, issue #68).
-
-    A pure decision so it can be exhaustively unit-tested without a fetch. A
-    tier is due when it has never been fetched, when its cached data is older
-    than the tier's staleness fallback (``max_age``), or when a **new** run has
-    landed and that run's UTC hour is one of the tier's model-cycle hours. A
-    non-landing run, or an unchanged run within the fallback, is not due.
-    """
-    if last_fetch is None or last_run is None:
-        return True
-    if now - last_fetch >= max_age:
-        return True
-    return run != last_run and run.hour in landing_hours
+# The point-major group's canary: a continuous field that moves with any model
+# update (unlike precipitation, often 0 for hours), fetched with the daily blocks
+# so on a coordinator tick its whole-run text is usually already in the shared
+# cache — the canary then costs nothing (ADR-0008 section 3, issue #125).
+_POINT_MAJOR_CANARY_PARAM = HOURLY_WIND_SPEED
 
 
 class HourlyRefresher:
@@ -148,13 +132,22 @@ class HourlyRefresher:
     of ADR-0002 revision 2 is gone. Everything it fetches is filed in the store,
     per parameter, so every forecast consumer reads the store and nothing else.
 
-    The near/far/point-major schedule of ADR-0002 revision 2 is kept for now
-    (the canary is a separate issue, ADR-0008 section 3): the date-major
-    temperature file — plus the gated cloud and percentile files (issue #69) —
-    refreshes on the near/far horizon tiers, and the point-major group (precip,
-    symbol, wind, gust, direction, the B7/B8/B10 additions) refreshes with every
-    new run. Which files those groups hold comes from the demand registry
-    (:func:`~.demand.hourly_demand`), so a disabled feature demands nothing.
+    What triggers a refresh is a **canary** read, not a timetable (ADR-0008
+    section 3, owner decision 2, issue #125). On every new run, before refreshing
+    a group, it reads the point's next few hours of one representative file
+    (:data:`HOURLY_CANARY_HOURS`, a few KB with the remembered byte positions) and
+    compares them with the store: equal values keep the stored series and re-stamp
+    it to the run (:meth:`~.store.ForecastStore.confirm`), different values — or a
+    canary that cannot be read — refresh the group. The date-major group (the
+    temperature file plus the gated cloud and percentile files, issue #69) is
+    represented by the temperature file and, when its canary changed, refreshed
+    over the far horizon; the point-major group (precip, symbol, wind, gust,
+    direction, the B7/B8/B10 additions) is represented by the wind file. The
+    landing-hour timetable of ADR-0002 revision 2 is gone; the near/far/point-major
+    ``max_age`` fallbacks remain and still force a refresh so a canary blind spot
+    can never let a series go stale unbounded. Which files each group holds comes
+    from the demand registry (:func:`~.demand.hourly_demand`), so a disabled
+    feature demands nothing.
 
     A refresh that fails for one parameter keeps its last good series (the store
     does this) and must never fail the daily forecast: :meth:`async_refresh`
@@ -203,10 +196,13 @@ class HourlyRefresher:
             )
             else HOURLY_NEAR_HORIZON_DAYS
         )
-        # Per-group bookkeeping: the run each tier last fetched at and when.
-        self._near_run: datetime | None = None
+        # Per-group bookkeeping. The ``_fetch`` stamps are when each tier last
+        # actually downloaded (the max-age clocks); the ``_run`` stamps are the
+        # last run a group was evaluated for — fetched or canary-confirmed — so a
+        # run is canaried at most once. The date-major near and far tiers share
+        # one evaluated-run stamp because one canary read decides the group.
+        self._date_major_run: datetime | None = None
         self._near_fetch: datetime | None = None
-        self._far_run: datetime | None = None
         self._far_fetch: datetime | None = None
         self._point_major_run: datetime | None = None
         self._point_major_fetch: datetime | None = None
@@ -264,72 +260,125 @@ class HourlyRefresher:
         async_delete_issue(self._hass, DOMAIN, _ISSUE_FORECAST_PARSE)
         return changed
 
+    async def _canary_changed(
+        self, param: str, run: Run, now: datetime
+    ) -> bool:
+        """Whether ``param``'s next few hours differ from the store (ADR-0008 §3).
+
+        Reads one representative file's coming hours cheaply and compares them
+        with the stored series. A read that yields nothing (the file is
+        unreachable, absent for the point, or no row was proven) counts as
+        changed, so the group refreshes rather than trusting a series it could
+        not verify.
+        """
+        canary = await self._backend.fetch_hourly_canary(
+            self._point, param, hours=HOURLY_CANARY_HOURS, run=run
+        )
+        if not canary:
+            return True
+        return any(
+            self._store.value_at(param, when) != value
+            for when, value in canary.items()
+        )
+
     async def _refresh_date_major(
         self, run: Run, stamp: datetime, now: datetime
     ) -> bool:
-        """Refresh the date-major group via the far then near tiers.
+        """Refresh the date-major group when the canary or a fallback says so.
 
         The date-major group is the temperature file plus, when enabled, the B9
-        cloud and B11 percentile files (issue #69) — all fetched together as one
-        horizon prefix on this schedule. The far tier spans the near window, so a
-        due far fetch supersedes and also satisfies the near tier; only when far
-        is not due but near is does the cheaper near prefix run.
+        cloud and B11 percentile files (issue #69), fetched together as one
+        horizon prefix. The temperature file is the group's canary. A group whose
+        canary changed is refreshed over the **far** horizon (with row addressing
+        the whole horizon is ~100–150 KB and this guarantees the far days are
+        current on every real change); the cheaper near-only prefix runs only when
+        the near fallback fires while far is still fresh. An unchanged canary keeps
+        the stored series and re-stamps it to the run.
         """
         params = self._demand.date_major
-        if _tier_due(
-            run=stamp,
-            landing_hours=HOURLY_FAR_RUN_HOURS,
-            max_age=HOURLY_FAR_MAX_AGE,
-            last_run=self._far_run,
-            last_fetch=self._far_fetch,
-            now=now,
-        ):
+        run_changed = stamp != self._date_major_run
+        # Read the canary at most once, and only when a fallback has not already
+        # made a tier due (a never-fetched or stale tier fetches without a probe).
+        verdict: list[bool] = []
+
+        async def canary_changed() -> bool:
+            if not verdict:
+                verdict.append(await self._canary_changed(params[0], run, now))
+            return verdict[0]
+
+        far_due = (
+            self._far_fetch is None
+            or now - self._far_fetch >= HOURLY_FAR_MAX_AGE
+            or (run_changed and await canary_changed())
+        )
+        if far_due:
             hours = await self._backend.fetch_hourly(
                 self._point,
                 horizon_days=self._horizon_days,
                 params=params,
                 run=run,
             )
-            self._far_run = self._near_run = stamp
             self._far_fetch = self._near_fetch = now
+            self._date_major_run = stamp
             return self._publish(hours, params, stamp, now)
 
-        if _tier_due(
-            run=stamp,
-            landing_hours=HOURLY_NEAR_RUN_HOURS,
-            max_age=HOURLY_NEAR_MAX_AGE,
-            last_run=self._near_run,
-            last_fetch=self._near_fetch,
-            now=now,
-        ):
+        near_due = (
+            self._near_fetch is None
+            or now - self._near_fetch >= HOURLY_NEAR_MAX_AGE
+            or (run_changed and await canary_changed())
+        )
+        if near_due:
             hours = await self._backend.fetch_hourly(
                 self._point,
                 horizon_days=self._near_horizon_days,
                 params=params,
                 run=run,
             )
-            self._near_run = stamp
             self._near_fetch = now
+            self._date_major_run = stamp
             return self._publish(hours, params, stamp, now)
 
+        if run_changed:
+            # A new run whose canary proved the group unchanged: keep the stored
+            # series but re-stamp it to this run so it reads as current, not stale.
+            for param in params:
+                self._store.confirm(param, run=stamp, fetched_at=now)
+            self._date_major_run = stamp
         return False
 
     async def _refresh_point_major(
         self, run: Run, stamp: datetime, now: datetime
     ) -> bool:
-        """Refresh the point-major group whenever a new run has landed."""
-        if stamp == self._point_major_run:
-            return False
+        """Refresh the point-major group when the canary or the fallback says so.
+
+        The wind file is the group's canary. A new run whose canary changed (or
+        the max-age fallback firing) refreshes the whole group; a new run the
+        canary proves unchanged keeps the stored series and re-stamps it (#125).
+        """
         params = self._demand.point_major
-        hours = await self._backend.fetch_hourly(
-            self._point,
-            horizon_days=self._horizon_days,
-            params=params,
-            run=run,
+        run_changed = stamp != self._point_major_run
+        due = (
+            self._point_major_fetch is None
+            or now - self._point_major_fetch >= HOURLY_POINT_MAJOR_MAX_AGE
+            or (run_changed and await self._canary_changed(
+                _POINT_MAJOR_CANARY_PARAM, run, now))
         )
-        self._point_major_run = stamp
-        self._point_major_fetch = now
-        return self._publish(hours, params, stamp, now)
+        if due:
+            hours = await self._backend.fetch_hourly(
+                self._point,
+                horizon_days=self._horizon_days,
+                params=params,
+                run=run,
+            )
+            self._point_major_run = stamp
+            self._point_major_fetch = now
+            return self._publish(hours, params, stamp, now)
+
+        if run_changed:
+            for param in params:
+                self._store.confirm(param, run=stamp, fetched_at=now)
+            self._point_major_run = stamp
+        return False
 
     def _publish(
         self,

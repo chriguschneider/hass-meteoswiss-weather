@@ -88,19 +88,33 @@ FORECAST_CHECK_INTERVAL = timedelta(hours=1)
 # of 2026-08-27 for two points (docs/ogd.md, "Change rhythm across runs") showed
 # the bulk hourly files change on the model run rhythm, not hourly: the near term
 # (today + tomorrow) moves at the ICON-CH1 landing hours, days 2+ move at the
-# ICON-CH2 landing hours, and six runs a day change nothing. The lazy hourly
-# provider fetches each tier only at its landing hours, or when the tier's cached
-# data is older than its staleness fallback. tests/test_const.py asserts these.
+# ICON-CH2 landing hours, and six runs a day change nothing.
+#
+# What triggers a refresh is now a **canary read**, not that timetable (ADR-0008
+# section 3, owner decision 2, issue #125): every new run reads the point's next
+# few hours of one representative file per group (a few KB, with the remembered
+# byte positions) and compares them with the store. Equal values keep the stored
+# series and re-stamp it to the run; different values, or a canary that cannot be
+# read, refresh the group. The landing-hour sets that used to decide are gone —
+# one August measurement is not a contract — leaving only the max-age fallbacks
+# below, which still force a refresh so a canary blind spot can never let a
+# series go stale unbounded. tests/test_const.py asserts these.
 #
 # Near tier: the date-major temperature prefix up to the end of tomorrow (local
-# calendar day = horizon_days 1), refreshed at the ICON-CH1 runs or after 3 h.
+# calendar day = horizon_days 1); its staleness fallback is 3 h.
 HOURLY_NEAR_HORIZON_DAYS = 1
-HOURLY_NEAR_RUN_HOURS: frozenset[int] = frozenset({2, 5, 8, 11, 14, 17, 20, 23})
 HOURLY_NEAR_MAX_AGE = timedelta(hours=3)
-# Far tier: the rest of the configured horizon, refreshed at the ICON-CH2 runs
-# (which the next CH1 run refines) or after 6 h.
-HOURLY_FAR_RUN_HOURS: frozenset[int] = frozenset({5, 11, 17, 23})
+# Far tier: the rest of the configured horizon; its staleness fallback is 6 h.
 HOURLY_FAR_MAX_AGE = timedelta(hours=6)
+# Point-major group (symbol, precipitation, wind, gust, direction, probability,
+# zero-degree, radiation): one ~5 KB block per file. Its staleness fallback,
+# after which a run refreshes even when the canary reports no change.
+HOURLY_POINT_MAJOR_MAX_AGE = timedelta(hours=3)
+# How many of the point's coming hours the canary reads from the representative
+# file to decide whether a new run changed a group (ADR-0008 section 3). Small
+# on purpose: a date-major file is that many row reads, a point-major file is its
+# whole block regardless, so the check is a few KB either way.
+HOURLY_CANARY_HOURS = 6
 # Pollen data is published hourly; one request per hour per station is enough
 # (ADR-0005). Conditional requests (If-None-Match) keep most polls to a 304.
 POLLEN_UPDATE_INTERVAL = timedelta(hours=1)

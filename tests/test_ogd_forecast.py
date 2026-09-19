@@ -23,6 +23,7 @@ from custom_components.meteoswiss_weather.ogd import (
     CachedResponse,
     ForecastPoint,
     OgdParseError,
+    Run,
     aggregate_daily_precip_probability,
     aggregate_daily_wind,
     fetch_points,
@@ -36,6 +37,7 @@ from custom_components.meteoswiss_weather.ogd import (
 from custom_components.meteoswiss_weather.ogd.const import (
     COLLECTION_FORECAST,
     DAILY_BLOCK_PARAMS,
+    DAILY_MAX_AGE,
     DAILY_REQUIRED_PARAMS,
     DAILY_WIND_PARAMS,
     HOURLY_CLOUD_HIGH,
@@ -1393,3 +1395,78 @@ async def test_hourly_not_shortened_by_daily_zero_degree_window(session) -> None
     zero_hours = sorted(h.time for h in hourly if h.zero_degree_level is not None)
     assert datetime(2026, 8, 29, 0, 0, tzinfo=UTC) in zero_hours  # +48 h
     assert max(zero_hours) >= datetime(2026, 8, 29, 12, 0, tzinfo=UTC)
+
+
+# --- daily canary: an unchanged run does not re-fetch the daily files (#125) ---
+
+
+def _daily_canary_assets() -> dict[str, str]:
+    """Asset URLs for every file a daily refresh touches, all one run's URLs."""
+    return {p: _asset_url(p) for p in (*DAILY_REQUIRED_PARAMS, *DAILY_BLOCK_PARAMS)}
+
+
+def _register_daily_files(mock) -> None:
+    """Register the daily fixtures and synthetic point-major blocks (repeatable)."""
+    for param in DAILY_REQUIRED_PARAMS:
+        mock.get(
+            _asset_url(param),
+            status=200,
+            body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"),
+            repeat=True,
+        )
+    for param in DAILY_BLOCK_PARAMS:
+        mock.get(
+            _asset_url(param),
+            status=200,
+            body=_point_major_wind_text(param).encode("iso-8859-1"),
+            repeat=True,
+        )
+
+
+@freeze_time(datetime(2026, 8, 27, 1, 30, tzinfo=UTC))
+async def test_daily_canary_unchanged_keeps_the_last_forecast(session) -> None:
+    """A new run whose temperature maxima match keeps the last bundle (#125).
+
+    The representative ``tre200px`` file is fetched and compared per day; when it
+    is unchanged the other daily files and the point-major blocks are not
+    re-fetched and the previously built bundle is returned verbatim.
+    """
+    assets = _daily_canary_assets()
+    run1 = Run(timestamp=datetime(2026, 8, 27, 2, 0, tzinfo=UTC), assets=assets)
+    run2 = Run(timestamp=datetime(2026, 8, 27, 5, 0, tzinfo=UTC), assets=assets)
+    with aioresponses() as mock:
+        _register_daily_files(mock)
+        backend = BulkCsvBackend(session)
+        point = _koeniz_point()
+        bundle1 = await backend.fetch_daily(point, run=run1)
+        bundle2 = await backend.fetch_daily(point, run=run2)
+
+    # The canary saw no change: the second run kept the first bundle verbatim.
+    assert bundle2 is bundle1
+    assert bundle2.daily[0].temp_max == 29.3
+
+
+async def test_daily_canary_refetches_past_the_max_age(session) -> None:
+    """Past the daily fallback an unchanged run still refetches (#125).
+
+    The max-age fallback guards against a canary blind spot: even when the
+    temperature maxima are unchanged, a run more than ``DAILY_MAX_AGE`` after the
+    last build does a full fetch and produces a fresh bundle.
+    """
+    assets = _daily_canary_assets()
+    run1 = Run(timestamp=datetime(2026, 8, 27, 2, 0, tzinfo=UTC), assets=assets)
+    run2 = Run(timestamp=datetime(2026, 8, 27, 5, 0, tzinfo=UTC), assets=assets)
+    t0 = datetime(2026, 8, 27, 1, 30, tzinfo=UTC)
+    with aioresponses() as mock:
+        _register_daily_files(mock)
+        backend = BulkCsvBackend(session)
+        point = _koeniz_point()
+        with freeze_time(t0):
+            bundle1 = await backend.fetch_daily(point, run=run1)
+        with freeze_time(t0 + DAILY_MAX_AGE + timedelta(minutes=1)):
+            bundle2 = await backend.fetch_daily(point, run=run2)
+
+    # The fallback fired: a fresh bundle was built, with the same (unchanged)
+    # content.
+    assert bundle2 is not bundle1
+    assert bundle2.daily[0].temp_max == bundle1.daily[0].temp_max
