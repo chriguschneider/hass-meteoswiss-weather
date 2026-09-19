@@ -11,6 +11,18 @@ using the matching section below as release notes.
 
 ### Changed
 
+- **Daily forecast files fetched by row addressing** (#122,
+  [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). The four daily files
+  (`tre200px`, `tre200pn`, `rka150p0`, `jp2000d0`, ~1.3 MB each) are now routed
+  through the fetch ladder instead of downloaded whole. Each is date-major with
+  nine day blocks (`Date` stamped `YYYYMMDD0000`), so the ladder addresses the
+  blocks at a one-day step and reads a few KB per file, climbing to the full
+  file only when it cannot prove all nine days. A changed daily refresh drops
+  from ~5.3 MB — the largest regular cost of a default installation — to under
+  ~100 KB of row reads. The layout classifier now also recognises a
+  few-block date-major file (its probes see repeated, not strictly increasing,
+  dates), after ruling out the point-major orders so no point-major file is
+  ever misread.
 - **One hint object per forecast file, remembered per UTC day** (#121,
   [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). The fetch ladder no
   longer re-classifies a file's layout and re-reads its header, first and last

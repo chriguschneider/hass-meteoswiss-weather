@@ -273,17 +273,28 @@ async def classify_layout(reader: RangeReader) -> FileLayout:
     type_keys = [(r.point_type_id, r.point_id) for r in rows]
     ids = [r.point_id for r in rows]
 
-    # Date-major files have widely spaced probes in different hour blocks, so
-    # the dates strictly increase; requiring strict monotonicity (not merely
-    # non-decreasing) makes a false date-major verdict on a point-major file —
-    # the one dangerous misclassification, since it would drop the point's later
-    # hours — vanishingly unlikely.
+    # A many-block date-major file (the hourly files, ~220 hour blocks) has
+    # every widely spaced probe in a different block, so the dates strictly
+    # increase; requiring strict monotonicity here makes a false date-major
+    # verdict on a point-major file — the one dangerous misclassification, since
+    # it would drop the point's later hours — vanishingly unlikely.
     if _increasing(dates):
         return FileLayout.DATE_MAJOR
     if _nondecreasing(type_keys) and len(set(type_keys)) > 1:
         return FileLayout.POINT_MAJOR_TYPE
     if _nondecreasing(ids) and len(set(ids)) > 1:
         return FileLayout.POINT_MAJOR_ID
+    # A few-block date-major file (the daily p-variants, only nine day blocks)
+    # has more probes than blocks, so its dates are non-decreasing with repeats
+    # rather than strictly increasing (issue #122). This branch is reached only
+    # after the point-major keys are shown *not* to be monotonic, so a genuine
+    # point-major file (whose sort key is monotonic by construction) is caught
+    # above and never lands here — the dangerous misclassification stays ruled
+    # out. A file that reaches here and is actually point-major would still be
+    # caught by the addressing's completeness check and climb, not silently
+    # truncate.
+    if _nondecreasing(dates) and len(set(dates)) > 1:
+        return FileLayout.DATE_MAJOR
     return FileLayout.FALLBACK
 
 
@@ -673,16 +684,30 @@ def _point_stamps(text: str) -> list[str]:
 
 
 def _window_hours(
-    start: datetime, end: datetime, first: datetime, last: datetime
+    start: datetime,
+    end: datetime,
+    first: datetime,
+    last: datetime,
+    step: timedelta = timedelta(hours=1),
 ) -> list[datetime]:
-    """The full hours of ``[start, end)`` that the file ``[first, last]`` covers."""
-    lo = max(start, first).replace(minute=0, second=0, microsecond=0)
-    hi = min(end, last + timedelta(hours=1))
+    """The block stamps of ``[start, end)`` that the file ``[first, last]`` covers.
+
+    ``step`` is the spacing between a date-major file's blocks: one hour for the
+    hourly files, one day for the daily ``p``-variants whose ``Date`` stamps are
+    ``YYYYMMDD0000`` (docs/ogd.md §E4 "Row order"). The stamps are generated from
+    ``first`` by whole steps so they land exactly on the file's block boundaries.
+    """
+    lo = max(start, first)
+    hi = min(end, last + step)
     hours = []
-    when = lo
+    # Walk from the file's first block by whole steps and keep the ones inside
+    # the window, so a day step lands on 00:00 stamps and an hour step on the
+    # hour regardless of where ``start`` falls.
+    when = first
     while when < hi:
-        hours.append(when)
-        when += timedelta(hours=1)
+        if when >= lo:
+            hours.append(when)
+        when += step
     return hours
 
 
@@ -777,19 +802,30 @@ class _DateMajorRows:
 async def _fetch_rows_date_major(
     reader: RangeReader,
     point: ForecastPoint,
-    window_start: datetime,
-    window_end: datetime,
+    window_start: datetime | None,
+    window_end: datetime | None,
     hint: FileHint | None,
+    step: timedelta = timedelta(hours=1),
+    request_cap: int | None = None,
 ) -> _DateMajorRows:
     """Row-address the point's rows for the window.
 
-    Each verified row re-anchors the prediction for the next hour, because hour
+    Each verified row re-anchors the prediction for the next block, because
     blocks differ by a few dozen bytes (variable-width values) and a position
-    extrapolated from the file start drifts by kilobytes over a day. A same-day
+    extrapolated from the file start drifts by kilobytes over the run. A same-day
     ``hint`` supplies the header, the file's first/last stamp and the geometry,
     so classification and the header/first/last probes are skipped; the rows
     found still verify it. Once a row needs a wider search window, the following
-    rows start there too, so a drifting file does not pay a miss every hour.
+    rows start there too, so a drifting file does not pay a miss every block.
+
+    ``step`` is the spacing between blocks: one hour for the hourly files, one
+    day for the daily ``p``-variants (``Date`` stamped ``YYYYMMDD0000``). A
+    ``window_start``/``window_end`` of ``None`` means "the whole run", resolved
+    to the file's own extent so a date-major file with few blocks (the nine day
+    blocks of the daily files) is row-addressed instead of downloaded whole
+    (issue #122). ``request_cap`` bounds that: a whole run whose block count plus
+    the addressing overhead exceeds it raises :class:`_RequestCapExceeded` so the
+    ladder climbs, keeping a ~220-block hourly run off row addressing.
     """
     geometry = hint.geometry if hint is not None else None
     level = 0 if geometry is not None else 1
@@ -817,7 +853,19 @@ async def _fetch_rows_date_major(
     if first_dt is None or last_dt is None:
         raise _NotProven("could not read the file's first/last stamp")
 
-    hours = _window_hours(window_start, window_end, first_dt, last_dt)
+    # A whole-run demand (window None) is served by addressing every block from
+    # the file's first to its last, so a few-block date-major file (the daily
+    # p-variants) never falls to the full download (issue #122).
+    ws = window_start if window_start is not None else first_dt
+    we = window_end if window_end is not None else last_dt + step
+    hours = _window_hours(ws, we, first_dt, last_dt, step)
+    # Decide by the number of blocks, not the window length alone: a run whose
+    # block count would overrun the request cap climbs instead of storming the
+    # origin (ADR-0008 section 4).
+    if request_cap is not None and len(hours) + _ADDRESSING_OVERHEAD_REQUESTS > (
+        request_cap
+    ):
+        raise _RequestCapExceeded("run has too many blocks for row addressing")
     if not hours:
         return _DateMajorRows(
             text=header.decode(FORECAST_ENCODING),
@@ -844,14 +892,14 @@ async def _fetch_rows_date_major(
         and geometry.anchor_offset is not None
         and anchor_dt >= first_dt
     ):
-        anchor_idx = int((anchor_dt - first_dt).total_seconds() // 3600)
+        anchor_idx = int((anchor_dt - first_dt) / step)
         anchor_off = geometry.anchor_offset
 
     lines: list[bytes] = []
     first_found: tuple[str, int] | None = None
     from_window = 0
     for when in hours:
-        idx = int((when - first_dt).total_seconds() // 3600)
+        idx = int((when - first_dt) / step)
         predicted = anchor_off + (idx - anchor_idx) * block
         needle = _needle(point, _stamp(when))
         found = await _find_row(
@@ -900,9 +948,12 @@ async def _fetch_rows_date_major(
 
 
 def _window_complete(
-    text: str, window_start: datetime, window_end: datetime
+    text: str,
+    window_start: datetime,
+    window_end: datetime,
+    step: timedelta = timedelta(hours=1),
 ) -> bool:
-    """Whether a filtered prefix text holds every hour it can be expected to."""
+    """Whether a filtered prefix text holds every block it can be expected to."""
     stamps = _point_stamps(text)
     if not stamps:
         return False
@@ -912,8 +963,8 @@ def _window_complete(
     have = set(stamps)
     return all(
         _stamp(hour) in have
-        for hour in _window_hours(window_start, window_end, first_dt, last_dt)
-    ) and last_dt + timedelta(hours=1) >= window_end
+        for hour in _window_hours(window_start, window_end, first_dt, last_dt, step)
+    ) and last_dt + step >= window_end
 
 
 def _hint_is_current(hint: FileHint, utc_day: date | None) -> bool:
@@ -938,10 +989,12 @@ async def _address(
     hint: FileHint | None,
     layout: FileLayout,
     utc_day: date | None,
+    step: timedelta = timedelta(hours=1),
 ) -> SeriesResult:
     """One addressing attempt for a known ``layout``; raises ``_NotProven`` to
     climb. ``hint`` (when given) supplies the header and byte positions to skip
-    the probes; the rows found always verify it."""
+    the probes; the rows found always verify it. ``step`` is the block spacing
+    (one hour for the hourly files, one day for the daily p-variants)."""
     windowed = window_start is not None and window_end is not None
     if layout in (FileLayout.POINT_MAJOR_TYPE, FileLayout.POINT_MAJOR_ID):
         header = _hint_header_bytes(hint)
@@ -958,7 +1011,7 @@ async def _address(
         # falls back to a fresh classification (ADR-0008).
         ordered = bool(stamps) and stamps == sorted(set(stamps))
         proven = ordered and (
-            not windowed or _window_complete(text, window_start, window_end)
+            not windowed or _window_complete(text, window_start, window_end, step)
         )
         if proven:
             header_line = text.split("\n", 1)[0] + "\n"
@@ -977,15 +1030,26 @@ async def _address(
                 ),
             )
         raise _NotProven("empty or unordered point block")
-    if layout is FileLayout.DATE_MAJOR and windowed:
-        assert window_start is not None and window_end is not None
-        demanded = int((window_end - window_start).total_seconds() // 3600) + 1
-        if reader.cap is not None and (
-            demanded + _ADDRESSING_OVERHEAD_REQUESTS > reader.cap
-        ):
-            raise _RequestCapExceeded("window too long for row addressing")
+    if layout is FileLayout.DATE_MAJOR:
+        if windowed:
+            assert window_start is not None and window_end is not None
+            demanded = int((window_end - window_start) / step) + 1
+            if reader.cap is not None and (
+                demanded + _ADDRESSING_OVERHEAD_REQUESTS > reader.cap
+            ):
+                raise _RequestCapExceeded("window too long for row addressing")
+        # A windowed demand's cap was pre-checked above; a whole-run demand
+        # (window None) cannot be, since the block count is only known once the
+        # file's extent is read, so the cap is enforced inside the addressing
+        # after it reads the first/last stamp (issue #122).
         rows = await _fetch_rows_date_major(
-            reader, point, window_start, window_end, hint
+            reader,
+            point,
+            window_start,
+            window_end,
+            hint,
+            step,
+            request_cap=None if windowed else reader.cap,
         )
         return SeriesResult(
             text=rows.text,
@@ -993,7 +1057,9 @@ async def _address(
             level=rows.level,
             requests=reader.requests,
             bytes=reader.bytes,
-            whole_run=False,
+            # A whole-run demand served by addressing every block holds the
+            # point's whole run; a windowed one was cut to the window.
+            whole_run=not windowed,
             hint=FileHint(
                 layout=layout,
                 utc_day=utc_day,
@@ -1021,6 +1087,7 @@ async def _fetch_series(
     window_end: datetime | None,
     hint: FileHint | None,
     utc_day: date | None,
+    step: timedelta = timedelta(hours=1),
 ) -> SeriesResult:
     """Climb the ladder over ``reader`` (the network-free core of fetch_series)."""
     loop = asyncio.get_running_loop()
@@ -1035,7 +1102,8 @@ async def _fetch_series(
             layout = fresh.layout
             try:
                 return await _address(
-                    reader, point, window_start, window_end, fresh, layout, utc_day
+                    reader, point, window_start, window_end, fresh, layout,
+                    utc_day, step,
                 )
             except _RequestCapExceeded:
                 raise
@@ -1043,7 +1111,7 @@ async def _fetch_series(
                 _LOGGER.debug("hint did not verify; fresh classification: %s", reason)
         layout = await classify_layout(reader)
         return await _address(
-            reader, point, window_start, window_end, None, layout, utc_day
+            reader, point, window_start, window_end, None, layout, utc_day, step
         )
     except _NotProven as reason:
         _LOGGER.debug("series fetch escalates past addressing: %s", reason)
@@ -1054,7 +1122,7 @@ async def _fetch_series(
         assert window_start is not None and window_end is not None
         prefix = await _fetch_date_major(reader, window_end)
         text = await loop.run_in_executor(None, _filter_point_rows, prefix, point)
-        if _window_complete(text, window_start, window_end):
+        if _window_complete(text, window_start, window_end, step):
             return SeriesResult(
                 text=text,
                 layout=layout,
@@ -1085,16 +1153,22 @@ async def fetch_series(
     window_end: datetime | None = None,
     hint: FileHint | None = None,
     utc_day: date | None = None,
+    step: timedelta = timedelta(hours=1),
     request_cap: int | None = SERIES_REQUEST_CAP,
 ) -> SeriesResult:
     """Fetch ``point``'s rows of one file, as cheaply as can be proven complete.
 
     ``window_start``/``window_end`` (aware UTC) name the hours the caller needs;
-    ``None`` means the whole run. ``hint`` is the :class:`FileHint` a previous
-    :class:`SeriesResult` returned for the same file; ``utc_day`` is the run's
-    UTC day, used to decide whether the hint's offsets are still stable. A hint
-    only ever saves requests — a stale or wrong one is detected by the rows it
-    fails to yield and costs a fresh look, never a prefix or the whole file
+    ``None`` means the whole run. ``step`` is the spacing between a date-major
+    file's blocks — one hour for the hourly files, one day for the daily
+    ``p``-variants (``Date`` stamped ``YYYYMMDD0000``, docs/ogd.md §E4). A
+    whole-run demand on a date-major file is served by row addressing when the
+    file has few blocks (the nine day blocks of the daily files) and climbs to
+    the full file otherwise (issue #122). ``hint`` is the :class:`FileHint` a
+    previous :class:`SeriesResult` returned for the same file; ``utc_day`` is the
+    run's UTC day, used to decide whether the hint's offsets are still stable. A
+    hint only ever saves requests — a stale or wrong one is detected by the rows
+    it fails to yield and costs a fresh look, never a prefix or the whole file
     (unless upstream really lacks the rows). A level that would need more than
     ``request_cap`` requests is skipped for the next one (ADR-0008: 96).
     """
@@ -1106,6 +1180,7 @@ async def fetch_series(
         window_end=window_end,
         hint=hint,
         utc_day=utc_day,
+        step=step,
     )
 
 
