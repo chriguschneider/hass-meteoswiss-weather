@@ -1102,7 +1102,7 @@ async def test_bulk_backend_date_major_blocks_are_served_by_escalation(
     # zero-degree text must not.
     assert set(DAILY_WIND_PARAMS) <= backend._block_whole
     assert HOURLY_ZERO_DEGREE not in backend._block_whole
-    assert HOURLY_ZERO_DEGREE in backend._geometry
+    assert backend._hints[HOURLY_ZERO_DEGREE].geometry is not None
 
 
 async def test_bulk_backend_one_unreachable_block_leaves_the_others(session) -> None:

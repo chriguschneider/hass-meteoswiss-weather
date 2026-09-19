@@ -11,6 +11,17 @@ using the matching section below as release notes.
 
 ### Changed
 
+- **One hint object per forecast file, remembered per UTC day** (#121,
+  [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). The fetch ladder no
+  longer re-classifies a file's layout and re-reads its header, first and last
+  row on every refresh. It carries a single hint per file (layout, the UTC day
+  it was learned on, the point-major block offset or the date-major row
+  geometry, and the header/first/last stamps) that a later run of the same UTC
+  day reuses, verifying it through the rows it finds. A hint from another day or
+  for another layout is detected and costs a fresh look, never a prefix or the
+  whole file. A warm zero-degree window now needs about one request per hour
+  (previously ~90+ for a 72 h window) and a warm point block at most three, so a
+  request cap miss no longer throws the whole cheap fetch away.
 - **Day-item run discovery** (#120, [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)).
   Run discovery now fetches today's UTC day item (~80 KB, ETag-capable) instead
   of the full collection listing (~620 KB, no ETag). An unchanged item costs a

@@ -23,6 +23,7 @@ from .forecast import (
 from .history import fetch_station_history, select_history_files
 from .hourly import (
     AiohttpRangeReader,
+    FileHint,
     RowGeometry,
     SeriesResult,
     classify_layout,
@@ -92,6 +93,7 @@ __all__ = [
     "fetch_current",
     "fetch_datainventory",
     "fetch_hourly_file",
+    "FileHint",
     "RowGeometry",
     "SeriesResult",
     "fetch_series",

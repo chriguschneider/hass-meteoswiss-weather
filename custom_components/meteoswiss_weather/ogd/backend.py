@@ -34,7 +34,7 @@ from .forecast import (
     parse_daily,
     parse_hourly,
 )
-from .hourly import RowGeometry, fetch_hourly_file, fetch_series, horizon_end_utc
+from .hourly import FileHint, fetch_hourly_file, fetch_series, horizon_end_utc
 from .http import get_text
 from .models import (
     DailyBundle,
@@ -85,11 +85,14 @@ class BulkCsvBackend:
 
     def __init__(self, session: aiohttp.ClientSession) -> None:
         self._session = session
-        # Byte offset of the point's block in each point-major hourly file,
-        # remembered across runs so the next fetch verifies it with one probe
-        # instead of a fresh binary search (issue #50). Keyed by parameter code.
-        # Shared between the daily block fetch and the lazy hourly fetch.
-        self._block_starts: dict[str, int] = {}
+        # One :class:`FileHint` per parameter (ADR-0008, issue #121): the file's
+        # layout, the UTC day it was learned on and the byte positions of the
+        # point's rows (point-major block start, date-major row geometry, header,
+        # first/last stamp). Remembered across the runs of a UTC day so the next
+        # fetch skips classification and the probes and verifies through the rows
+        # it finds. Shared between the daily block fetch and the lazy hourly
+        # fetch; a hint only ever saves requests, a stale one costs a fresh look.
+        self._hints: dict[str, FileHint] = {}
         # Cached block texts from the most recent daily refresh, keyed by
         # parameter and remembered with the run stamp, so the daily and hourly
         # paths never download a block twice for the same run (issue #60). A
@@ -102,9 +105,6 @@ class BulkCsvBackend:
         # (a row-addressed date-major file) would silently shorten the hourly
         # forecast (ADR-0008 section 4).
         self._block_whole: set[str] = set()
-        # Row-addressing hint per date-major file, like _block_starts for the
-        # point-major ones. Hints only save requests; every use is verified.
-        self._geometry: dict[str, RowGeometry] = {}
         # Files proven (by a full download) to carry no row for the point,
         # remembered for the UTC day so the proof is not repeated every run.
         self._absent: dict[str, date] = {}
@@ -169,8 +169,8 @@ class BulkCsvBackend:
                     point,
                     window_start=windows.get(param, (None, None))[0],
                     window_end=windows.get(param, (None, None))[1],
-                    block_start=self._block_starts.get(param),
-                    geometry=self._geometry.get(param),
+                    hint=self._hints.get(param),
+                    utc_day=run.timestamp.date(),
                 )
                 for param in present
             ),
@@ -202,10 +202,8 @@ class BulkCsvBackend:
                 result.requests,
                 result.bytes,
             )
-            if result.block_start is not None:
-                self._block_starts[param] = result.block_start
-            if result.geometry is not None:
-                self._geometry[param] = result.geometry
+            if result.hint is not None:
+                self._hints[param] = result.hint
             if not result.has_rows:
                 if result.level == 4:
                     self._absent[param] = today
@@ -354,16 +352,29 @@ class BulkCsvBackend:
                     run.asset_url(param),
                     point,
                     horizon_end=horizon_end,
-                    cached_start=self._block_starts.get(param),
+                    cached_start=(
+                        hint.block_start
+                        if (hint := self._hints.get(param)) is not None
+                        else None
+                    ),
                 )
                 for param in params_to_fetch
             )
         )
         text_by_param: dict[str, str] = {}
+        run_day = run.timestamp.date()
         for param, result in zip(params_to_fetch, results, strict=True):
             text_by_param[param] = result.text
             if result.block_start is not None:
-                self._block_starts[param] = result.block_start
+                # Fold the block offset into the shared per-file hint so the
+                # daily path reuses it on the next run of this UTC day.
+                header = result.text.split("\n", 1)[0] + "\n"
+                self._hints[param] = FileHint(
+                    layout=result.layout,
+                    utc_day=run_day,
+                    header=header,
+                    block_start=result.block_start,
+                )
 
         # Only fold in cached block texts for params this call requested, so a
         # temperature-only (near/far) fetch stays temperature-only.
