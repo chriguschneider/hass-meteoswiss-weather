@@ -433,19 +433,25 @@ async def test_forecast_hourly_parse_error_creates_repair_issue(
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """A parse error in the lazy hourly fetch creates the repair issue (#54)."""
+    """A parse error in the eager hourly refresh creates the repair issue (#124)."""
     from datetime import UTC, datetime
+
+    from custom_components.meteoswiss_weather.demand import hourly_demand
+    from custom_components.meteoswiss_weather.ogd import Run
 
     await _setup(hass, config_entry)
 
-    # The lazy provider is where hourly I/O happens now; enable it and drive it.
-    provider = config_entry.runtime_data.forecast_coordinator.hourly_provider
-    provider._enabled = True
+    # The refresher is where hourly I/O happens now; enable its demand and drive
+    # it with a discovered run (the entry was set up with the option off).
+    refresher = config_entry.runtime_data.forecast_coordinator.hourly_refresher
+    refresher._enabled = True
+    refresher._demand = hourly_demand(enabled=True)
+    run = Run(timestamp=datetime(2026, 8, 27, 2, 0, tzinfo=UTC), assets={})
 
     with patch.object(
-        provider._backend, "fetch_hourly", side_effect=OgdParseError("bad hourly")
+        refresher._backend, "fetch_hourly", side_effect=OgdParseError("bad hourly")
     ):
-        await provider.async_get_hourly(datetime(2026, 8, 27, 2, 0, tzinfo=UTC))
+        assert await refresher.async_refresh(run) is False
         await hass.async_block_till_done()
 
     issue_reg = ir.async_get(hass)
@@ -457,24 +463,26 @@ async def test_forecast_hourly_connection_error_creates_no_repair_issue(
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """A connection error in the lazy hourly fetch posts no repair issue (#54)."""
+    """A connection error in the eager hourly refresh posts no repair issue (#124)."""
     from datetime import UTC, datetime
+
+    from custom_components.meteoswiss_weather.demand import hourly_demand
+    from custom_components.meteoswiss_weather.ogd import Run
 
     await _setup(hass, config_entry)
 
-    provider = config_entry.runtime_data.forecast_coordinator.hourly_provider
-    provider._enabled = True
+    refresher = config_entry.runtime_data.forecast_coordinator.hourly_refresher
+    refresher._enabled = True
+    refresher._demand = hourly_demand(enabled=True)
+    run = Run(timestamp=datetime(2026, 8, 27, 2, 0, tzinfo=UTC), assets={})
 
     with patch.object(
-        provider._backend,
+        refresher._backend,
         "fetch_hourly",
         side_effect=OgdConnectionError("hourly unreachable"),
     ):
-        # The provider swallows the transient error, keeping last-good (None).
-        assert (
-            await provider.async_get_hourly(datetime(2026, 8, 27, 2, 0, tzinfo=UTC))
-            is None
-        )
+        # The refresher swallows the transient error, keeping last-good series.
+        assert await refresher.async_refresh(run) is False
         await hass.async_block_till_done()
 
     issue_reg = ir.async_get(hass)

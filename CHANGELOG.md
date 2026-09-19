@@ -11,6 +11,20 @@ using the matching section below as release notes.
 
 ### Changed
 
+- **Hourly forecast fetched eagerly; the lazy provider is removed** (#124,
+  [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). With the hourly
+  option on, the demanded files are now fetched by the forecast coordinator's
+  own refresh — whether or not a card or automation subscribes — and filed in a
+  per-parameter forecast store that every consumer reads. The hourly forecast,
+  the current-hour condition and the zero-degree sensor no longer depend on
+  another consumer's fetch: the data is there after the first refresh. Which
+  files a run fetches comes from a demand registry keyed on the enabled features
+  (hourly, cloud layers, temperature percentiles), so a feature that is off
+  still fetches nothing; the near/far/point-major refresh cadence is unchanged.
+  User-visible effect: an instance with the hourly option on now pays for it
+  even when nobody is looking (the traffic cost gates on the option, not on an
+  open card).
+
 - **Hourly forecast fetched through the ladder, with a two-way shared cache**
   (#123, [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). The hourly
   forecast no longer downloads a date-major file (`tre200h0`) as a multi-MB

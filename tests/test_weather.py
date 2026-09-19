@@ -9,7 +9,6 @@ and the availability contract across the two coordinators.
 
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -32,7 +31,10 @@ from custom_components.meteoswiss_weather.const import (
     CONF_STATION_NAME,
     DOMAIN,
 )
-from custom_components.meteoswiss_weather.ogd.const import station_now_url
+from custom_components.meteoswiss_weather.ogd.const import (
+    HOURLY_SYMBOL,
+    station_now_url,
+)
 
 _STATION_ABBR = "BER"
 _ENTITY_ID = "weather.koniz"
@@ -424,31 +426,15 @@ async def test_condition_prefers_current_hour_symbol(
     hourly_config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """Once hourly data is cached, the current hour's symbol sharpens condition.
+    """The current hour's symbol sharpens the condition, eagerly (ADR-0008).
 
     At 12:00 UTC the hourly symbol is 7 (snowy-rainy) while today's daily
-    symbol is 2 (partlycloudy). The hourly fetch is lazy (issue #54), so the
-    condition only sharpens after something pulls the hourly forecast; before
-    that it falls back to the daily symbol.
+    symbol is 2 (partlycloudy). The eager hourly refresh (issue #124) fills the
+    store at setup, so the condition sharpens with no card open and no
+    ``get_forecasts`` call — the store is the source, not a subscriber's fetch.
     """
     with freeze_time(datetime(2026, 8, 27, 12, 0, tzinfo=UTC)):
         await _setup(hass, hourly_config_entry)
-
-        # Nothing has fetched hourly yet: condition uses the daily symbol.
-        assert hass.states.get(_ENTITY_ID).state == "partlycloudy"
-
-        # Pull the hourly forecast (as a card or automation would), which fills
-        # the provider cache, then re-render the entity state.
-        await hass.services.async_call(
-            "weather",
-            "get_forecasts",
-            {"entity_id": _ENTITY_ID, "type": "hourly"},
-            blocking=True,
-            return_response=True,
-        )
-        await hourly_config_entry.runtime_data.station_coordinator.async_refresh()
-        await hass.async_block_till_done()
-
         assert hass.states.get(_ENTITY_ID).state == "snowy-rainy"
 
 
@@ -466,21 +452,17 @@ async def test_condition_corrects_a_night_symbol_after_sunrise(
     with freeze_time(datetime(2026, 8, 27, 12, 0, tzinfo=UTC)):
         await _setup(hass, hourly_config_entry, sun=STATE_ABOVE_HORIZON)
 
-        # Fill the provider cache, then rewrite the current hour's symbol to the
-        # night code upstream would still be sending.
-        await hass.services.async_call(
-            "weather",
-            "get_forecasts",
-            {"entity_id": _ENTITY_ID, "type": "hourly"},
-            blocking=True,
-            return_response=True,
-        )
-        provider = hourly_config_entry.runtime_data.forecast_coordinator.hourly_provider
+        # Rewrite the current hour's symbol in the store to the night code
+        # upstream would still be sending.
+        coordinator = hourly_config_entry.runtime_data.forecast_coordinator
         this_hour = datetime(2026, 8, 27, 12, 0, tzinfo=UTC)
-        provider._hourly = [
-            replace(hour, symbol=101) if hour.time == this_hour else hour
-            for hour in provider.cached_hourly
-        ]
+        coordinator.store.put(
+            HOURLY_SYMBOL,
+            {this_hour: 101},
+            run=coordinator.last_run,
+            fetched_at=this_hour,
+            source="hourly",
+        )
 
         await hourly_config_entry.runtime_data.station_coordinator.async_refresh()
         await hass.async_block_till_done()
@@ -497,19 +479,15 @@ async def test_condition_keeps_a_night_symbol_while_the_sun_is_down(
     with freeze_time(datetime(2026, 8, 27, 12, 0, tzinfo=UTC)):
         await _setup(hass, hourly_config_entry, sun=STATE_BELOW_HORIZON)
 
-        await hass.services.async_call(
-            "weather",
-            "get_forecasts",
-            {"entity_id": _ENTITY_ID, "type": "hourly"},
-            blocking=True,
-            return_response=True,
-        )
-        provider = hourly_config_entry.runtime_data.forecast_coordinator.hourly_provider
+        coordinator = hourly_config_entry.runtime_data.forecast_coordinator
         this_hour = datetime(2026, 8, 27, 12, 0, tzinfo=UTC)
-        provider._hourly = [
-            replace(hour, symbol=101) if hour.time == this_hour else hour
-            for hour in provider.cached_hourly
-        ]
+        coordinator.store.put(
+            HOURLY_SYMBOL,
+            {this_hour: 101},
+            run=coordinator.last_run,
+            fetched_at=this_hour,
+            source="hourly",
+        )
 
         await hourly_config_entry.runtime_data.station_coordinator.async_refresh()
         await hass.async_block_till_done()

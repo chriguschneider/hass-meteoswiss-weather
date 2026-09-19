@@ -736,9 +736,9 @@ async def test_zero_degree_sensor_value_without_hourly_option(
         assert _state(hass, "zero_degree_level") == "2505.0"
 
     # The default entry has no options: the hourly path never ran.
-    provider = config_entry.runtime_data.forecast_coordinator.hourly_provider
-    assert provider.enabled is False
-    assert provider.cached_hourly is None
+    coordinator = config_entry.runtime_data.forecast_coordinator
+    assert coordinator.hourly_refresher.enabled is False
+    assert coordinator.hourly_forecast() is None
 
 
 async def test_zero_degree_sensor_advances_at_the_top_of_the_hour(
@@ -824,8 +824,9 @@ async def test_zero_degree_sensor_is_fed_by_the_hourly_path_too(
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """A series filed by the hourly provider reaches the sensor at once, without
+    """A series filed by the hourly refresh reaches the sensor at once, without
     waiting for the coordinator's next tick (the v0.3.0 live failure)."""
+    from custom_components.meteoswiss_weather.ogd.const import HOURLY_ZERO_DEGREE
     from custom_components.meteoswiss_weather.store import ForecastStore
 
     now = datetime(2026, 8, 27, 1, 30, tzinfo=UTC)
@@ -834,16 +835,20 @@ async def test_zero_degree_sensor_is_fed_by_the_hourly_path_too(
         coordinator = config_entry.runtime_data.forecast_coordinator
         # The daily block degraded: nothing in the store.
         coordinator.store = ForecastStore()
-        coordinator.hourly_provider._store = coordinator.store
+        coordinator.hourly_refresher._store = coordinator.store
         coordinator.async_update_listeners()
         await hass.async_block_till_done()
         assert _state(hass, "zero_degree_level") == STATE_UNKNOWN
 
-        # The hourly path delivers the file and publishes it.
+        # The hourly path delivers the file and files it in the store.
         hour = now.replace(minute=0)
-        coordinator.hourly_provider._publish(
-            [_hour_with_zero_degree(hour, 3100.0)], coordinator.last_run, now
+        coordinator.hourly_refresher._publish(
+            [_hour_with_zero_degree(hour, 3100.0)],
+            (HOURLY_ZERO_DEGREE,),
+            coordinator.last_run,
+            now,
         )
+        coordinator.async_update_listeners()
         await hass.async_block_till_done()
         assert _state(hass, "zero_degree_level") == "3100.0"
 
