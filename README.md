@@ -78,6 +78,8 @@ always there when a card opens. Per hour:
 | `precipitation` | Hourly precipitation sum | mm |
 | `precipitation_probability` | Probability of precipitation in the 3-hour window ending at that hour | % |
 | `wind_speed` / `wind_gust_speed` / `wind_bearing` | Hourly mean wind, gust and direction | km/h, km/h, ° |
+| `radiation` | Global (incoming short-wave) solar radiation | W/m² |
+| `zero_degree_level` | Altitude of the 0 °C isotherm (snow-line material) | m |
 | `cloud_coverage` | Total cloud cover, the maximum of the three layers — **only with the cloud-layers option** | % |
 | `cloud_coverage_high` / `_mid` / `_low` | The three cloud layers — **only with the cloud-layers option** | % |
 | `temperature_p10` / `temperature_p90` | 10th / 90th percentile of the temperature forecast, the uncertainty band — **only with the temperature-percentiles option** | °C |

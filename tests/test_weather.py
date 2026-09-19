@@ -397,6 +397,65 @@ async def test_hourly_cloud_and_percentile_attributes(
     assert first["temperature"] < first["temperature_p90"]
 
 
+async def test_hourly_radiation_and_zero_degree_level(
+    hass: HomeAssistant,
+    hourly_config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """B8/B10 (issue #135): radiation and zero_degree_level appear in hourly dicts.
+
+    Both parameters are in HOURLY_REQUIRED_PARAMS (no extra option needed) and
+    their fixture files carry non-None values for point 309800;2. The test
+    checks that _as_hourly_forecast includes them.
+    """
+    with freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC)):
+        await _setup(hass, hourly_config_entry)
+
+        response = await hass.services.async_call(
+            "weather",
+            "get_forecasts",
+            {"entity_id": _ENTITY_ID, "type": "hourly"},
+            blocking=True,
+            return_response=True,
+        )
+
+    first = response[_ENTITY_ID]["forecast"][0]
+    # Fixture values at 2026-08-27T00:00:00Z for point 309800;2:
+    #   gre000h0 (radiation): 0 W/m² (midnight — no solar radiation).
+    #   zprfr0hs (zero_degree_level): 2500 m.
+    assert "radiation" in first, "radiation key missing from hourly forecast"
+    assert first["radiation"] == 0.0
+    assert "zero_degree_level" in first, "zero_degree_level key missing"
+    assert first["zero_degree_level"] == 2500.0
+
+
+def test_hourly_radiation_and_zero_degree_level_absent_when_none() -> None:
+    """Keys are omitted rather than set to null when the value is None (issue #135).
+
+    _as_hourly_forecast follows the same optional-key convention as
+    cloud_coverage_high and temperature_p10: the key is absent, not None.
+    """
+    from datetime import UTC, datetime
+
+    from custom_components.meteoswiss_weather.ogd import HourlyForecast
+    from custom_components.meteoswiss_weather.weather import MeteoSwissWeather
+
+    hour = HourlyForecast(
+        time=datetime(2026, 8, 27, 0, 0, tzinfo=UTC),
+        temperature=10.0,
+        precipitation=0.0,
+        symbol=1,
+        wind_speed_kmh=5.0,
+        gust_kmh=8.0,
+        wind_bearing=180.0,
+        radiation=None,
+        zero_degree_level=None,
+    )
+    result = MeteoSwissWeather._as_hourly_forecast(hour)
+    assert "radiation" not in result
+    assert "zero_degree_level" not in result
+
+
 async def test_hourly_gated_attributes_absent_without_options(
     hass: HomeAssistant,
     hourly_config_entry: MockConfigEntry,

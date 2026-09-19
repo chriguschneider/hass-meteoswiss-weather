@@ -343,6 +343,12 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
             forecast["temperature_p10"] = hour.temperature_p10
         if hour.temperature_p90 is not None:
             forecast["temperature_p90"] = hour.temperature_p90
+        # B8/B10 (issue #135): zero-degree level (m) and global radiation (W/m²),
+        # present whenever the hourly opt-in is on (both are in HOURLY_REQUIRED_PARAMS).
+        if hour.radiation is not None:
+            forecast["radiation"] = hour.radiation
+        if hour.zero_degree_level is not None:
+            forecast["zero_degree_level"] = hour.zero_degree_level
         return forecast
 
     @callback
