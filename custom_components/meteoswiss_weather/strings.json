@@ -15,6 +15,10 @@
     "parse_error_precip": {
       "title": "MeteoSwiss precipitation-station file format changed",
       "description": "The precipitation-station observation file could not be parsed. The upstream format may have changed. Check `docs/ogd.md` in the integration repository for the current format and open a drift issue if the layout no longer matches."
+    },
+    "forecast_fetch_escalated": {
+      "title": "MeteoSwiss forecast file needed a full download",
+      "description": "The forecast file `{param}` has required a full or large-prefix download (fetch ladder level 3 or 4) on each of the last three refreshes. This usually means MeteoSwiss re-sorted the file's row order. The last escalated fetch cost {bytes} bytes. Open the integration's diagnostics dump to see the level and layout per parameter, and check `docs/ogd.md` (\"How to read the fetch diagnostics\") to understand the impact. If the layout has permanently changed, open a drift issue so the integration can adapt. The issue clears automatically once the fetch ladder finds a cheap strategy again."
     }
   },
   "entity": {

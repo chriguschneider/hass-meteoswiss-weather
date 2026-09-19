@@ -15,6 +15,10 @@
     "parse_error_precip": {
       "title": "Le format du fichier de la station de précipitations MeteoSwiss a changé",
       "description": "Le fichier d'observation de la station de précipitations n'a pas pu être analysé. Le format des données source a peut-être changé. Consultez `docs/ogd.md` dans le dépôt de l'intégration pour le format actuel et ouvrez un ticket de dérive si la structure ne correspond plus."
+    },
+    "forecast_fetch_escalated": {
+      "title": "Le fichier de prévisions MeteoSwiss a nécessité un téléchargement complet",
+      "description": "Le fichier de prévisions `{param}` a nécessité un téléchargement complet ou un grand préfixe (niveau 3 ou 4 de l'échelle de récupération) lors de chacune des trois dernières actualisations. Cela indique généralement que MeteoSwiss a réorganisé l'ordre des lignes du fichier. Le dernier téléchargement escaladé a coûté {bytes} octets. Ouvrez le dump de diagnostic de l'intégration pour voir le niveau et la structure par paramètre, et consultez `docs/ogd.md` (\"How to read the fetch diagnostics\"). L'issue sera effacée automatiquement dès que l'échelle trouvera à nouveau une stratégie économique."
     }
   },
   "entity": {

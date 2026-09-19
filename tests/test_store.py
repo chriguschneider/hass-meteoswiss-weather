@@ -90,6 +90,38 @@ def test_diagnostics_summary() -> None:
     }
 
 
+def test_diagnostics_includes_fetch_metadata_when_provided() -> None:
+    """Level, requests, bytes and layout appear in diagnostics when given."""
+    store = ForecastStore()
+    store.put(
+        _P,
+        {_H0: 3000.0},
+        run=_RUN,
+        fetched_at=_NOW,
+        source="daily",
+        level=1,
+        requests=4,
+        bytes_fetched=512,
+        layout="date_major",
+    )
+    entry = store.as_diagnostics(_RUN)[_P]
+    assert entry["level"] == 1
+    assert entry["requests"] == 4
+    assert entry["bytes"] == 512
+    assert entry["layout"] == "date_major"
+
+
+def test_diagnostics_omits_none_metadata_fields() -> None:
+    """Fields not passed to put() do not appear in diagnostics."""
+    store = ForecastStore()
+    _put(store, {_H0: 3000.0})
+    entry = store.as_diagnostics(_RUN)[_P]
+    assert "level" not in entry
+    assert "requests" not in entry
+    assert "bytes" not in entry
+    assert "layout" not in entry
+
+
 def test_confirm_restamps_the_kept_series_to_the_new_run() -> None:
     """A canary-confirmed run keeps the values but reads as current (#125)."""
     store = ForecastStore()
@@ -135,3 +167,83 @@ def test_a_real_fetch_clears_a_prior_confirmation() -> None:
     assert series is not None
     assert series.provenance.confirmed is False
     assert store.value_at(_P, _H0) == 2900.0
+
+
+def test_confirm_carries_fetch_metadata_from_previous_provenance() -> None:
+    """A confirmation carries level/requests/bytes/layout from the stored series."""
+    store = ForecastStore()
+    store.put(
+        _P,
+        {_H0: 3000.0},
+        run=_RUN,
+        fetched_at=_NOW,
+        source="daily",
+        level=1,
+        requests=4,
+        bytes_fetched=512,
+        layout="date_major",
+    )
+    later = _RUN + timedelta(hours=3)
+    assert store.confirm(_P, run=later, fetched_at=later) is True
+    series = store.get(_P)
+    assert series is not None
+    prov = series.provenance
+    assert prov.confirmed is True
+    assert prov.level == 1
+    assert prov.requests == 4
+    assert prov.bytes_fetched == 512
+    assert prov.layout == "date_major"
+
+
+# ---------------------------------------------------------------------------
+# Escalation streak (ADR-0008 section 5)
+# ---------------------------------------------------------------------------
+
+
+def _put_with_level(
+    store: ForecastStore, values, level: int, run=_RUN
+) -> bool:
+    return store.put(
+        _P, values, run=run, fetched_at=_NOW, source="daily", level=level
+    )
+
+
+def test_escalation_streak_starts_at_zero() -> None:
+    store = ForecastStore()
+    assert store.escalation_streak(_P) == 0
+
+
+def test_escalation_streak_increments_on_level_3_or_4() -> None:
+    store = ForecastStore()
+    _put_with_level(store, {_H0: 1.0}, level=3)
+    assert store.escalation_streak(_P) == 1
+    _put_with_level(store, {_H0: 2.0}, level=4, run=_RUN + timedelta(hours=1))
+    assert store.escalation_streak(_P) == 2
+
+
+def test_escalation_streak_resets_on_level_below_3() -> None:
+    store = ForecastStore()
+    _put_with_level(store, {_H0: 1.0}, level=3)
+    _put_with_level(store, {_H0: 2.0}, level=3, run=_RUN + timedelta(hours=1))
+    assert store.escalation_streak(_P) == 2
+    _put_with_level(store, {_H0: 3.0}, level=2, run=_RUN + timedelta(hours=2))
+    assert store.escalation_streak(_P) == 0
+
+
+def test_escalation_streak_not_updated_without_level() -> None:
+    """A put() without a level does not change the streak."""
+    store = ForecastStore()
+    _put_with_level(store, {_H0: 1.0}, level=3)
+    assert store.escalation_streak(_P) == 1
+    _put(store, {_H0: 2.0}, run=_RUN + timedelta(hours=1))  # no level
+    assert store.escalation_streak(_P) == 1
+
+
+def test_escalation_streak_not_updated_by_confirm() -> None:
+    """A canary confirmation is not a fetch and must not change the streak."""
+    store = ForecastStore()
+    _put_with_level(store, {_H0: 1.0}, level=3)
+    assert store.escalation_streak(_P) == 1
+    store.confirm(_P, run=_RUN + timedelta(hours=1), fetched_at=_NOW)
+    # Streak unchanged — confirm is not a real fetch.
+    assert store.escalation_streak(_P) == 1

@@ -110,6 +110,9 @@ async def test_diagnostics_payload(
     assert zero_degree["run"] == fc["last_run"]
     assert zero_degree["hours"] == 24
     assert zero_degree["stale"] is False
+    # Provenance also carries the fetch ladder level and layout (ADR-0008 §5).
+    assert "level" in zero_degree
+    assert "layout" in zero_degree
 
 
 async def test_diagnostics_after_station_failure(
@@ -487,3 +490,101 @@ async def test_forecast_hourly_connection_error_creates_no_repair_issue(
 
     issue_reg = ir.async_get(hass)
     assert issue_reg.async_get_issue(DOMAIN, "parse_error_forecast") is None
+
+
+# ---------------------------------------------------------------------------
+# Escalated-fetch repair issue (ADR-0008 section 5)
+# ---------------------------------------------------------------------------
+
+
+async def test_escalated_fetch_repair_issue_raised_after_threshold(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """forecast_fetch_escalated_<param> is raised after 3 consecutive L3+ fetches."""
+    from datetime import UTC, datetime
+
+    from custom_components.meteoswiss_weather.ogd import Run
+    from custom_components.meteoswiss_weather.ogd.const import HOURLY_ZERO_DEGREE
+
+    await _setup(hass, config_entry)
+
+    coordinator = config_entry.runtime_data.forecast_coordinator
+    store = coordinator.store
+
+    run_base = datetime(2026, 9, 18, 5, 0, tzinfo=UTC)
+    fake_run = Run(
+        timestamp=run_base,
+        assets={HOURLY_ZERO_DEGREE: "http://example.com/zprfr0hs.csv"},
+    )
+    for i in range(3):
+        store.put(
+            HOURLY_ZERO_DEGREE,
+            {run_base.replace(hour=i): float(i)},
+            run=run_base.replace(hour=i),
+            fetched_at=run_base,
+            source="daily",
+            level=3,
+            bytes_fetched=10_000_000,
+        )
+
+    coordinator._sync_escalation_issues(fake_run)
+    await hass.async_block_till_done()
+
+    issue_reg = ir.async_get(hass)
+    issue_id = f"forecast_fetch_escalated_{HOURLY_ZERO_DEGREE}"
+    assert issue_reg.async_get_issue(DOMAIN, issue_id) is not None
+
+
+async def test_escalated_fetch_repair_issue_clears_when_streak_drops(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """The repair issue is deleted when the escalation streak drops below threshold."""
+    from datetime import UTC, datetime
+
+    from custom_components.meteoswiss_weather.ogd import Run
+    from custom_components.meteoswiss_weather.ogd.const import HOURLY_ZERO_DEGREE
+
+    await _setup(hass, config_entry)
+
+    coordinator = config_entry.runtime_data.forecast_coordinator
+    store = coordinator.store
+
+    run_base = datetime(2026, 9, 18, 5, 0, tzinfo=UTC)
+    fake_run = Run(
+        timestamp=run_base,
+        assets={HOURLY_ZERO_DEGREE: "http://example.com/zprfr0hs.csv"},
+    )
+    for i in range(3):
+        store.put(
+            HOURLY_ZERO_DEGREE,
+            {run_base.replace(hour=i): float(i)},
+            run=run_base.replace(hour=i),
+            fetched_at=run_base,
+            source="daily",
+            level=3,
+            bytes_fetched=10_000_000,
+        )
+    coordinator._sync_escalation_issues(fake_run)
+    await hass.async_block_till_done()
+
+    issue_reg = ir.async_get(hass)
+    issue_id = f"forecast_fetch_escalated_{HOURLY_ZERO_DEGREE}"
+    assert issue_reg.async_get_issue(DOMAIN, issue_id) is not None
+
+    # A non-escalated fetch resets the streak.
+    store.put(
+        HOURLY_ZERO_DEGREE,
+        {run_base.replace(hour=4): 4.0},
+        run=run_base.replace(hour=4),
+        fetched_at=run_base,
+        source="daily",
+        level=1,
+    )
+    coordinator._sync_escalation_issues(fake_run)
+    await hass.async_block_till_done()
+
+    assert issue_reg.async_get_issue(DOMAIN, issue_id) is None
