@@ -110,7 +110,13 @@ class FakeBackend:
         for h in range(4)
     ]
 
-    async def fetch_daily(self, point: ForecastPoint, *, run=None) -> DailyBundle:
+    async def fetch_daily(
+        self,
+        point: ForecastPoint,
+        *,
+        run=None,
+        hourly_horizon_days: int | None = None,
+    ) -> DailyBundle:
         return DailyBundle(daily=self.DAILY)
 
     async def fetch_hourly(
