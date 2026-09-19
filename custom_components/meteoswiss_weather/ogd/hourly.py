@@ -24,10 +24,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from math import ceil
-from typing import Protocol
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo
 
 import aiohttp
@@ -572,6 +573,33 @@ class RowGeometry:
     anchor_stamp: str | None = None
     anchor_offset: int | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        """A JSON-serialisable form for persistence (issue #133)."""
+        return {
+            "block_bytes": self.block_bytes,
+            "row_offset": self.row_offset,
+            "anchor_stamp": self.anchor_stamp,
+            "anchor_offset": self.anchor_offset,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> RowGeometry:
+        """Rebuild from :meth:`to_dict`; raises on a value it cannot trust."""
+        return cls(
+            block_bytes=float(data["block_bytes"]),
+            row_offset=int(data["row_offset"]),
+            anchor_stamp=_opt_str(data.get("anchor_stamp")),
+            anchor_offset=_opt_int(data.get("anchor_offset")),
+        )
+
+
+def _opt_str(value: Any) -> str | None:
+    return None if value is None else str(value)
+
+
+def _opt_int(value: Any) -> int | None:
+    return None if value is None else int(value)
+
 
 @dataclass(frozen=True, slots=True)
 class FileHint:
@@ -598,6 +626,45 @@ class FileHint:
     geometry: RowGeometry | None = None
     first_stamp: str | None = None
     last_stamp: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """A JSON-serialisable form for persistence across restarts (issue #133).
+
+        The layout enum becomes its string value and ``utc_day`` an ISO date;
+        everything else is already JSON-native. Only ever a hint: the ladder
+        re-verifies whatever :meth:`from_dict` hands back (ADR-0008).
+        """
+        return {
+            "layout": self.layout.value,
+            "utc_day": self.utc_day.isoformat() if self.utc_day else None,
+            "header": self.header,
+            "block_start": self.block_start,
+            "geometry": self.geometry.to_dict() if self.geometry else None,
+            "first_stamp": self.first_stamp,
+            "last_stamp": self.last_stamp,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> FileHint:
+        """Rebuild from :meth:`to_dict`.
+
+        Raises on anything it cannot trust (a bad ``layout`` value, a non-mapping
+        geometry, a malformed date) so the caller
+        (:meth:`~.backend.BulkCsvBackend.import_hints`) can drop just that entry —
+        a corrupt store must cost a fresh look, never a wrong row (the ladder
+        verifies every remembered position anyway).
+        """
+        geometry = data.get("geometry")
+        utc_day = data.get("utc_day")
+        return cls(
+            layout=FileLayout(data["layout"]),
+            utc_day=date.fromisoformat(utc_day) if utc_day else None,
+            header=str(data.get("header", "")),
+            block_start=_opt_int(data.get("block_start")),
+            geometry=RowGeometry.from_dict(geometry) if geometry else None,
+            first_stamp=_opt_str(data.get("first_stamp")),
+            last_stamp=_opt_str(data.get("last_stamp")),
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -11,6 +11,17 @@ using the matching section below as release notes.
 
 ### Added
 
+- **Persisted fetch-ladder hints across restarts** (#133,
+  [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). The fetch ladder's
+  per-file hints (the row-order layout and the point's learned byte positions,
+  remembered per UTC day) are now saved per config entry with Home Assistant's
+  storage and restored at setup, so the first refresh after a restart or reload
+  is warm instead of re-discovering positions known a minute earlier (a cold
+  refresh measured ~800 requests / ~2.7 MB). The hints are only ever hints: a
+  stale, corrupt or foreign store is ignored — the ladder re-verifies every
+  position and falls back to a fresh look, never a wrong row. Diagnostics report
+  whether hints were restored; the store is removed with the config entry.
+
 - **Fetch provenance in diagnostics** (#126,
   [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). The integration's
   diagnostics dump now reports, per stored forecast parameter, the escalation

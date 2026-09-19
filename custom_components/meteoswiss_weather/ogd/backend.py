@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
-from typing import Protocol
+from typing import Any, Protocol
 
 import aiohttp
 
@@ -390,6 +391,40 @@ class BulkCsvBackend:
         :meth:`~.store.ForecastStore.confirm` (ADR-0008 section 5).
         """
         return self._last_meta.get(param)
+
+    def export_hints(self) -> dict[str, dict[str, Any]]:
+        """The per-file fetch hints as JSON-serialisable dicts (issue #133).
+
+        The hints (layout, the UTC day they were learned on, the point's byte
+        positions) live only in memory, so after a Home Assistant restart the
+        next refresh is cold — a point block costs ~37 requests and a
+        row-addressed file re-learns its geometry with a ~150 KB scan. The
+        integration layer persists this mapping with ``helpers.storage.Store``
+        and feeds it back through :meth:`import_hints` at the next setup. Kept
+        HA-free (ADR-0001): the storage itself is done in the coordinator.
+        """
+        return {param: hint.to_dict() for param, hint in self._hints.items()}
+
+    def import_hints(self, data: Mapping[str, Any] | None) -> int:
+        """Load hints previously produced by :meth:`export_hints`; return the count.
+
+        Defensive by design (issue #133): a hint is only ever a hint, so a
+        malformed, stale or corrupt entry is skipped with a debug log rather
+        than raised, and the ladder re-verifies every position it is handed —
+        a bad store costs a fresh look, never a wrong row (ADR-0008). Offsets
+        from another UTC day or a different point simply fail their verification
+        on the next fetch and are re-learned.
+        """
+        if not isinstance(data, Mapping):
+            return 0
+        restored: dict[str, FileHint] = {}
+        for param, raw in data.items():
+            try:
+                restored[str(param)] = FileHint.from_dict(raw)
+            except (AttributeError, KeyError, TypeError, ValueError) as err:
+                _LOGGER.debug("ignoring stored hint for %s: %s", param, err)
+        self._hints = restored
+        return len(restored)
 
     async def _resolve_run(self, run: Run | None, params: tuple[str, ...]) -> Run:
         """Use the caller's run when it carries ``params``, else discover one.

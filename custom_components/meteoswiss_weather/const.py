@@ -118,3 +118,13 @@ HOURLY_CANARY_HOURS = 6
 # Pollen data is published hourly; one request per hour per station is enough
 # (ADR-0005). Conditional requests (If-None-Match) keep most polls to a 304.
 POLLEN_UPDATE_INTERVAL = timedelta(hours=1)
+
+# Persisted fetch-ladder hints (issue #133, ADR-0008). The backend's per-file
+# hints (layout, learned byte positions) live in memory and are lost on every
+# restart or reload, making the next refresh cold (~800 requests / ~2.7 MB of
+# re-discovery). They are saved per config entry with ``helpers.storage.Store``
+# under the key below (``.storage/<key>``) and restored at setup. The save is
+# debounced by HINTS_SAVE_DELAY seconds so an unchanged tick never writes.
+HINTS_STORAGE_VERSION = 1
+HINTS_STORAGE_KEY = f"{DOMAIN}.hints"
+HINTS_SAVE_DELAY = 30

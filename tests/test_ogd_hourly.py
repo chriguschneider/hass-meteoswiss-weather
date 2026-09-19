@@ -8,12 +8,14 @@ escalation ladder (:func:`fetch_series`) is driven through the same reader.
 
 from __future__ import annotations
 
+import json
 import random
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
 from custom_components.meteoswiss_weather.ogd import (
+    BulkCsvBackend,
     FileLayout,
     ForecastPoint,
     classify_layout,
@@ -736,3 +738,113 @@ async def test_daily_hourly_step_would_miss_the_day_blocks() -> None:
     assert day_step.level <= 2
     # Both still return the same nine day rows.
     assert _series_hours(hourly_step) == _series_hours(day_step)
+
+
+# --- persisting the hints across a restart (issue #133) ----------------------
+
+
+async def test_date_major_hint_survives_a_json_round_trip() -> None:
+    """A learned date-major hint (geometry, anchors, header, stamps) rebuilds
+    unchanged from its JSON-serialisable dict, so it can be persisted and
+    restored across a restart (issue #133)."""
+    data = _big_date_major()
+    start, end = _H0 + timedelta(hours=10), _H0 + timedelta(hours=20)
+    learned = (await _series(data, start=start, end=end, utc_day=_DAY)).hint
+    assert learned is not None and learned.geometry is not None
+
+    as_json = json.loads(json.dumps(learned.to_dict()))  # must be JSON-native
+    assert H.FileHint.from_dict(as_json) == learned
+
+
+async def test_point_major_hint_survives_a_json_round_trip() -> None:
+    """A point-major hint (block start, header, UTC day) rebuilds unchanged."""
+    data = _point_major_type()
+    start, end = _H0 + timedelta(hours=3), _H0 + timedelta(hours=9)
+    learned = (await _series(data, start=start, end=end, utc_day=_DAY)).hint
+    assert learned is not None and learned.block_start is not None
+
+    as_json = json.loads(json.dumps(learned.to_dict()))
+    assert H.FileHint.from_dict(as_json) == learned
+
+
+async def test_restored_hint_gives_a_warm_fetch() -> None:
+    """A hint that went through the JSON round trip is as good as the in-memory
+    one: the following same-day fetch is warm (level 0), not cold."""
+    data = _big_date_major()
+    start, end = _H0 + timedelta(hours=10), _H0 + timedelta(hours=25)
+    cold = await _series(data, start=start, end=end, utc_day=_DAY)
+    restored = H.FileHint.from_dict(json.loads(json.dumps(cold.hint.to_dict())))
+    warm = await _series(data, start=start, end=end, hint=restored, utc_day=_DAY)
+
+    assert warm.level == 0
+    assert _series_lines(warm) == _series_lines(cold)
+
+
+def _make_backend() -> BulkCsvBackend:
+    """A backend with no live session; only export/import hints are exercised."""
+    return BulkCsvBackend(session=None)  # type: ignore[arg-type]
+
+
+async def test_backend_hint_export_import_round_trip() -> None:
+    """The backend hands its per-file hints out and takes them back unchanged
+    (issue #133): what export produces, import restores identically."""
+    original = _make_backend()
+    original._hints = {
+        "tre200h0": H.FileHint(
+            layout=FileLayout.DATE_MAJOR,
+            utc_day=_DAY,
+            header=f"{_HEADER}\n",
+            geometry=H.RowGeometry(
+                block_bytes=1234.5, row_offset=42,
+                anchor_stamp=_stamp(_H0), anchor_offset=99,
+            ),
+            first_stamp=_stamp(_H0),
+            last_stamp=_stamp(_H0 + timedelta(hours=59)),
+        ),
+        "fu3010h0": H.FileHint(
+            layout=FileLayout.POINT_MAJOR_TYPE,
+            utc_day=_DAY,
+            header=f"{_HEADER}\n",
+            block_start=5000,
+        ),
+    }
+    exported = original.export_hints()
+    # The exported form is JSON-native (persisted with helpers.storage.Store).
+    assert json.loads(json.dumps(exported)) == exported
+
+    restored = _make_backend()
+    assert restored.import_hints(exported) == 2
+    assert restored._hints == original._hints
+
+
+async def test_backend_import_ignores_garbage() -> None:
+    """A corrupt or outdated store must cost a fresh look, never raise or yield a
+    wrong row (issue #133 acceptance): every malformed shape is dropped."""
+    backend = _make_backend()
+    # Not even a mapping.
+    assert backend.import_hints(None) == 0
+    assert backend.import_hints("not a dict") == 0  # type: ignore[arg-type]
+    assert backend.import_hints([1, 2, 3]) == 0  # type: ignore[arg-type]
+
+    garbage = {
+        "missing_layout": {"header": "x"},
+        "bad_layout": {"layout": "not_a_layout"},
+        "bad_geometry": {"layout": "date_major", "geometry": {"row_offset": 1}},
+        "not_a_dict_value": "nope",
+        "bad_utc_day": {"layout": "date_major", "utc_day": "31st of Foo"},
+    }
+    # None of it raises, none of it is accepted, nothing lands in the backend.
+    assert backend.import_hints(garbage) == 0
+    assert backend._hints == {}
+
+
+async def test_backend_import_keeps_the_good_drops_the_bad() -> None:
+    """One corrupt entry does not poison the others: the valid hints load."""
+    backend = _make_backend()
+    good = H.FileHint(
+        layout=FileLayout.POINT_MAJOR_TYPE, utc_day=_DAY,
+        header=f"{_HEADER}\n", block_start=10,
+    )
+    mixed = {"fu3010h0": good.to_dict(), "broken": {"layout": "???"}}
+    assert backend.import_hints(mixed) == 1
+    assert backend._hints == {"fu3010h0": good}

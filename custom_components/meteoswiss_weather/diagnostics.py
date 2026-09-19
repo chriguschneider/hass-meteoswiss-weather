@@ -70,6 +70,11 @@ async def async_get_config_entry_diagnostics(
                 # Per-parameter series of the point and which path delivered
                 # them (ADR-0008).
                 "store": fc.store.as_diagnostics(fc.last_run),
+                # Whether the backend's fetch hints were restored from storage at
+                # setup (issue #133). The raw hints are deliberately not dumped —
+                # they are kept small; this only reports that a warm start
+                # happened.
+                "hints_restored": fc.hints_restored,
                 "hourly": {
                     "enabled": fc.hourly_refresher.enabled,
                     "last_fetch": (
