@@ -176,6 +176,12 @@ class BulkCsvBackend:
         # only parameters actually fetched in the current run appear here
         # (ADR-0008 section 5).
         self._last_meta: dict[str, tuple[int, int, int, str | None]] = {}
+        # Running totals for diagnostic sensors (issue #146): every real fetch
+        # (daily, blocks, hourly, canaries) adds its bytes and requests here;
+        # pop_fetch_totals() returns and resets them so the coordinator can
+        # accumulate them into the daily traffic counters.
+        self._accum_bytes: int = 0
+        self._accum_requests: int = 0
 
     def _reset_series_cache(self, run: Run) -> None:
         """Drop the per-run series cache when a new run has landed (issue #123)."""
@@ -271,6 +277,10 @@ class BulkCsvBackend:
             result.bytes,
             result.layout.value if result.layout is not None else None,
         )
+        # Accumulate for diagnostic sensors (issue #146): every real fetch
+        # adds to the running totals; pop_fetch_totals() drains them.
+        self._accum_bytes += result.bytes
+        self._accum_requests += result.requests
         if degrade_absent and not result.has_rows:
             if result.level == 4:
                 self._absent[param] = today
@@ -437,6 +447,20 @@ class BulkCsvBackend:
         :meth:`~.store.ForecastStore.confirm` (ADR-0008 section 5).
         """
         return self._last_meta.get(param)
+
+    def pop_fetch_totals(self) -> tuple[int, int]:
+        """Return ``(bytes, requests)`` fetched since the last call, then reset.
+
+        Drains the running totals accumulated by every real fetch (daily files,
+        blocks, hourly files, canaries) since the previous call.  The coordinator
+        calls this once per tick and adds the delta to the daily traffic counters
+        (issue #146).  Cache hits (served from the per-run series cache) are not
+        counted — they cost no HTTP requests.
+        """
+        result = (self._accum_bytes, self._accum_requests)
+        self._accum_bytes = 0
+        self._accum_requests = 0
+        return result
 
     def export_hints(self) -> dict[str, dict[str, Any]]:
         """The per-file fetch hints as JSON-serialisable dicts (issue #133).

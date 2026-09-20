@@ -141,6 +141,17 @@ station measures.
 
 All in grains/m³.
 
+### Diagnostic traffic sensors
+
+Two diagnostic sensors on the forecast device let you watch the integration's daily traffic budget:
+
+| Sensor | Default | Unit |
+|---|---|---|
+| Data fetched today | on | MB |
+| Requests today | off | — |
+
+Both reset at local midnight and survive a restart. No extra traffic — they count bytes/requests the fetch ladder already tracks.
+
 ### Service
 
 `meteoswiss_weather.import_history` imports the station's official hourly

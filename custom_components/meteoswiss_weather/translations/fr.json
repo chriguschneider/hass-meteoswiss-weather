@@ -54,7 +54,9 @@
       "pollen_hazel": { "name": "Pollen de noisetier" },
       "pollen_beech": { "name": "Pollen de hêtre" },
       "pollen_ash": { "name": "Pollen de frêne" },
-      "pollen_oak": { "name": "Pollen de chêne" }
+      "pollen_oak": { "name": "Pollen de chêne" },
+      "data_fetched_today": { "name": "Données téléchargées aujourd'hui" },
+      "requests_today": { "name": "Requêtes aujourd'hui" }
     }
   },
   "config": {

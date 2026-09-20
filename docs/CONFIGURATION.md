@@ -168,6 +168,17 @@ The integration's diagnostics download lists, per file, the run, the bytes and t
 
 Many sensors are created but **disabled** until you enable them under *Settings → Devices & Services → MeteoSwiss Weather → entities*: the zero-degree level, the measurement time, most station sensors (radiation, soil temperatures, pressure variants, snow depth, …) and most pollen types. No option in the dialog controls them, and enabling one costs no extra traffic.
 
+### Diagnostic traffic sensors
+
+Two diagnostic sensors are always created under the forecast device:
+
+| Entity key | Default | Unit | Notes |
+|---|---|---|---|
+| `data_fetched_today` | **Enabled** | MB | Bytes transferred since local midnight; `DATA_SIZE` device class, `total_increasing` state class |
+| `requests_today` | Disabled | — | HTTP request count since local midnight; same reset behaviour |
+
+Both counters reset at local midnight and survive a restart within the same day (state is persisted to `.storage`). They count bytes and requests that the fetch ladder already tracks — daily files, blocks, hourly files, canaries, and run discovery — so they add no extra network traffic. The counters feed from `BulkCsvBackend.pop_fetch_totals()`, which is called after each coordinator refresh.
+
 ## Services
 
 ### `meteoswiss_weather.import_history`

@@ -54,7 +54,9 @@
       "pollen_hazel": { "name": "Pollini di nocciolo" },
       "pollen_beech": { "name": "Pollini di faggio" },
       "pollen_ash": { "name": "Pollini di frassino" },
-      "pollen_oak": { "name": "Pollini di quercia" }
+      "pollen_oak": { "name": "Pollini di quercia" },
+      "data_fetched_today": { "name": "Dati scaricati oggi" },
+      "requests_today": { "name": "Richieste oggi" }
     }
   },
   "config": {

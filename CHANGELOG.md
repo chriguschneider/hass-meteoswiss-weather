@@ -11,6 +11,14 @@ using the matching section below as release notes.
 
 ### Added
 
+- **Two diagnostic sensors show daily traffic to the MeteoSwiss backend** (#146).
+  `sensor.<name>_data_fetched_today` (enabled by default, MB, `DATA_SIZE` device
+  class, `total_increasing`) counts bytes transferred by the forecast coordinator
+  since local midnight.  `sensor.<name>_requests_today` (disabled by default,
+  plain count) tracks the number of HTTP requests.  Both reset at midnight,
+  survive a restart within the day, and feed from the bytes/requests the existing
+  fetch ladder already records — no extra traffic.
+
 - **The hourly options page now ends with a summary of the consequences** (#145).
   After choosing the hourly forecast, horizon and the cloud/percentile extras, a
   confirmation step spells out — before anything is saved — which forecast fields
