@@ -181,6 +181,20 @@ class ForecastStore:
         """Consecutive L3+ fetch count for ``param`` (0 when not tracked or reset)."""
         return self._escalation_streaks.get(param, 0)
 
+    def measured_bytes(self) -> dict[str, int]:
+        """Bytes of the last fetch per parameter that recorded them (issue #145).
+
+        The options-flow traffic estimate prefers these measured numbers over its
+        table for any file already active, so an instance quotes its own cost as
+        the store warms up. Parameters whose series was written without fetch
+        metadata (e.g. a canary confirmation) are omitted.
+        """
+        return {
+            param: series.provenance.bytes_fetched
+            for param, series in self._series.items()
+            if series.provenance.bytes_fetched is not None
+        }
+
     def as_diagnostics(self, run: datetime | None) -> dict[str, Any]:
         """A JSON-friendly summary per parameter, for the diagnostics dump."""
         result: dict[str, Any] = {}

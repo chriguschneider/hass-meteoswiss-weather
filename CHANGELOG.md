@@ -9,6 +9,20 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Added
+
+- **The hourly options page now ends with a summary of the consequences** (#145).
+  After choosing the hourly forecast, horizon and the cloud/percentile extras, a
+  confirmation step spells out — before anything is saved — which forecast fields
+  the choice **adds or removes** compared with the current options, and an
+  **estimated traffic per refresh and per day** for the combination. The estimate
+  is derived from the demand registry (options → the demanded files → bytes) and a
+  small table of typical bytes per file kind; where a file is already active, its
+  last **measured** fetch from the run-scoped store is used instead of the table
+  and the summary says "measured" rather than "estimated". For horizons that no
+  longer fit row addressing it states the honest consequence (a large prefix of
+  the ~30 MB source files) rather than a fixed number.
+
 ### Changed
 
 - **The options dialog is now a menu with an overview page** (#144). Instead of a

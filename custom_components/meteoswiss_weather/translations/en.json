@@ -194,6 +194,10 @@
           "hourly_temp_percentiles": "Gives you: temperature_p10 and temperature_p90, the forecast's uncertainty band, on every forecast hour. Costs: about 0.5 MB per refresh, the most expensive extra (two files read row by row). Off by default."
         }
       },
+      "summary": {
+        "title": "Review the change",
+        "description": "Before saving, here is what this hourly choice does compared with your current options.\n\n**Forecast fields added:** {added}\n\n**Forecast fields removed:** {removed}\n\n**Estimated traffic for the chosen combination:** {traffic}\n\nSubmit to save, or go back to change the options."
+      },
       "pollen": {
         "title": "Pollen monitoring",
         "description": "Enable pollen monitoring and choose the station. The station is ignored while the toggle is off.",
