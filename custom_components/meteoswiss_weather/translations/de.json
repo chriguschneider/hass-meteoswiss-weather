@@ -194,6 +194,10 @@
           "hourly_temp_percentiles": "Bringt: temperature_p10 und temperature_p90, das Unsicherheitsband der Prognose, für jede Prognosestunde. Kostet: rund 0,5 MB pro Aktualisierung, der teuerste Zusatz (zwei zeilenweise gelesene Dateien). Standardmässig aus."
         }
       },
+      "summary": {
+        "title": "Änderung prüfen",
+        "description": "Vor dem Speichern: Das bewirkt diese stündliche Auswahl im Vergleich zu Ihren aktuellen Optionen.\n\n**Hinzugefügte Vorhersagefelder:** {added}\n\n**Entfernte Vorhersagefelder:** {removed}\n\n**Geschätzter Datenverkehr für die gewählte Kombination:** {traffic}\n\nZum Speichern bestätigen oder zurückgehen, um die Optionen zu ändern."
+      },
       "pollen": {
         "title": "Pollenmessung",
         "description": "Aktivieren Sie die Pollenmessung und wählen Sie die Station. Die Station wird ignoriert, solange der Schalter aus ist.",

@@ -537,6 +537,12 @@ async def test_options_flow_hourly_page_one_step_and_gated_additions(
             CONF_HOURLY_TEMP_PERCENTILES: False,
         },
     )
+    # The hourly page now routes through a confirmation/summary step (issue #145).
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "summary"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={}
+    )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_HOURLY_FORECAST] is True
     assert result["data"][CONF_HOURLY_HORIZON_DAYS] == 4
@@ -567,6 +573,10 @@ async def test_options_flow_hourly_page_preserves_pollen_options(
             CONF_HOURLY_CLOUD_LAYERS: False,
             CONF_HOURLY_TEMP_PERCENTILES: False,
         },
+    )
+    # Confirm the change on the summary step (issue #145) before it is saved.
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={}
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_HOURLY_FORECAST] is True
@@ -608,10 +618,93 @@ async def test_options_flow_hourly_off_forces_gated_additions_off(
             CONF_HOURLY_TEMP_PERCENTILES: True,
         },
     )
+    # Confirm on the summary step (issue #145); the gated additions are stored off.
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={}
+    )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_HOURLY_FORECAST] is False
     assert result["data"][CONF_HOURLY_CLOUD_LAYERS] is False
     assert result["data"][CONF_HOURLY_TEMP_PERCENTILES] is False
+
+
+async def test_options_flow_summary_names_added_and_removed_fields(
+    hass: HomeAssistant,
+) -> None:
+    """The summary step names added/removed fields toggling cloud and percentiles.
+
+    Start with hourly on, percentiles on, cloud off; then flip cloud on and
+    percentiles off. The summary must add the cloud fields and remove the
+    percentile ones, and show a traffic estimate (issue #145).
+    """
+    entry = _koniz_entry()
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry,
+        options={
+            CONF_HOURLY_FORECAST: True,
+            CONF_HOURLY_HORIZON_DAYS: DEFAULT_HOURLY_HORIZON_DAYS,
+            CONF_HOURLY_CLOUD_LAYERS: False,
+            CONF_HOURLY_TEMP_PERCENTILES: True,
+        },
+    )
+
+    result = await _open_menu_step(hass, entry, "hourly")
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_HOURLY_FORECAST: True,
+            CONF_HOURLY_HORIZON_DAYS: DEFAULT_HOURLY_HORIZON_DAYS,
+            CONF_HOURLY_CLOUD_LAYERS: True,
+            CONF_HOURLY_TEMP_PERCENTILES: False,
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "summary"
+    placeholders = result["description_placeholders"]
+    # Cloud fields are new; percentile fields are gone; the shared hourly base
+    # fields are in both, so they appear in neither list.
+    assert "cloud coverage" in placeholders["added"]
+    assert "high/mid/low cloud layers" in placeholders["added"]
+    assert "hourly temperature" not in placeholders["added"]
+    assert "temperature p10" in placeholders["removed"]
+    assert "temperature p90" in placeholders["removed"]
+    # The traffic estimate is present and, without a loaded store, estimated.
+    assert "per refresh" in placeholders["traffic"]
+    assert "per day" in placeholders["traffic"]
+    assert "estimated" in placeholders["traffic"]
+
+    # Confirming saves the pending change.
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_HOURLY_CLOUD_LAYERS] is True
+    assert result["data"][CONF_HOURLY_TEMP_PERCENTILES] is False
+
+
+async def test_options_flow_summary_enabling_hourly_adds_base_fields(
+    hass: HomeAssistant,
+) -> None:
+    """Turning the hourly forecast on lists its base fields as added (issue #145)."""
+    entry = _koniz_entry()
+    entry.add_to_hass(hass)
+
+    result = await _open_menu_step(hass, entry, "hourly")
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_HOURLY_FORECAST: True,
+            CONF_HOURLY_HORIZON_DAYS: DEFAULT_HOURLY_HORIZON_DAYS,
+            CONF_HOURLY_CLOUD_LAYERS: False,
+            CONF_HOURLY_TEMP_PERCENTILES: False,
+        },
+    )
+    assert result["step_id"] == "summary"
+    placeholders = result["description_placeholders"]
+    assert "hourly temperature" in placeholders["added"]
+    assert "hourly zero-degree level" in placeholders["added"]
+    assert placeholders["removed"] == "none"
 
 
 # ---------------------------------------------------------------------------
@@ -1137,6 +1230,10 @@ async def test_options_flow_full_run_horizon(hass: HomeAssistant) -> None:
             CONF_HOURLY_CLOUD_LAYERS: False,
             CONF_HOURLY_TEMP_PERCENTILES: False,
         },
+    )
+    # Confirm the change on the summary step (issue #145).
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={}
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_HOURLY_HORIZON_DAYS] == HOURLY_HORIZON_FULL_RUN

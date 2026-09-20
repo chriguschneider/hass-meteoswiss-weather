@@ -194,6 +194,10 @@
           "hourly_temp_percentiles": "Apporte : temperature_p10 et temperature_p90, la marge d'incertitude de la prévision, pour chaque heure de prévision. Coût : environ 0,5 Mo par actualisation, le complément le plus coûteux (deux fichiers lus ligne par ligne). Désactivé par défaut."
         }
       },
+      "summary": {
+        "title": "Vérifier la modification",
+        "description": "Avant d'enregistrer, voici ce que ce choix horaire fait par rapport à vos options actuelles.\n\n**Champs de prévision ajoutés :** {added}\n\n**Champs de prévision supprimés :** {removed}\n\n**Trafic estimé pour la combinaison choisie :** {traffic}\n\nValidez pour enregistrer, ou revenez en arrière pour modifier les options."
+      },
       "pollen": {
         "title": "Surveillance du pollen",
         "description": "Activez la surveillance du pollen et choisissez la station. La station est ignorée tant que l'interrupteur est désactivé.",

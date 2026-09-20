@@ -52,6 +52,7 @@ from .const import (
     HOURLY_HORIZON_CHOICES,
     HOURLY_HORIZON_FULL_RUN,
 )
+from .demand import TrafficEstimate, estimate_traffic
 from .history import async_discard_station_history, async_log_station_switch
 from .ogd import (
     POINT_TYPE_MOUNTAIN,
@@ -602,6 +603,84 @@ def _horizon_label(days: int) -> str:
     return f"Today plus {days} full days"
 
 
+# The forecast fields each hourly option adds, as user-facing labels. Only the
+# toggleable fields appear here: the daily forecast is always on, so it never
+# shows up in the added/removed diff of the summary step (issue #145). The labels
+# are dynamic values passed through ``description_placeholders`` — the surrounding
+# prose is translated in strings.json, following the overview page's pattern.
+_HOURLY_BASE_FIELDS: tuple[str, ...] = (
+    "hourly condition",
+    "hourly temperature",
+    "hourly precipitation",
+    "hourly precipitation probability",
+    "hourly wind speed",
+    "hourly wind gusts",
+    "hourly wind direction",
+    "hourly global radiation",
+    "hourly zero-degree level",
+)
+_CLOUD_FIELDS: tuple[str, ...] = (
+    "cloud coverage",
+    "high/mid/low cloud layers",
+)
+_PERCENTILE_FIELDS: tuple[str, ...] = (
+    "temperature p10",
+    "temperature p90",
+)
+
+
+def _forecast_fields(
+    *, hourly: bool, cloud_layers: bool, temp_percentiles: bool
+) -> list[str]:
+    """The toggleable forecast fields a hourly options combination produces."""
+    fields: list[str] = []
+    if hourly:
+        fields.extend(_HOURLY_BASE_FIELDS)
+        if cloud_layers:
+            fields.extend(_CLOUD_FIELDS)
+        if temp_percentiles:
+            fields.extend(_PERCENTILE_FIELDS)
+    return fields
+
+
+def _format_bytes(num: int) -> str:
+    """Human-readable byte size (KB below 1 MB, else MB) for the summary text."""
+    if num < 1_000_000:
+        return f"{num / 1_000:.0f} KB"
+    return f"{num / 1_000_000:.2f} MB"
+
+
+def _confidence_label(estimate: TrafficEstimate) -> str:
+    """Whether the figures are measured, estimated, or a mix (issue #145)."""
+    if estimate.all_measured:
+        return "measured"
+    if estimate.any_measured:
+        return "measured where the file is already active, otherwise estimated"
+    return "estimated"
+
+
+def _traffic_text(estimate: TrafficEstimate) -> str:
+    """The per-refresh and per-day traffic sentence for the summary placeholders."""
+    confidence = _confidence_label(estimate)
+    per_refresh = _format_bytes(estimate.bytes_per_refresh)
+    per_day = _format_bytes(estimate.bytes_per_day)
+    if estimate.has_unbounded:
+        # At this horizon the date-major files no longer fit row addressing and
+        # fall to a large prefix of the ~30 MB files (ADR-0008 §4): there is no
+        # fixed number to quote, so state the consequence honestly (issue #145).
+        return (
+            f"about {per_refresh} per refresh for the row-addressed files "
+            f"(~{per_day} per day, {confidence}), plus the temperature and any "
+            "cloud or percentile files, which at this horizon no longer fit row "
+            "addressing and are fetched as a large prefix of the ~30 MB source "
+            "files — not a fixed number."
+        )
+    return (
+        f"about {per_refresh} per refresh, roughly {per_day} per day "
+        f"(~{estimate.refreshes_per_day} refreshes; {confidence})."
+    )
+
+
 class MeteoSwissWeatherOptionsFlow(OptionsFlow):
     """Options flow: hourly forecast (ADR-0002) and pollen opt-in (ADR-0005).
 
@@ -610,6 +689,9 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
       init     — a menu with three entries
       hourly   — toggle, horizon, cloud layers and percentiles on one page;
                  the fields are simply ignored when the toggle is off
+      summary  — confirmation after the hourly page (issue #145): the forecast
+                 fields the choice adds or removes and its estimated traffic per
+                 refresh and per day, before the change is saved
       pollen   — toggle and station on one page
       overview — a read-only summary of what is on now, which forecast fields
                  that produces, and how many of the entry's entities are
@@ -625,6 +707,9 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
         self._pollen_stations: list[PollenStation] | None = None
         self._pollen_ref_lat: float = 0.0
         self._pollen_ref_lon: float = 0.0
+        # The hourly page's chosen changes, held while the summary step confirms
+        # them before they are saved (issue #145).
+        self._pending_hourly: dict[str, Any] | None = None
 
     def _merge_and_create(self, changes: dict[str, Any]) -> ConfigFlowResult:
         """Persist ``changes`` merged over the current options.
@@ -659,18 +744,17 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
         current = self.config_entry.options
         if user_input is not None:
             hourly = bool(user_input[CONF_HOURLY_FORECAST])
-            return self._merge_and_create(
-                {
-                    CONF_HOURLY_FORECAST: hourly,
-                    CONF_HOURLY_HORIZON_DAYS: int(
-                        user_input[CONF_HOURLY_HORIZON_DAYS]
-                    ),
-                    CONF_HOURLY_CLOUD_LAYERS: hourly
-                    and bool(user_input[CONF_HOURLY_CLOUD_LAYERS]),
-                    CONF_HOURLY_TEMP_PERCENTILES: hourly
-                    and bool(user_input[CONF_HOURLY_TEMP_PERCENTILES]),
-                }
-            )
+            # Stash the normalised changes and route to the summary step, which
+            # spells out the field and traffic consequences before saving (#145).
+            self._pending_hourly = {
+                CONF_HOURLY_FORECAST: hourly,
+                CONF_HOURLY_HORIZON_DAYS: int(user_input[CONF_HOURLY_HORIZON_DAYS]),
+                CONF_HOURLY_CLOUD_LAYERS: hourly
+                and bool(user_input[CONF_HOURLY_CLOUD_LAYERS]),
+                CONF_HOURLY_TEMP_PERCENTILES: hourly
+                and bool(user_input[CONF_HOURLY_TEMP_PERCENTILES]),
+            }
+            return await self.async_step_summary()
 
         choices = {days: _horizon_label(days) for days in HOURLY_HORIZON_CHOICES}
         return self.async_show_form(
@@ -698,6 +782,74 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
                 }
             ),
         )
+
+    async def async_step_summary(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Confirmation step after the hourly page (issue #145).
+
+        A form with no fields: it states, through ``description_placeholders``,
+        which forecast fields the chosen hourly options add or remove compared
+        with the current ones, and the estimated traffic per refresh and per day
+        for the combination. Submitting it saves the pending changes; the entry
+        then reloads with the new feature set (``__init__.py`` update listener).
+        """
+        assert self._pending_hourly is not None
+        if user_input is not None:
+            return self._merge_and_create(self._pending_hourly)
+
+        return self.async_show_form(
+            step_id="summary",
+            data_schema=vol.Schema({}),
+            description_placeholders=self._summary_placeholders(),
+        )
+
+    def _summary_placeholders(self) -> dict[str, str]:
+        """Build the summary step's field-diff and traffic placeholders (#145)."""
+        assert self._pending_hourly is not None
+        current = self.config_entry.options
+        pending = self._pending_hourly
+
+        current_fields = _forecast_fields(
+            hourly=bool(current.get(CONF_HOURLY_FORECAST, False)),
+            cloud_layers=bool(current.get(CONF_HOURLY_CLOUD_LAYERS, False)),
+            temp_percentiles=bool(current.get(CONF_HOURLY_TEMP_PERCENTILES, False)),
+        )
+        pending_fields = _forecast_fields(
+            hourly=bool(pending[CONF_HOURLY_FORECAST]),
+            cloud_layers=bool(pending[CONF_HOURLY_CLOUD_LAYERS]),
+            temp_percentiles=bool(pending[CONF_HOURLY_TEMP_PERCENTILES]),
+        )
+        added = [f for f in pending_fields if f not in current_fields]
+        removed = [f for f in current_fields if f not in pending_fields]
+
+        estimate = estimate_traffic(
+            hourly=bool(pending[CONF_HOURLY_FORECAST]),
+            horizon_days=int(pending[CONF_HOURLY_HORIZON_DAYS]),
+            cloud_layers=bool(pending[CONF_HOURLY_CLOUD_LAYERS]),
+            temp_percentiles=bool(pending[CONF_HOURLY_TEMP_PERCENTILES]),
+            measured_bytes=self._measured_bytes(),
+        )
+
+        return {
+            "added": ", ".join(added) if added else "none",
+            "removed": ", ".join(removed) if removed else "none",
+            "traffic": _traffic_text(estimate),
+        }
+
+    def _measured_bytes(self) -> dict[str, int]:
+        """Measured fetch bytes per parameter from the loaded entry, if any.
+
+        The estimate prefers a file's last measured fetch over its table figure
+        (issue #145). The numbers live in the forecast coordinator's store, on
+        ``entry.runtime_data`` — absent when the entry is not currently loaded,
+        in which case the estimate is entirely from the table.
+        """
+        runtime = getattr(self.config_entry, "runtime_data", None)
+        try:
+            return runtime.forecast_coordinator.store.measured_bytes()
+        except AttributeError:
+            return {}
 
     async def async_step_pollen(
         self, user_input: dict[str, Any] | None = None
