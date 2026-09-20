@@ -176,22 +176,22 @@
           "pollen": "Abilita monitoraggio pollini"
         },
         "data_description": {
-          "hourly_forecast": "Le previsioni orarie vengono scaricate con richieste HTTP Range; il costo dipende dall'orizzonte scelto nel passaggio successivo. Aggiornate ogni 3 ore al massimo. Disabilitate per impostazione predefinita per rispettare il budget di traffico.",
-          "pollen": "Mostra le concentrazioni orarie di pollini dalla stazione di misurazione automatica più vicina (granuli/m³). Scaricato al massimo una volta all'ora. Disabilitato per impostazione predefinita."
+          "hourly_forecast": "Offre: una previsione oraria sull'entità meteo (condizione, temperatura, precipitazioni e relativa probabilità, vento, raffiche, direzione, radiazione globale, isoterma di zero gradi); la condizione attuale segue il simbolo orario. Costo: circa 0,3 MB per aggiornamento con l'orizzonte predefinito. I dati vengono aggiornati non appena MeteoSvizzera modifica le prossime ore, in pratica circa una volta all'ora, che una scheda sia aperta o meno. Non serve per: la previsione giornaliera, il sensore dell'isoterma di zero gradi e i sensori «oggi».",
+          "pollen": "Offre: un sensore per ogni tipo di polline misurato dalla stazione, in granuli/m³. Graminacee e betulla sono attivi, gli altri restano disattivati finché non li attivi nelle impostazioni delle entità. Costo: un piccolo file all'ora."
         }
       },
       "hourly": {
         "title": "Orizzonte delle previsioni orarie",
-        "description": "Quanto in avanti scaricare le previsioni orarie, in giorni di calendario locali interi. Un orizzonte più breve scarica meno. «Ciclo completo» scarica tutte le ~220 ore (circa 9 giorni).",
+        "description": "Fin dove arriva la previsione oraria e quali extra contiene. I costi sono stati misurati per una località nel settembre 2026; il download della diagnostica dell'integrazione mostra i valori reali per la tua.",
         "data": {
           "hourly_horizon_days": "Orizzonte di previsione",
           "hourly_cloud_layers": "Includi gli strati di copertura nuvolosa",
           "hourly_temp_percentiles": "Includi i percentili di temperatura"
         },
         "data_description": {
-          "hourly_horizon_days": "Predefinito: il resto di oggi più due giorni interi (circa 7–11 MB per aggiornamento). «Ciclo completo» scarica ogni ora (circa 30 MB per aggiornamento).",
-          "hourly_cloud_layers": "Aggiunge cloud_coverage (il massimo degli strati alto, medio e basso) e i tre strati come attributi orari. Scarica tre file aggiuntivi per aggiornamento, quadruplicando circa il traffico orario. Disattivato per impostazione predefinita.",
-          "hourly_temp_percentiles": "Aggiunge il 10° e il 90° percentile di temperatura (la banda di incertezza della previsione) come attributi orari. Scarica due file aggiuntivi per aggiornamento. Disattivato per impostazione predefinita."
+          "hourly_horizon_days": "Contato in giorni di calendario locali interi. Predefinito: il resto di oggi più due giorni interi (49–72 ore). Fin lì ogni file orario viene letto riga per riga e resta piccolo. Orizzonti più lunghi e «Ciclo completo» (circa 220 ore, 9 giorni) leggono a ogni aggiornamento una parte molto più grande dei file da ~30 MB; sceglili solo se servono.",
+          "hourly_cloud_layers": "Offre: cloud_coverage (il massimo degli strati alto, medio e basso) e i tre strati per ogni ora di previsione. Costo: circa 0,05 MB per aggiornamento, tre piccoli blocchi per punto. Disattivato per impostazione predefinita.",
+          "hourly_temp_percentiles": "Offre: temperature_p10 e temperature_p90, la banda di incertezza della previsione, per ogni ora di previsione. Costo: circa 0,5 MB per aggiornamento, l'extra più costoso (due file letti riga per riga). Disattivato per impostazione predefinita."
         }
       },
       "pollen_station": {

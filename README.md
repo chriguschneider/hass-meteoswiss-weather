@@ -166,13 +166,15 @@ Two honest consequences:
   30 MB per parameter per hour.** Daily forecasts are tiny and are the
   default. The hourly option is opt-in; with it on, the data is fetched on the
   integration's own forecast refresh (whether or not a card is open), using
-  HTTP Range requests so only the configured point's block (and, for the one
-  file that needs it, a prefix covering your horizon) is downloaded. It refreshes
-  in tiers tied to the model run rhythm: the near term at the ICON-CH1 runs (or
-  every 3 h), days 2+ at the ICON-CH2 runs (or every 6 h). That is roughly **70 MB/day worst case
-  at the default 2-day horizon** instead of the ~1 GB/day a full hourly
-  download would cost. A `hourly_horizon_days` option trades horizon for
-  traffic. MeteoSwiss has announced a per-point API for the end of 2026, after
+  HTTP Range requests so only the configured point's rows are downloaded: a
+  contiguous block where a file is sorted by point, the point's row inside
+  each hour block where it is sorted by time. A small canary read decides
+  whether a new run changed anything; MeteoSwiss adjusts the coming hours
+  about every hour, so expect roughly one refresh per hour. Measured in
+  September 2026 with everything switched on: about **1.2 MB per refresh,
+  some 30 MB a day**, instead of the ~1 GB/day a full hourly download would
+  cost. A `hourly_horizon_days` option trades horizon for traffic; horizons
+  beyond the default read much larger parts of the files. MeteoSwiss has announced a per-point API for the end of 2026, after
   which even this goes away
   ([ADR-0002](docs/adr/0002-traffic-budget-bulk-local-forecast.md)).
 

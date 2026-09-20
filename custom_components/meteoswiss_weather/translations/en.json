@@ -176,22 +176,22 @@
           "pollen": "Enable pollen monitoring"
         },
         "data_description": {
-          "hourly_forecast": "The hourly forecast is fetched with HTTP Range requests, so the cost depends on the horizon you pick next. Refreshed at most every 3 hours. Disabled by default to stay within the fair-use traffic budget.",
-          "pollen": "Shows hourly pollen concentrations from the nearest automatic monitoring station (grains/m³). Fetched at most once per hour. Disabled by default."
+          "hourly_forecast": "Gives you: an hourly forecast on the weather entity (condition, temperature, precipitation and its probability, wind, gusts, direction, global radiation, zero-degree level), and the current condition follows the hourly symbol. Costs: about 0.3 MB per refresh at the default horizon. The data is refreshed whenever MeteoSwiss changed the coming hours, in practice about once an hour, whether or not a card is open. Not needed for: the daily forecast, the zero-degree level sensor and the \"today\" sensors.",
+          "pollen": "Gives you: one sensor per pollen type the station measures, in grains/m³. Grass and birch are enabled, the others stay disabled until you enable them in the entity settings. Costs: one small file per hour."
         }
       },
       "hourly": {
         "title": "Hourly forecast horizon",
-        "description": "How far ahead to fetch the hourly forecast, counted in full local calendar days. A shorter horizon downloads less. \"Full run\" fetches all ~220 hours (about 9 days).",
+        "description": "How far ahead the hourly forecast reaches and which extras it carries. Costs were measured for one location in September 2026; the integration's diagnostics download shows the real numbers for yours.",
         "data": {
           "hourly_horizon_days": "Forecast horizon",
           "hourly_cloud_layers": "Include cloud cover layers",
           "hourly_temp_percentiles": "Include temperature percentiles"
         },
         "data_description": {
-          "hourly_horizon_days": "Default: the rest of today plus two full days (about 7–11 MB per refresh). \"Full run\" fetches every hour (about 30 MB per refresh).",
-          "hourly_cloud_layers": "Adds cloud_coverage (the maximum of the high, mid and low layers) plus the three layers as hourly attributes. Downloads three extra bulk files per refresh, so it roughly quadruples the hourly traffic. Off by default.",
-          "hourly_temp_percentiles": "Adds the 10th and 90th temperature percentiles (the forecast's uncertainty band) as hourly attributes. Downloads two extra bulk files per refresh. Off by default."
+          "hourly_horizon_days": "Counted in full local calendar days. Default: the rest of today plus two full days (49–72 hours). Up to there every hourly file is read row by row and stays small. Longer horizons and \"Full run\" (about 220 hours, 9 days) read a much larger part of the ~30 MB files on every refresh, so choose them only if you need them.",
+          "hourly_cloud_layers": "Gives you: cloud_coverage (the maximum of the high, mid and low layers) plus the three layers on every forecast hour. Costs: about 0.05 MB per refresh, three small per-point blocks. Off by default.",
+          "hourly_temp_percentiles": "Gives you: temperature_p10 and temperature_p90, the forecast's uncertainty band, on every forecast hour. Costs: about 0.5 MB per refresh, the most expensive extra (two files read row by row). Off by default."
         }
       },
       "pollen_station": {

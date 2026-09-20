@@ -11,6 +11,17 @@ using the matching section below as release notes.
 
 ### Fixed
 
+- **The option dialog and the docs describe what each setting really does and
+  costs.** The texts still promised a refresh "at most every 3 hours", "7–11 MB
+  per refresh" and cloud layers that "quadruple the traffic". Measured on a
+  live instance, everything switched on costs about 1.2 MB per refresh, about
+  hourly; the cloud layers are the cheapest extra (~0.05 MB) and the
+  temperature percentiles the most expensive (~0.5 MB). Every option now says
+  what it gives you, what it costs and what works without it, in all four
+  languages, and `docs/CONFIGURATION.md` lists the entities that are created
+  disabled. `docs/ogd.md` records that MeteoSwiss adjusts the near term about
+  every hour, not on the 3-hourly rhythm measured in August.
+
 - **`radiation` and `zero_degree_level` now appear in the hourly forecast** (#135).
   Both fields were already fetched and parsed (`gre000h0` / `zprfr0hs`, part of
   `HOURLY_REQUIRED_PARAMS`) but were silently dropped by `_as_hourly_forecast`.
