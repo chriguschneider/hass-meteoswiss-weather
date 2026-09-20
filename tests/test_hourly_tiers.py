@@ -19,11 +19,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from freezegun import freeze_time
 from homeassistant.core import HomeAssistant
 
 from custom_components.meteoswiss_weather.const import (
     HOURLY_FAR_MAX_AGE,
+    HOURLY_HORIZON_FULL_RUN,
     HOURLY_NEAR_HORIZON_DAYS,
     HOURLY_NEAR_MAX_AGE,
     HOURLY_POINT_MAJOR_MAX_AGE,
@@ -89,7 +91,10 @@ class _CanaryBackend:
     """
 
     def __init__(self) -> None:
-        self.calls: list[tuple[tuple[str, ...], int]] = []
+        # Each call records (params, horizon_days, window_start_override): the
+        # far remainder passes a window start (issue #143), the near window does
+        # not, so the tuple tells the two date-major tiers apart.
+        self.calls: list[tuple[tuple[str, ...], int, datetime | None]] = []
         self.canary_calls: list[tuple[str, int]] = []
         self.content = 0.0
         self.fail_canary = False
@@ -116,8 +121,11 @@ class _CanaryBackend:
     async def fetch_daily(self, point, *, run=None):  # pragma: no cover
         return DailyBundle(daily=[])
 
-    async def fetch_hourly(self, point, *, horizon_days=-1, params=(), run=None):
-        self.calls.append((tuple(params), horizon_days))
+    async def fetch_hourly(
+        self, point, *, horizon_days=-1, params=(), run=None,
+        window_start_override=None,
+    ):
+        self.calls.append((tuple(params), horizon_days, window_start_override))
         return [self._hour("", h) for h in range(24)]
 
     async def fetch_hourly_canary(self, point, param, *, hours, run=None):
@@ -143,14 +151,16 @@ def _make_refresher(hass, backend, *, horizon_days=_HORIZON_DAYS, **kwargs):
     return refresher, store
 
 
-def _tier_of(call: tuple[tuple[str, ...], int]) -> str:
-    """Label a recorded fetch as near / far / point-major."""
-    params, horizon = call
+def _tier_of(call: tuple[tuple[str, ...], int, datetime | None]) -> str:
+    """Label a recorded fetch as near / far / point-major.
+
+    The far remainder is the only date-major fetch that passes a window start
+    (issue #143); the near window and the point-major group do not.
+    """
+    params, _horizon, window_start = call
     if params == tuple(HOURLY_POINT_MAJOR_PARAMS):
         return "point_major"
-    if params == tuple(HOURLY_DATE_MAJOR_PARAMS):
-        return "near" if horizon == HOURLY_NEAR_HORIZON_DAYS else "far"
-    return f"unexpected:{params}:{horizon}"
+    return "far" if window_start is not None else "near"
 
 
 # ---------------------------------------------------------------------------
@@ -158,13 +168,14 @@ def _tier_of(call: tuple[tuple[str, ...], int]) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def test_first_refresh_fetches_far_and_point_major(
+async def test_first_refresh_fetches_near_and_point_major(
     hass: HomeAssistant,
 ) -> None:
-    """The first refresh downloads far + point-major and reads no canary.
+    """The first refresh downloads the near window + point-major, reads no canary.
 
-    Both groups are "never fetched", so they fetch straight away — a canary read
-    would have nothing in the store to compare against.
+    At the default horizon the near window already covers the whole horizon, so
+    there is no far remainder to fetch; both groups are "never fetched", so they
+    fetch straight away — a canary read would have nothing to compare against.
     """
     backend = _CanaryBackend()
     refresher, store = _make_refresher(hass, backend)
@@ -172,12 +183,38 @@ async def test_first_refresh_fetches_far_and_point_major(
     with freeze_time(run):
         assert await refresher.async_refresh(_run(run)) is True
 
-    assert [_tier_of(c) for c in backend.calls] == ["far", "point_major"]
+    assert [_tier_of(c) for c in backend.calls] == ["near", "point_major"]
     assert backend.canary_calls == []  # nothing to canary on the first run
+    # Acceptance #143.4: the default horizon never has a far remainder, so it
+    # never pays the far tier — its behaviour and cost are unchanged.
+    assert not refresher._has_far_remainder
     hourly = hourly_from_store(store, refresher.demanded_params)
     assert len(hourly) == 24
     assert hourly[5].temperature == 5.0
     assert hourly[5].symbol == 1
+
+
+async def test_default_horizon_changed_canary_never_fetches_far(
+    hass: HomeAssistant,
+) -> None:
+    """Acceptance #143.4: at the default horizon a changed run refreshes the near
+    window (the whole horizon) and never triggers a far-remainder fetch."""
+    backend = _CanaryBackend()
+    refresher, _store = _make_refresher(hass, backend)  # default horizon (2)
+    start = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+    with freeze_time(start) as frozen:
+        await refresher.async_refresh(_run(start))
+        backend.calls.clear()
+        # Several changed runs over many hours: never a far fetch.
+        for hour in range(1, 8):
+            backend.content += 1.0
+            frozen.move_to(start + timedelta(hours=hour))
+            await refresher.async_refresh(_run(start + timedelta(hours=hour)))
+
+    assert all(_tier_of(c) != "far" for c in backend.calls)
+    # The near window is fetched for the whole configured horizon, as before.
+    near = next(c for c in backend.calls if _tier_of(c) == "near")
+    assert near[1] == _HORIZON_DAYS
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +262,7 @@ async def test_unchanged_canary_confirms_without_fetching(
 async def test_changed_canary_refreshes_both_groups_once(
     hass: HomeAssistant,
 ) -> None:
-    """A new run whose canary differs refetches far + point-major, exactly once."""
+    """A new run whose canary differs refetches near + point-major, exactly once."""
     backend = _CanaryBackend()
     refresher, store = _make_refresher(hass, backend)
     start = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
@@ -239,7 +276,7 @@ async def test_changed_canary_refreshes_both_groups_once(
         new_run = datetime(2026, 8, 27, 3, 0, tzinfo=UTC)
         assert await refresher.async_refresh(_run(new_run)) is True
 
-    assert [_tier_of(c) for c in backend.calls] == ["far", "point_major"]
+    assert [_tier_of(c) for c in backend.calls] == ["near", "point_major"]
     # The store carries the new content, not confirmed (it was fetched).
     series = store.get(HOURLY_TEMPERATURE)
     assert series is not None
@@ -282,8 +319,8 @@ async def test_changed_date_major_only_leaves_point_major_confirmed(
         frozen.move_to(start + timedelta(hours=1))
         await refresher.async_refresh(_run(datetime(2026, 8, 27, 3, 0, tzinfo=UTC)))
 
-    # Only the date-major group refetched; point-major stayed confirmed.
-    assert [_tier_of(c) for c in backend.calls] == ["far"]
+    # Only the date-major near window refetched; point-major stayed confirmed.
+    assert [_tier_of(c) for c in backend.calls] == ["near"]
     assert store.get(HOURLY_SYMBOL).provenance.confirmed is True
 
 
@@ -305,45 +342,50 @@ async def test_canary_failure_counts_as_changed(hass: HomeAssistant) -> None:
         frozen.move_to(start + timedelta(hours=1))
         await refresher.async_refresh(_run(datetime(2026, 8, 27, 3, 0, tzinfo=UTC)))
 
-    assert [_tier_of(c) for c in backend.calls] == ["far", "point_major"]
+    assert [_tier_of(c) for c in backend.calls] == ["near", "point_major"]
 
 
 async def test_far_fallback_refetches_without_a_new_run(
     hass: HomeAssistant,
 ) -> None:
-    """Past the far fallback the far tier refetches even on an unchanged run.
+    """Past the far fallback the far remainder refetches even on an unchanged run.
 
     A stale tier is due before the canary is consulted, so no canary read is
-    needed to force it.
+    needed to force it. Uses horizon 3, which reaches beyond the near window and
+    so has a far remainder at all.
     """
     backend = _CanaryBackend()
-    refresher, _store = _make_refresher(hass, backend)
+    refresher, _store = _make_refresher(hass, backend, horizon_days=3)
     start = datetime(2026, 8, 27, 5, 0, tzinfo=UTC)
     with freeze_time(start) as frozen:
         await refresher.async_refresh(_run(start))
         backend.calls.clear()
         backend.canary_calls.clear()
 
-        # Same run, but past the 6 h far fallback (and the point-major one).
+        # Same run, but past the 6 h far fallback (and the 3 h near one).
         frozen.move_to(start + HOURLY_FAR_MAX_AGE + timedelta(seconds=1))
         await refresher.async_refresh(_run(start))
 
     tiers = [_tier_of(c) for c in backend.calls]
-    assert "far" in tiers and "near" not in tiers
+    assert "far" in tiers
     assert backend.canary_calls == []  # the fallback fired, no probe needed
 
 
 async def test_near_fallback_refetches_near_not_far(hass: HomeAssistant) -> None:
-    """Past the near fallback (but within far's) the near tier refetches, not far."""
+    """Past the near fallback (but within far's) the near tier refetches, not far.
+
+    Uses horizon 3 so a far remainder exists and can be shown to stay put while
+    only the near window refetches.
+    """
     backend = _CanaryBackend()
-    refresher, _store = _make_refresher(hass, backend)
+    refresher, _store = _make_refresher(hass, backend, horizon_days=3)
     start = datetime(2026, 8, 27, 5, 0, tzinfo=UTC)
     with freeze_time(start) as frozen:
-        await refresher.async_refresh(_run(start))  # far + point-major at t0
+        await refresher.async_refresh(_run(start))  # near + far + point-major at t0
         backend.calls.clear()
 
         # Same run, +3 h past the near fetch (near stale) but 3 h < far's 6 h
-        # (far fresh): the near tier refetches, the far tier does not.
+        # (far fresh): the near window refetches, the far remainder does not.
         frozen.move_to(start + HOURLY_NEAR_MAX_AGE + timedelta(seconds=1))
         await refresher.async_refresh(_run(start))
 
@@ -368,6 +410,127 @@ async def test_point_major_fallback_refetches(hass: HomeAssistant) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Split near/far refresh for a horizon beyond the near window (issue #143)
+# ---------------------------------------------------------------------------
+
+
+class _WindowBackend(_CanaryBackend):
+    """Returns window-accurate hours so ``hourly_from_store`` spans the horizon.
+
+    A date-major fetch fills only the fields of the params it was asked for
+    (temperature for the near window / far remainder); the point-major group
+    fills symbol/precipitation/wind. Every call returns exactly the hours of its
+    effective window, so the store's union reaches the configured horizon only
+    when the far hours are present.
+    """
+
+    def _fields(self, params, h):
+        out: dict[str, float | int] = {}
+        for p in params:
+            field = HOURLY_FIELD_BY_PARAM[p]
+            out[field] = 1 if field == "symbol" else round(float(h) + self.content, 2)
+        return out
+
+    async def fetch_hourly(
+        self, point, *, horizon_days=-1, params=(), run=None,
+        window_start_override=None,
+    ):
+        from custom_components.meteoswiss_weather.ogd.hourly import horizon_end_utc
+
+        self.calls.append((tuple(params), horizon_days, window_start_override))
+        now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+        end = horizon_end_utc(horizon_days, now)
+        start = window_start_override if window_start_override is not None else now
+        hours: list[HourlyForecast] = []
+        when = start
+        # Cap the full-run case so the fake terminates.
+        hard_end = end if end is not None else now + timedelta(hours=240)
+        while when < hard_end:
+            h = int((when - _BASE).total_seconds() // 3600)
+            hours.append(HourlyForecast(time=when, **self._fields(params, h)))
+            when += timedelta(hours=1)
+        return hours
+
+
+@pytest.mark.parametrize("horizon_days", [3, HOURLY_HORIZON_FULL_RUN])
+async def test_changed_canary_refreshes_near_only_far_on_cadence(
+    hass: HomeAssistant, horizon_days: int
+) -> None:
+    """Acceptance #143.1: a changed canary refreshes only the near window; the
+    far remainder is fetched at most once per HOURLY_FAR_MAX_AGE."""
+    backend = _CanaryBackend()
+    refresher, _store = _make_refresher(hass, backend, horizon_days=horizon_days)
+    start = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+    with freeze_time(start) as frozen:
+        # First refresh: near + far + point-major all fetch (nothing stored yet).
+        await refresher.async_refresh(_run(start))
+        assert [_tier_of(c) for c in backend.calls] == ["near", "far", "point_major"]
+        backend.calls.clear()
+
+        # Four consecutive changed runs within the 6 h far window: each refreshes
+        # the near window, and the far remainder is never touched.
+        for hour in range(1, 5):
+            backend.content += 1.0
+            frozen.move_to(start + timedelta(hours=hour))
+            await refresher.async_refresh(_run(start + timedelta(hours=hour)))
+        tiers = [_tier_of(c) for c in backend.calls]
+        assert "far" not in tiers
+        assert tiers.count("near") == 4  # one near per changed run
+        backend.calls.clear()
+
+        # Past the far fallback: the far remainder refetches, exactly once.
+        frozen.move_to(start + HOURLY_FAR_MAX_AGE + timedelta(seconds=1))
+        await refresher.async_refresh(_run(start + HOURLY_FAR_MAX_AGE))
+        assert [_tier_of(c) for c in backend.calls].count("far") == 1
+
+
+async def test_far_remainder_starts_beyond_the_near_window(
+    hass: HomeAssistant,
+) -> None:
+    """The far remainder is fetched from the near-window end, not the run start."""
+    from custom_components.meteoswiss_weather.ogd.hourly import horizon_end_utc
+
+    backend = _CanaryBackend()
+    refresher, _store = _make_refresher(hass, backend, horizon_days=3)
+    start = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+    with freeze_time(start):
+        await refresher.async_refresh(_run(start))
+
+    far = next(c for c in backend.calls if _tier_of(c) == "far")
+    _params, _horizon, window_start = far
+    assert window_start == horizon_end_utc(HOURLY_NEAR_HORIZON_DAYS, start)
+
+
+async def test_horizon_reached_after_near_only_refresh_on_new_run(
+    hass: HomeAssistant,
+) -> None:
+    """Acceptance #143.3: the hourly forecast still reaches the configured horizon
+    right after a near-only refresh on a new run — the far hours are held over."""
+    backend = _WindowBackend()
+    refresher, store = _make_refresher(hass, backend, horizon_days=3)
+    start = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+    with freeze_time(start) as frozen:
+        await refresher.async_refresh(_run(start))
+        full = hourly_from_store(store, refresher.demanded_params)
+        assert full  # the horizon is populated
+        last_hour = full[-1].time
+
+        # A new run one hour later whose canary changed: only the near window
+        # (and the point-major group) refetch; the far remainder is not due.
+        backend.content = 9.0
+        backend.calls.clear()
+        frozen.move_to(start + timedelta(hours=1))
+        await refresher.async_refresh(_run(start + timedelta(hours=1)))
+        assert "far" not in [_tier_of(c) for c in backend.calls]
+
+        after_near = hourly_from_store(store, refresher.demanded_params)
+
+    # The forecast still reaches the same far horizon: the previous run's far
+    # hours were kept, not dropped by the newer near-only window (issue #143).
+    assert after_near[-1].time == last_hour
+
+
+# ---------------------------------------------------------------------------
 # The near tier still never overshoots a narrowed horizon (issue #92)
 # ---------------------------------------------------------------------------
 
@@ -375,8 +538,11 @@ async def test_point_major_fallback_refetches(hass: HomeAssistant) -> None:
 class _TrimmingCanaryBackend(_CanaryBackend):
     """Trims its synthetic run to the requested horizon."""
 
-    async def fetch_hourly(self, point, *, horizon_days=-1, params=(), run=None):
-        self.calls.append((tuple(params), horizon_days))
+    async def fetch_hourly(
+        self, point, *, horizon_days=-1, params=(), run=None,
+        window_start_override=None,
+    ):
+        self.calls.append((tuple(params), horizon_days, window_start_override))
         from custom_components.meteoswiss_weather.ogd.hourly import horizon_end_utc
 
         end = horizon_end_utc(horizon_days, datetime.now(UTC))
@@ -406,7 +572,11 @@ async def test_near_tier_never_overshoots_configured_horizon(
     assert len(after_near) == len(after_far)
     assert all(h.symbol is not None for h in after_near)
     near_calls = [c for c in backend.calls if c[0] == tuple(HOURLY_DATE_MAJOR_PARAMS)]
-    assert near_calls[-1][1] == 0  # the capped horizon, not the default reach of 1
+    assert near_calls[-1][1] == 0  # the capped horizon, not the near reach of 2
+    # A narrowed horizon (0) never reaches beyond the near window, so it never
+    # triggers a far-remainder fetch.
+    assert not refresher._has_far_remainder
+    assert all(_tier_of(c) != "far" for c in backend.calls)
 
 
 # ---------------------------------------------------------------------------
@@ -445,8 +615,11 @@ async def test_refresher_none_run_returns_false(hass: HomeAssistant) -> None:
 class _GatedCanaryBackend(_CanaryBackend):
     """Fills the gated date-major fields when asked."""
 
-    async def fetch_hourly(self, point, *, horizon_days=-1, params=(), run=None):
-        self.calls.append((tuple(params), horizon_days))
+    async def fetch_hourly(
+        self, point, *, horizon_days=-1, params=(), run=None,
+        window_start_override=None,
+    ):
+        self.calls.append((tuple(params), horizon_days, window_start_override))
         want = set(params)
         return [
             HourlyForecast(
@@ -471,7 +644,7 @@ def _date_major_calls(backend) -> list[tuple[str, ...]]:
     """Params of the recorded date-major fetches (not the point-major group)."""
     return [
         params
-        for params, _ in backend.calls
+        for params, _horizon, _ws in backend.calls
         if params != tuple(HOURLY_POINT_MAJOR_PARAMS)
     ]
 
@@ -647,9 +820,12 @@ class _ZeroDegreeBackend(_CanaryBackend):
         super().__init__()
         self.runs: list = []
 
-    async def fetch_hourly(self, point, *, horizon_days=-1, params=(), run=None):
+    async def fetch_hourly(
+        self, point, *, horizon_days=-1, params=(), run=None,
+        window_start_override=None,
+    ):
         self.runs.append(run)
-        self.calls.append((tuple(params), horizon_days))
+        self.calls.append((tuple(params), horizon_days, window_start_override))
         return [
             HourlyForecast(
                 time=_BASE + timedelta(hours=h),

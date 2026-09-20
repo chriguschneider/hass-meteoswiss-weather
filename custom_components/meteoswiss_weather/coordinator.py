@@ -83,6 +83,7 @@ from .ogd import (
     fetch_current,
     fetch_pollen_current,
     fetch_precip_current,
+    horizon_end_utc,
     latest_run_from_day_item,
 )
 from .ogd.const import (
@@ -148,14 +149,17 @@ class HourlyRefresher:
     it to the run (:meth:`~.store.ForecastStore.confirm`), different values — or a
     canary that cannot be read — refresh the group. The date-major group (the
     temperature file plus the gated cloud and percentile files, issue #69) is
-    represented by the temperature file and, when its canary changed, refreshed
-    over the far horizon; the point-major group (precip, symbol, wind, gust,
-    direction, the B7/B8/B10 additions) is represented by the wind file. The
-    landing-hour timetable of ADR-0002 revision 2 is gone; the near/far/point-major
-    ``max_age`` fallbacks remain and still force a refresh so a canary blind spot
-    can never let a series go stale unbounded. Which files each group holds comes
-    from the demand registry (:func:`~.demand.hourly_demand`), so a disabled
-    feature demands nothing.
+    represented by the temperature file and split by distance (issue #143): a
+    changed canary refreshes the **near window** (what fits row addressing under
+    the request cap, ~100–150 KB) while the **far remainder** beyond it rides the
+    far cadence alone and is fetched by row addressing in cap-sized windows, never
+    the multi-MB prefix the whole horizon used to fall to. The point-major group
+    (precip, symbol, wind, gust, direction, the B7/B8/B10 additions) is
+    represented by the wind file. The landing-hour timetable of ADR-0002 revision
+    2 is gone; the near/far/point-major ``max_age`` fallbacks remain and still
+    force a refresh so a canary blind spot can never let a series go stale
+    unbounded. Which files each group holds comes from the demand registry
+    (:func:`~.demand.hourly_demand`), so a disabled feature demands nothing.
 
     A refresh that fails for one parameter keeps its last good series (the store
     does this) and must never fail the daily forecast: :meth:`async_refresh`
@@ -190,12 +194,14 @@ class HourlyRefresher:
             cloud_layers=cloud_layers,
             temp_percentiles=temp_percentiles,
         )
-        # The near tier is a cheap prefix of the far window, so it must never
-        # reach past the configured horizon: a user who narrows the horizon
-        # below the near default (only horizon 0, "today only") would otherwise
-        # see the near fetch leak tomorrow's temperature-only hours — with no
-        # symbol/precip/wind, since the point-major group stays trimmed to the
-        # configured horizon — that flicker in and out as near and far alternate.
+        # The near window is the part of the horizon that fits row addressing
+        # under the request cap (``HOURLY_NEAR_HORIZON_DAYS``, up to ~72 h): it is
+        # refreshed on every changed run because MeteoSwiss adjusts the near term
+        # about hourly (docs/ogd.md §E4). It must never reach past the configured
+        # horizon: a user who narrows the horizon below the near reach (e.g.
+        # horizon 0, "today only") would otherwise see the near fetch leak
+        # temperature-only hours — with no symbol/precip/wind, since the
+        # point-major group stays trimmed to the configured horizon.
         self._near_horizon_days = (
             self._horizon_days
             if (
@@ -203,6 +209,15 @@ class HourlyRefresher:
                 and self._horizon_days < HOURLY_NEAR_HORIZON_DAYS
             )
             else HOURLY_NEAR_HORIZON_DAYS
+        )
+        # Whether the configured horizon reaches beyond the near window, i.e.
+        # there is a far remainder to refresh at all (issue #143). The default
+        # and every horizon the near window already covers has none, so their
+        # cost is unchanged; only a longer horizon or the full run pays the far
+        # tier, and then by row addressing in cap-sized windows, not a prefix.
+        self._has_far_remainder = (
+            self._horizon_days == HOURLY_HORIZON_FULL_RUN
+            or self._horizon_days > HOURLY_NEAR_HORIZON_DAYS
         )
         # Per-group bookkeeping. The ``_fetch`` stamps are when each tier last
         # actually downloaded (the max-age clocks); the ``_run`` stamps are the
@@ -297,21 +312,33 @@ class HourlyRefresher:
     async def _refresh_date_major(
         self, run: Run, stamp: datetime, now: datetime
     ) -> bool:
-        """Refresh the date-major group when the canary or a fallback says so.
+        """Refresh the date-major group, split into a near window and a far tail.
 
         The date-major group is the temperature file plus, when enabled, the B9
-        cloud and B11 percentile files (issue #69), fetched together as one
-        horizon prefix. The temperature file is the group's canary. A group whose
-        canary changed is refreshed over the **far** horizon (with row addressing
-        the whole horizon is ~100–150 KB and this guarantees the far days are
-        current on every real change); the cheaper near-only prefix runs only when
-        the near fallback fires while far is still fresh. An unchanged canary keeps
-        the stored series and re-stamps it to the run.
+        cloud and B11 percentile files (issue #69). The temperature file is the
+        group's canary. The refresh is split by **distance**, not only by trigger
+        (issue #143):
+
+        - the **near window** (``_near_horizon_days``, what fits row addressing
+          under the request cap) is refreshed on every changed run — MeteoSwiss
+          adjusts the near term about hourly — or on the near fallback; it is
+          ~100–150 KB of row reads;
+        - the **far remainder** beyond the near window is refreshed only at the
+          far cadence (:data:`HOURLY_FAR_MAX_AGE`), never on a canary change,
+          because it was the multi-MB part of the pre-#143 refresh (a horizon of
+          ~80 h or more fell to a prefix). It is fetched by row addressing in
+          consecutive cap-sized windows (:func:`~.ogd.hourly.fetch_series_windows`)
+          and merged into the store, which keeps the previous run's far hours
+          until this replaces them (:meth:`~.store.ForecastStore.put`).
+
+        A new run whose canary proved the group unchanged and whose far tail is
+        still fresh keeps the stored series and re-stamps it to the run.
         """
         params = self._demand.date_major
         run_changed = stamp != self._date_major_run
-        # Read the canary at most once, and only when a fallback has not already
-        # made a tier due (a never-fetched or stale tier fetches without a probe).
+        # Read the canary at most once, and only when the near fallback has not
+        # already made the near window due (a never-fetched or stale tier fetches
+        # without a probe).
         verdict: list[bool] = []
 
         async def canary_changed() -> bool:
@@ -319,21 +346,7 @@ class HourlyRefresher:
                 verdict.append(await self._canary_changed(params[0], run, now))
             return verdict[0]
 
-        far_due = (
-            self._far_fetch is None
-            or now - self._far_fetch >= HOURLY_FAR_MAX_AGE
-            or (run_changed and await canary_changed())
-        )
-        if far_due:
-            hours = await self._backend.fetch_hourly(
-                self._point,
-                horizon_days=self._horizon_days,
-                params=params,
-                run=run,
-            )
-            self._far_fetch = self._near_fetch = now
-            self._date_major_run = stamp
-            return self._publish(hours, params, stamp, now)
+        changed = False
 
         near_due = (
             self._near_fetch is None
@@ -348,16 +361,36 @@ class HourlyRefresher:
                 run=run,
             )
             self._near_fetch = now
-            self._date_major_run = stamp
-            return self._publish(hours, params, stamp, now)
+            changed = self._publish(hours, params, stamp, now) or changed
 
-        if run_changed:
-            # A new run whose canary proved the group unchanged: keep the stored
-            # series but re-stamp it to this run so it reads as current, not stale.
+        far_fetched = False
+        if self._has_far_remainder:
+            far_due = (
+                self._far_fetch is None
+                or now - self._far_fetch >= HOURLY_FAR_MAX_AGE
+            )
+            if far_due:
+                near_end = horizon_end_utc(self._near_horizon_days, now)
+                hours = await self._backend.fetch_hourly(
+                    self._point,
+                    horizon_days=self._horizon_days,
+                    params=params,
+                    run=run,
+                    window_start_override=near_end,
+                )
+                self._far_fetch = now
+                far_fetched = True
+                changed = self._publish(hours, params, stamp, now) or changed
+
+        if run_changed and not near_due and not far_fetched:
+            # A new run whose canary proved the near window unchanged and whose
+            # far tail is still fresh: keep the stored series but re-stamp it to
+            # this run so it reads as current, not stale.
             for param in params:
                 self._store.confirm(param, run=stamp, fetched_at=now)
+        if run_changed:
             self._date_major_run = stamp
-        return False
+        return changed
 
     async def _refresh_point_major(
         self, run: Run, stamp: datetime, now: datetime

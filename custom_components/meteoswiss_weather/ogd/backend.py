@@ -39,7 +39,7 @@ from .forecast import (
     parse_daily,
     parse_hourly,
 )
-from .hourly import FileHint, fetch_series, horizon_end_utc
+from .hourly import FileHint, fetch_series, fetch_series_windows, horizon_end_utc
 from .models import (
     DailyBundle,
     ForecastPoint,
@@ -108,6 +108,7 @@ class ForecastBackend(Protocol):
         horizon_days: int = HOURLY_HORIZON_FULL_RUN,
         params: tuple[str, ...] = HOURLY_REQUIRED_PARAMS,
         run: Run | None = None,
+        window_start_override: datetime | None = None,
     ) -> list[HourlyForecast]: ...
 
     async def fetch_hourly_canary(
@@ -194,6 +195,7 @@ class BulkCsvBackend:
         step: timedelta,
         label: str,
         degrade_absent: bool,
+        chunked: bool = False,
     ) -> str | None:
         """Return ``point``'s rows of ``param`` for ``run``, using the shared cache.
 
@@ -204,8 +206,14 @@ class BulkCsvBackend:
         distinguishes the optional daily blocks — where a file with no row for the
         point degrades to ``None`` and is remembered absent for the UTC day — from
         the required daily and hourly files, whose text is always returned.
-        Raises :class:`OgdConnectionError` on an unreachable file; the caller
-        decides whether that degrades one field or the whole refresh.
+
+        ``chunked`` fetches a long window as consecutive cap-sized windows
+        (:func:`~.hourly.fetch_series_windows`, issue #143) so the far remainder
+        of a horizon that would overrun the request cap stays on row addressing
+        instead of a prefix; the near window and the whole-run demands stay on the
+        single-shot ladder. Raises :class:`OgdConnectionError` on an unreachable
+        file; the caller decides whether that degrades one field or the whole
+        refresh.
         """
         cached = self._series.get(param)
         if cached is not None and cached.covers(window_start, window_end):
@@ -215,17 +223,31 @@ class BulkCsvBackend:
         if degrade_absent and self._absent.get(param) == today:
             return None
 
-        result = await fetch_series(
-            self._session,
-            run.asset_url(param),
-            point,
-            window_start=window_start,
-            window_end=window_end,
-            hint=self._hints.get(param),
-            utc_day=run.timestamp.date(),
-            step=step,
-            limiter=self._limiter,
-        )
+        if chunked:
+            assert window_start is not None  # a chunked fetch is always windowed
+            result = await fetch_series_windows(
+                self._session,
+                run.asset_url(param),
+                point,
+                window_start=window_start,
+                window_end=window_end,
+                hint=self._hints.get(param),
+                utc_day=run.timestamp.date(),
+                step=step,
+                limiter=self._limiter,
+            )
+        else:
+            result = await fetch_series(
+                self._session,
+                run.asset_url(param),
+                point,
+                window_start=window_start,
+                window_end=window_end,
+                hint=self._hints.get(param),
+                utc_day=run.timestamp.date(),
+                step=step,
+                limiter=self._limiter,
+            )
         # Escalating to a prefix or the whole file is correct but worth seeing:
         # it usually means upstream re-sorted the file.
         log = _LOGGER.warning if result.level >= 3 else _LOGGER.debug
@@ -664,10 +686,11 @@ class BulkCsvBackend:
         horizon_days: int = HOURLY_HORIZON_FULL_RUN,
         params: tuple[str, ...] = HOURLY_REQUIRED_PARAMS,
         run: Run | None = None,
+        window_start_override: datetime | None = None,
     ) -> list[HourlyForecast]:
         # The bulk hourly files are the whole traffic budget (~30 MB each), so
         # this path only runs behind the opt-in option and the tiered schedule
-        # the provider enforces (ADR-0002 revision 2). Every requested parameter
+        # the refresher enforces (ADR-0002 revision 2). Every requested parameter
         # is fetched through the escalation ladder (:func:`~.hourly.fetch_series`,
         # ADR-0008 section 4, issue #123) for the window ``[start of the current
         # hour, horizon_end)``: a date-major file (``tre200h0``) is row-addressed
@@ -676,8 +699,16 @@ class BulkCsvBackend:
         # (the full-run option) demands the whole run, which the ladder serves by
         # the full file when row addressing would overrun the request cap.
         #
-        # ``params`` is the subset to fetch — the tiered provider (issue #68) asks
-        # for the date-major temperature file (near/far horizon) and the
+        # ``window_start_override`` (an aware UTC hour) fetches the **far
+        # remainder** ``[near_end, horizon_end]`` instead of starting at the
+        # current hour (issue #143): this window can be far longer than the
+        # request cap allows for a single row-addressed read, so it is fetched as
+        # consecutive cap-sized windows (``chunked``) that each stay on row
+        # addressing rather than falling to the multi-MB prefix. With a full-run
+        # horizon (``horizon_end`` None) the remainder runs to the end of the run.
+        #
+        # ``params`` is the subset to fetch — the refresher (issue #68) asks for
+        # the date-major temperature file (near window / far remainder) and the
         # point-major group on independent schedules, so this fetches only what a
         # given tier needs rather than the whole set every time.
         #
@@ -691,9 +722,16 @@ class BulkCsvBackend:
         now = datetime.now(UTC)
         horizon_end = horizon_end_utc(horizon_days, now)
         horizon_start = now.replace(minute=0, second=0, microsecond=0)
-        # A None horizon is the whole-run demand: pass an open window so the
-        # ladder does not row-address ~220 hour blocks (issue #123).
-        window_start = horizon_start if horizon_end is not None else None
+        if window_start_override is not None:
+            # The far remainder: [near_end, horizon_end], chunked so a horizon
+            # beyond the cap stays on row addressing (issue #143).
+            window_start: datetime | None = window_start_override
+            chunked = True
+        else:
+            # A None horizon is the whole-run demand: pass an open window so the
+            # ladder does not row-address ~220 hour blocks (issue #123).
+            window_start = horizon_start if horizon_end is not None else None
+            chunked = False
 
         results = await asyncio.gather(
             *(
@@ -706,6 +744,7 @@ class BulkCsvBackend:
                     step=timedelta(hours=1),
                     label="hourly",
                     degrade_absent=False,
+                    chunked=chunked,
                 )
                 for param in params
             )
@@ -721,14 +760,18 @@ class BulkCsvBackend:
         total_bytes = sum(len(text.encode(FORECAST_ENCODING)) for text in
                           text_by_param.values())
         _LOGGER.debug(
-            "hourly forecast run %s (horizon_days=%s): %d bytes across %d files",
+            "hourly forecast run %s (horizon_days=%s, from=%s): %d bytes, %d files",
             run.timestamp.isoformat(),
             horizon_days,
+            window_start.isoformat() if window_start is not None else "run-start",
             total_bytes,
             len(text_by_param),
         )
-        # Parsing keeps only the point's rows; keep it off the event loop.
+        # Parsing keeps only the point's rows; keep it off the event loop. The far
+        # remainder keeps hours from its own start, so past hours before the near
+        # window are not trimmed away with it.
+        parse_start = window_start if window_start is not None else horizon_start
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
-            None, parse_hourly, text_by_param, point, horizon_end, horizon_start
+            None, parse_hourly, text_by_param, point, horizon_end, parse_start
         )

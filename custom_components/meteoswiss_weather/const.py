@@ -100,11 +100,20 @@ FORECAST_CHECK_INTERVAL = timedelta(hours=1)
 # below, which still force a refresh so a canary blind spot can never let a
 # series go stale unbounded. tests/test_const.py asserts these.
 #
-# Near tier: the date-major temperature prefix up to the end of tomorrow (local
-# calendar day = horizon_days 1); its staleness fallback is 3 h.
-HOURLY_NEAR_HORIZON_DAYS = 1
+# Near window: the part of the date-major horizon that fits row addressing under
+# the request cap (issue #143), counted in full local calendar days beyond today.
+# 2 days is up to ~72 h, which stays within SERIES_REQUEST_CAP (96) as a single
+# row-addressed window, so the default horizon is entirely "near" and refreshes
+# on every changed run at ~100–150 KB. The near window is refreshed on a changed
+# canary — MeteoSwiss adjusts the near term about hourly — and its staleness
+# fallback is 3 h. tests/test_const.py asserts the value fits the cap.
+HOURLY_NEAR_HORIZON_DAYS = 2
 HOURLY_NEAR_MAX_AGE = timedelta(hours=3)
-# Far tier: the rest of the configured horizon; its staleness fallback is 6 h.
+# Far remainder: the rest of a horizon that reaches beyond the near window (only
+# horizons of 3+ days and the full run). It was the multi-MB part of the pre-#143
+# refresh (any window of ~80 h or more fell to a prefix on every changed run), so
+# it rides this cadence alone — never a canary change — and is fetched by row
+# addressing in consecutive cap-sized windows. Its staleness fallback is 6 h.
 HOURLY_FAR_MAX_AGE = timedelta(hours=6)
 # Point-major group (symbol, precipitation, wind, gust, direction, probability,
 # zero-degree, radiation): one ~5 KB block per file. Its staleness fallback,

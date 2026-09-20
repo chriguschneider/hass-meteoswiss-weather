@@ -189,7 +189,7 @@
           "hourly_temp_percentiles": "Temperaturperzentile einschliessen"
         },
         "data_description": {
-          "hourly_horizon_days": "Gezählt in vollen lokalen Kalendertagen. Standard: der Rest von heute plus zwei volle Tage (49–72 Stunden). Bis dahin wird jede Stundendatei zeilenweise gelesen und bleibt klein. Längere Horizonte und «Voller Lauf» (rund 220 Stunden, 9 Tage) lesen bei jeder Aktualisierung einen viel grösseren Teil der ~30 MB grossen Dateien; wählen Sie sie nur bei Bedarf.",
+          "hourly_horizon_days": "Gezählt in vollen lokalen Kalendertagen. Standard: der Rest von heute plus zwei volle Tage (49–72 Stunden), zeilenweise gelesen und bei jeder Aktualisierung klein gehalten. Längere Horizonte und «Voller Lauf» (rund 220 Stunden, 9 Tage) fügen dahinter einen fernen Teil hinzu: Auch er wird zeilenweise gelesen, aber höchstens alle 6 Stunden statt bei jeder Änderung aktualisiert. Das kostet etwas mehr, lädt aber nie einen grossen Teil der ~30 MB grossen Dateien herunter.",
           "hourly_cloud_layers": "Bringt: cloud_coverage (das Maximum der hohen, mittleren und tiefen Schicht) sowie die drei Schichten für jede Prognosestunde. Kostet: rund 0,05 MB pro Aktualisierung, drei kleine Blöcke pro Punkt. Standardmässig aus.",
           "hourly_temp_percentiles": "Bringt: temperature_p10 und temperature_p90, das Unsicherheitsband der Prognose, für jede Prognosestunde. Kostet: rund 0,5 MB pro Aktualisierung, der teuerste Zusatz (zwei zeilenweise gelesene Dateien). Standardmässig aus."
         }

@@ -50,17 +50,41 @@ def test_an_older_run_is_ignored() -> None:
     assert store.value_at(_P, _H0) == 3000.0
 
 
-def test_a_newer_run_replaces_the_series() -> None:
+def test_a_newer_run_updates_the_hours_it_carries_and_re_stamps() -> None:
+    """A newer run's values overwrite the hours it covers and re-stamp the run."""
     store = ForecastStore()
     _put(store, {_H0: 3000.0, _H0 + timedelta(hours=1): 3010.0})
     later = _RUN + timedelta(hours=3)
-    assert _put(store, {_H0: 2900.0}, run=later, source="hourly")
+    assert _put(store, {_H0: 2900.0, _H0 + timedelta(hours=1): 2910.0},
+                run=later, source="hourly")
     assert store.value_at(_P, _H0) == 2900.0
-    assert store.value_at(_P, _H0 + timedelta(hours=1)) is None
+    assert store.value_at(_P, _H0 + timedelta(hours=1)) == 2910.0
     series = store.get(_P)
     assert series is not None
     assert series.provenance.run == later
     assert series.provenance.source == "hourly"
+
+
+def test_a_newer_partial_run_keeps_the_previous_run_far_hours() -> None:
+    """A newer run's near-only window keeps the previous run's far hours (#143).
+
+    The eager hourly refresh fetches the near window on every changed run but the
+    far remainder only at the far cadence. A near-only refresh of a new run must
+    not drop the far hours the previous run still covers — they are held over,
+    re-stamped to the new run, until the far refresh replaces them.
+    """
+    store = ForecastStore()
+    near, far = _H0, _H0 + timedelta(hours=80)  # far is beyond the near window
+    _put(store, {near: 3000.0, far: 3500.0})
+    later = _RUN + timedelta(hours=1)
+    # A new run refreshes only the near hour.
+    assert _put(store, {near: 2900.0}, run=later, source="hourly")
+    assert store.value_at(_P, near) == 2900.0  # near updated
+    assert store.value_at(_P, far) == 3500.0  # far kept, not dropped
+    series = store.get(_P)
+    assert series is not None
+    assert series.provenance.run == later  # whole series reads as current
+    assert not store.is_stale(_P, later)
 
 
 def test_the_same_run_is_merged_across_paths() -> None:

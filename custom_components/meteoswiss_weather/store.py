@@ -78,10 +78,18 @@ class ForecastStore:
         Last-good retention (ADR-0008 section 1): an empty series never
         replaces a stored one — a refresh that could not deliver keeps the
         previous run, which still covers the coming hours. A series from an
-        older run than the stored one is ignored. A series from the *same* run
-        is merged, because the two paths cover different windows of one run
+        older run than the stored one is ignored.
+
+        New values are always **merged over** the stored ones, not just within a
+        run. Same-run merges cover the different windows one run's paths deliver
         (the daily block is the whole run, the hourly fetch is trimmed to the
-        horizon).
+        horizon). A *newer* run's partial window merges too: the eager hourly
+        refresh fetches the near window on every changed run but the far
+        remainder only at the far cadence (issue #143), so a near-only refresh
+        of a new run must keep the previous run's far hours until the far refresh
+        replaces them, rather than dropping them and shortening the horizon. The
+        provenance always moves to the newest run so the whole series reads as
+        current.
 
         When ``level`` is given it also updates the escalation streak for
         ``param`` (ADR-0008 section 5).
@@ -93,10 +101,9 @@ class ForecastStore:
         if current is not None:
             if run < current.provenance.run:
                 return False
-            if run == current.provenance.run:
-                merged = {**current.values, **values}
-                if merged == current.values:
-                    return False
+            merged = {**current.values, **values}
+            if run == current.provenance.run and merged == current.values:
+                return False
         self._series[param] = Series(
             values=dict(merged),
             provenance=Provenance(

@@ -29,7 +29,11 @@ from custom_components.meteoswiss_weather.ogd.const import (
     HOURLY_REQUIRED_PARAMS,
     HOURLY_TEMP_PERCENTILE_PARAMS,
     HOURLY_ZERO_DEGREE,
+    SERIES_REQUEST_CAP,
     hourly_date_major_params,
+)
+from custom_components.meteoswiss_weather.ogd.hourly import (
+    _ADDRESSING_OVERHEAD_REQUESTS,
 )
 
 
@@ -62,8 +66,13 @@ def test_hourly_tier_staleness_fallbacks() -> None:
     assert HOURLY_POINT_MAJOR_MAX_AGE == timedelta(hours=3)
     assert HOURLY_NEAR_MAX_AGE >= timedelta(hours=3)
     assert HOURLY_FAR_MAX_AGE >= HOURLY_NEAR_MAX_AGE
-    # The near tier covers today + tomorrow (one full local day beyond today).
-    assert HOURLY_NEAR_HORIZON_DAYS == 1
+    # The near window is the part of the horizon that fits row addressing under
+    # the request cap (issue #143): 2 local days beyond today is up to ~72 h, so
+    # its block count plus the addressing overhead stays within the cap and it
+    # never falls to a prefix as a single window.
+    assert HOURLY_NEAR_HORIZON_DAYS == 2
+    near_max_hours = (HOURLY_NEAR_HORIZON_DAYS + 1) * 24  # rest of today + N days
+    assert near_max_hours + _ADDRESSING_OVERHEAD_REQUESTS <= SERIES_REQUEST_CAP
     # The canary reads a small, positive number of coming hours.
     assert HOURLY_CANARY_HOURS >= 1
 
