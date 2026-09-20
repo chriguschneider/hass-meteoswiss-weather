@@ -56,6 +56,25 @@ using the matching section below as release notes.
 
 ### Fixed
 
+- **A point-major-group file re-sorted to date-major upstream no longer falls to
+  the whole ~30 MB file** (#153,
+  [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). `zprfr0hs` (zero-degree
+  level) is date-major upstream since 2026-09-16 but still lives in the static
+  point-major group; at "Full run" a changed canary (about every hour) dragged it
+  to the whole ~32 MB file, and at a 3–8 day horizon to a 16–30 MB prefix — up to
+  ~780 MB a day for one sensor value. Two changes fix this by construction: the
+  **fetch ladder** now decides about chunking from a file's *detected* layout, not
+  the group it was listed in — a date-major demand that overruns the request cap
+  (a long window, or a whole run with too many blocks) is row-addressed in
+  consecutive cap-sized windows (the #143 far-tail mechanism), with the prefix and
+  whole file kept only as the per-window fallback; and the coordinator **schedules
+  each demanded file by its last detected layout**, so a file that turned
+  date-major follows the date-major near/far cadence (near window on a changed
+  canary, far remainder at most every 6 h) instead of being re-fetched whole on
+  every changed run. A genuinely point-major file is still one ~5 KB block per run;
+  the hourly forecast still carries `zero_degree_level` for every hour to the
+  horizon; default-horizon behaviour and cost are unchanged.
+
 - **Long hourly horizons no longer read a multi-MB prefix on every run** (#143,
   [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). With the hourly option
   on and a horizon of 3+ days or "Full run", a changed forecast (which MeteoSwiss

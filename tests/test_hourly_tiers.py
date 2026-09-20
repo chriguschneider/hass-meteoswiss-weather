@@ -34,7 +34,7 @@ from custom_components.meteoswiss_weather.coordinator import (
     HourlyRefresher,
     hourly_from_store,
 )
-from custom_components.meteoswiss_weather.ogd import DailyBundle, Run
+from custom_components.meteoswiss_weather.ogd import DailyBundle, FileLayout, Run
 from custom_components.meteoswiss_weather.ogd.const import (
     HOURLY_CLOUD_HIGH,
     HOURLY_CLOUD_LOW,
@@ -528,6 +528,119 @@ async def test_horizon_reached_after_near_only_refresh_on_new_run(
     # The forecast still reaches the same far horizon: the previous run's far
     # hours were kept, not dropped by the newer near-only window (issue #143).
     assert after_near[-1].time == last_hour
+
+
+# ---------------------------------------------------------------------------
+# Schedule by detected layout, not the static group (issue #153)
+# ---------------------------------------------------------------------------
+
+
+class _LayoutHintWindowBackend(_WindowBackend):
+    """A window-accurate backend that reports zprfr0hs as date-major (#153).
+
+    ``zprfr0hs`` is date-major upstream (docs/ogd.md §E4) yet still listed in the
+    static point-major group. Reporting its detected layout through
+    ``layout_hint`` must make the refresher schedule it with the date-major near
+    and far tiers rather than fetching it whole per run with the point-major
+    group. Every other file keeps its natural layout.
+    """
+
+    def layout_hint(self, param: str) -> FileLayout | None:
+        if param in (HOURLY_TEMPERATURE, HOURLY_ZERO_DEGREE):
+            return FileLayout.DATE_MAJOR
+        return FileLayout.POINT_MAJOR_TYPE
+
+
+def _is_far(call) -> bool:
+    """A date-major far-remainder fetch: it passes a window start override."""
+    return call[2] is not None
+
+
+def _is_near(call) -> bool:
+    """A date-major near-window fetch: no window override, carries temperature."""
+    return call[2] is None and HOURLY_TEMPERATURE in call[0]
+
+
+def _is_point_major(call) -> bool:
+    """A point-major group fetch: no window override, carries precipitation."""
+    return call[2] is None and HOURLY_PRECIPITATION in call[0]
+
+
+async def test_date_major_hint_moves_zprfr0hs_to_the_date_major_tiers(
+    hass: HomeAssistant,
+) -> None:
+    """Acceptance #153.2: a point-major-group file whose hint says date-major gets
+    the near window on a changed canary and the far tail at most once per
+    HOURLY_FAR_MAX_AGE — never fetched whole with the point-major group."""
+    backend = _LayoutHintWindowBackend()
+    refresher, _store = _make_refresher(hass, backend, horizon_days=3)
+    start = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+    with freeze_time(start) as frozen:
+        # First refresh: near + far + point-major. zprfr0hs rides the date-major
+        # near and far fetches; it is absent from the point-major group.
+        await refresher.async_refresh(_run(start))
+        near = [c for c in backend.calls if _is_near(c)]
+        far = [c for c in backend.calls if _is_far(c)]
+        point_major = [c for c in backend.calls if _is_point_major(c)]
+        assert near and far and point_major
+        assert all(HOURLY_ZERO_DEGREE in c[0] for c in near)
+        assert all(HOURLY_ZERO_DEGREE in c[0] for c in far)
+        assert all(HOURLY_ZERO_DEGREE not in c[0] for c in point_major)
+        backend.calls.clear()
+
+        # Four changed runs within the 6 h far window: the near window (with
+        # zprfr0hs) refetches each time, the far remainder is never touched.
+        for hour in range(1, 5):
+            backend.content += 1.0
+            frozen.move_to(start + timedelta(hours=hour))
+            await refresher.async_refresh(_run(start + timedelta(hours=hour)))
+        assert [c for c in backend.calls if _is_far(c)] == []
+        assert backend.calls  # something was fetched
+        assert all(
+            HOURLY_ZERO_DEGREE in c[0] for c in backend.calls if _is_near(c)
+        )
+        backend.calls.clear()
+
+        # Past the far fallback: the far remainder refetches, exactly once.
+        frozen.move_to(start + HOURLY_FAR_MAX_AGE + timedelta(seconds=1))
+        await refresher.async_refresh(_run(start + HOURLY_FAR_MAX_AGE))
+        assert len([c for c in backend.calls if _is_far(c)]) == 1
+
+
+async def test_date_major_hint_keeps_zero_degree_to_the_horizon(
+    hass: HomeAssistant,
+) -> None:
+    """Acceptance #153.4: with zprfr0hs scheduled on the date-major tiers, the
+    hourly forecast still carries zero_degree_level for every hour to the
+    horizon (near window + far remainder together span it)."""
+    from custom_components.meteoswiss_weather.ogd.hourly import horizon_end_utc
+
+    backend = _LayoutHintWindowBackend()
+    refresher, store = _make_refresher(hass, backend, horizon_days=3)
+    start = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+    with freeze_time(start):
+        await refresher.async_refresh(_run(start))
+        hourly = hourly_from_store(store, refresher.demanded_params)
+
+    assert hourly
+    assert all(h.zero_degree_level is not None for h in hourly)
+    # The forecast reaches the configured 3-day horizon.
+    horizon_end = horizon_end_utc(3, start)
+    assert horizon_end is not None
+    assert hourly[-1].time == horizon_end - timedelta(hours=1)
+
+
+async def test_no_layout_hint_keeps_the_static_grouping(hass: HomeAssistant) -> None:
+    """A backend without ``layout_hint`` (or a file with no hint yet) keeps the
+    static group split, so zprfr0hs rides the point-major group as before."""
+    backend = _CanaryBackend()  # no layout_hint method at all
+    refresher, _store = _make_refresher(hass, backend, horizon_days=3)
+    start = datetime(2026, 8, 27, 2, 0, tzinfo=UTC)
+    with freeze_time(start):
+        await refresher.async_refresh(_run(start))
+    point_major = [c for c in backend.calls if _tier_of(c) == "point_major"]
+    assert point_major  # the static point-major group still fetched as one tier
+    assert all(HOURLY_ZERO_DEGREE in c[0] for c in point_major)
 
 
 # ---------------------------------------------------------------------------

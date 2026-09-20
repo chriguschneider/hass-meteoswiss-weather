@@ -522,7 +522,40 @@ class _NotProven(Exception):
 
 
 class _RequestCapExceeded(_NotProven):
-    """A level needed more requests than the cap allows; climb."""
+    """A level needed more requests than the cap allows; climb.
+
+    ``window`` is the demand's resolved ``(start, end)`` (aware UTC): the
+    explicit window of a windowed demand, or a whole-run demand's own extent
+    (the file's first stamp to one step past its last). It lets a date-major
+    file that overran the cap be re-fetched as consecutive cap-sized
+    row-addressed windows instead of a prefix or the whole file (issue #153).
+    """
+
+    def __init__(
+        self, message: str, *, window: tuple[datetime, datetime] | None = None
+    ) -> None:
+        super().__init__(message)
+        self.window = window
+
+
+class _ChunkNeeded(Exception):
+    """A date-major demand overran the cap; retry it as cap-sized windows.
+
+    Raised by the single-shot ladder (:func:`_fetch_series`) when a date-major
+    file cannot be row-addressed in one read under the request cap — a long
+    windowed horizon, or a whole run with too many blocks. The caller
+    (:func:`_fetch_series_auto`) then tiles the resolved window into consecutive
+    cap-sized windows and row-addresses each (the mechanism #148 added for the
+    far tail), instead of falling to a prefix or the whole file. It is the
+    ladder call, not the static group a file was listed in, that decides about
+    chunking, so ``zprfr0hs`` re-sorted to date-major upstream is chunked
+    wherever it is demanded (issue #153).
+    """
+
+    def __init__(self, window_start: datetime, window_end: datetime) -> None:
+        super().__init__("date-major demand exceeds the request cap; chunk it")
+        self.window_start = window_start
+        self.window_end = window_end
 
 
 class _CountingReader:
@@ -897,7 +930,11 @@ async def _fetch_rows_date_major(
     if request_cap is not None and len(hours) + _ADDRESSING_OVERHEAD_REQUESTS > (
         request_cap
     ):
-        raise _RequestCapExceeded("run has too many blocks for row addressing")
+        # Hand back the resolved run window so the caller can re-fetch it as
+        # cap-sized row-addressed windows rather than the whole file (issue #153).
+        raise _RequestCapExceeded(
+            "run has too many blocks for row addressing", window=(ws, we)
+        )
     if not hours:
         return _DateMajorRows(
             text=header.decode(FORECAST_ENCODING),
@@ -1069,7 +1106,10 @@ async def _address(
             if reader.cap is not None and (
                 demanded + _ADDRESSING_OVERHEAD_REQUESTS > reader.cap
             ):
-                raise _RequestCapExceeded("window too long for row addressing")
+                raise _RequestCapExceeded(
+                    "window too long for row addressing",
+                    window=(window_start, window_end),
+                )
         # A windowed demand's cap was pre-checked above; a whole-run demand
         # (window None) cannot be, since the block count is only known once the
         # file's extent is read, so the cap is enforced inside the addressing
@@ -1120,8 +1160,17 @@ async def _fetch_series(
     hint: FileHint | None,
     utc_day: date | None,
     step: timedelta = timedelta(hours=1),
+    allow_chunk: bool = False,
 ) -> SeriesResult:
-    """Climb the ladder over ``reader`` (the network-free core of fetch_series)."""
+    """Climb the ladder over ``reader`` (the network-free core of fetch_series).
+
+    With ``allow_chunk`` a date-major demand that cannot be row-addressed under
+    the request cap raises :class:`_ChunkNeeded` (carrying the resolved window)
+    instead of falling to a prefix or the whole file, so :func:`_fetch_series_auto`
+    can tile it into cap-sized windows (issue #153). Left ``False`` — the default,
+    and what the per-window fetches use — the cap escalates to prefix/full as
+    before, which keeps the single-shot ladder's own behaviour unchanged.
+    """
     loop = asyncio.get_running_loop()
     layout = FileLayout.FALLBACK
     windowed = window_start is not None and window_end is not None
@@ -1145,6 +1194,14 @@ async def _fetch_series(
         return await _address(
             reader, point, window_start, window_end, None, layout, utc_day, step
         )
+    except _RequestCapExceeded as err:
+        # A date-major file whose demand overran the cap is not escalated to a
+        # prefix/whole file here: it is chunked into cap-sized row-addressed
+        # windows by the caller (issue #153). Any other over-cap case (or when
+        # chunking is disabled, for the per-window fetches) escalates as before.
+        if allow_chunk and layout is FileLayout.DATE_MAJOR and err.window is not None:
+            raise _ChunkNeeded(err.window[0], err.window[1]) from err
+        _LOGGER.debug("series fetch escalates past addressing: %s", err)
     except _NotProven as reason:
         _LOGGER.debug("series fetch escalates past addressing: %s", reason)
 
@@ -1174,6 +1231,57 @@ async def _fetch_series(
         bytes=reader.bytes,
         whole_run=True,
     )
+
+
+async def _fetch_series_auto(
+    make_reader: Callable[[], _CountingReader],
+    point: ForecastPoint,
+    *,
+    window_start: datetime | None,
+    window_end: datetime | None,
+    hint: FileHint | None,
+    utc_day: date | None,
+    step: timedelta,
+    request_cap: int | None,
+) -> SeriesResult:
+    """Run the single-shot ladder; on an over-cap date-major demand, tile it.
+
+    The single-shot :func:`_fetch_series` climbs the ladder for one read. When a
+    date-major file cannot be row-addressed under the request cap it raises
+    :class:`_ChunkNeeded` with the resolved demand window instead of falling to a
+    prefix or the whole file, and this tiles that window into consecutive
+    cap-sized windows and row-addresses each (:func:`_fetch_series_windows`,
+    issue #153). The initial reader's probe cost is carried into the merged
+    result so the diagnostics reflect the whole fetch. A whole-run demand
+    (window ``None``) that is chunked still reports ``whole_run`` — every block
+    from the file's first to its last stamp was addressed.
+    """
+    reader = make_reader()
+    whole = window_start is None and window_end is None
+    try:
+        return await _fetch_series(
+            reader,
+            point,
+            window_start=window_start,
+            window_end=window_end,
+            hint=hint,
+            utc_day=utc_day,
+            step=step,
+            allow_chunk=True,
+        )
+    except _ChunkNeeded as chunk:
+        return await _fetch_series_windows(
+            make_reader,
+            point,
+            window_start=chunk.window_start,
+            window_end=chunk.window_end,
+            hint=hint,
+            utc_day=utc_day,
+            step=step,
+            request_cap=request_cap,
+            whole_run=whole,
+            spent=(reader.requests, reader.bytes),
+        )
 
 
 async def fetch_series(
@@ -1207,18 +1315,29 @@ async def fetch_series(
     ``limiter`` is the shared :class:`asyncio.Semaphore` that caps how many
     requests of one refresh are in flight across all its files at once (issue
     #132); ``None`` leaves this fetch unbounded.
+
+    A date-major file whose demand does not fit the request cap (a long horizon,
+    or the whole run when it has too many blocks) is served by row addressing in
+    consecutive cap-sized windows rather than a prefix or the whole file — the
+    ladder call decides this from the file's detected layout, so a file that
+    upstream re-sorted to date-major is handled correctly whatever static group
+    it was listed in (issue #153).
     """
-    reader = _CountingReader(
-        AiohttpRangeReader(session, url, limiter=limiter), request_cap
-    )
-    return await _fetch_series(
-        reader,
+
+    def make_reader() -> _CountingReader:
+        return _CountingReader(
+            AiohttpRangeReader(session, url, limiter=limiter), request_cap
+        )
+
+    return await _fetch_series_auto(
+        make_reader,
         point,
         window_start=window_start,
         window_end=window_end,
         hint=hint,
         utc_day=utc_day,
         step=step,
+        request_cap=request_cap,
     )
 
 
@@ -1299,6 +1418,8 @@ async def _fetch_series_windows(
     utc_day: date | None,
     step: timedelta = timedelta(hours=1),
     request_cap: int | None = SERIES_REQUEST_CAP,
+    whole_run: bool = False,
+    spent: tuple[int, int] = (0, 0),
 ) -> SeriesResult:
     """Fetch ``[window_start, window_end)`` as cap-sized windows and merge the rows.
 
@@ -1308,6 +1429,12 @@ async def _fetch_series_windows(
     the prefix (issue #143). ``window_end`` of ``None`` is the full-run remainder,
     resolved to the file's last block first. The merged text carries the point's
     rows across all windows, deduplicated by ``Date`` and ordered.
+
+    ``whole_run`` marks the merged result as covering the point's whole run (set
+    when :func:`_fetch_series_auto` chunks a whole-run demand, issue #153), so the
+    shared per-run cache can reuse it for any request. ``spent`` is the
+    ``(requests, bytes)`` an earlier probe already cost (the ladder read that
+    detected the over-cap layout), added to the totals so diagnostics are honest.
     """
     cur_hint = hint
     if window_end is None:
@@ -1329,8 +1456,8 @@ async def _fetch_series_windows(
     header = ""
     rows: dict[str, str] = {}
     level = 0
-    requests = 0
-    bytes_read = 0
+    requests = spent[0]
+    bytes_read = spent[1]
     layout = FileLayout.FALLBACK
     for ws, we in _split_window(window_start, window_end, step, request_cap):
         reader = make_reader()
@@ -1367,7 +1494,7 @@ async def _fetch_series_windows(
         level=level,
         requests=requests,
         bytes=bytes_read,
-        whole_run=False,
+        whole_run=whole_run,
         hint=cur_hint,
     )
 

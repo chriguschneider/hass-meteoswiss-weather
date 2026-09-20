@@ -309,6 +309,19 @@ each file's layout at runtime from offset probes, then
 For the minimum set at the default horizon this is **~7–11 MB per refresh**
 instead of ~125 MB. See ADR-0002 (revised) for the budget and the option.
 
+**The detected layout, not the static group, drives both fetch and schedule
+(issue #153).** Because a file can flip layout without notice (`zprfr0hs` is
+date-major since 2026-09-16 yet still listed in the point-major group), the fetch
+ladder decides about chunking from the layout it *detects*: a date-major demand
+that would overrun the request cap — a long horizon, or a whole run with too many
+hour blocks — is row-addressed in consecutive cap-sized windows (the #143 far-tail
+mechanism) rather than falling to a prefix or the ~30 MB file. The coordinator's
+hourly refresher likewise groups each demanded file by its last detected layout
+(`FileHint`), so a re-sorted file rides the date-major near/far cadence (near
+window on a changed canary, far remainder at most every `HOURLY_FAR_MAX_AGE`)
+instead of being re-fetched whole on every changed run. A file with no hint yet
+keeps its static assignment until a fetch classifies it.
+
 **Shared request-concurrency limit (issue #132, measured 2026-09-19):** a cold
 refresh with the hourly option and the cloud/percentile layers on fetches ~19
 files, each row-addressed with several byte-range probes under one

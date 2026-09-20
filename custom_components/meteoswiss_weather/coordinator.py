@@ -72,6 +72,7 @@ from .demand import hourly_demand
 from .ogd import (
     CachedResponse,
     DailyForecast,
+    FileLayout,
     ForecastBackend,
     ForecastPoint,
     HourlyForecast,
@@ -223,8 +224,12 @@ class HourlyRefresher:
     represented by the wind file. The landing-hour timetable of ADR-0002 revision
     2 is gone; the near/far/point-major ``max_age`` fallbacks remain and still
     force a refresh so a canary blind spot can never let a series go stale
-    unbounded. Which files each group holds comes from the demand registry
-    (:func:`~.demand.hourly_demand`), so a disabled feature demands nothing.
+    unbounded. Which files are demanded at all comes from the demand registry
+    (:func:`~.demand.hourly_demand`), so a disabled feature demands nothing; which
+    group each demanded file rides is decided per tick by its **detected layout**
+    (:meth:`_grouped_params`), not the static list it was written into, so a file
+    upstream re-sorted to date-major (``zprfr0hs``, issue #153) follows the
+    date-major cadence rather than being re-fetched whole on every changed run.
 
     A refresh that fails for one parameter keeps its last good series (the store
     does this) and must never fail the daily forecast: :meth:`async_refresh`
@@ -332,9 +337,18 @@ class HourlyRefresher:
             return False
         now = dt_util.utcnow()
         stamp = run.timestamp
+        # Split the demanded files into the date-major and point-major groups by
+        # their *detected* layout, not the static list they were written into
+        # (issue #153): a file upstream re-sorted (e.g. zprfr0hs → date-major)
+        # then rides the right cadence. Recomputed each tick from the backend's
+        # current hints, which the daily fetch of this same tick has refreshed.
+        date_major, point_major = self._grouped_params()
         try:
-            changed = await self._refresh_date_major(run, stamp, now)
-            changed = await self._refresh_point_major(run, stamp, now) or changed
+            changed = await self._refresh_date_major(run, stamp, now, date_major)
+            changed = (
+                await self._refresh_point_major(run, stamp, now, point_major)
+                or changed
+            )
         except OgdParseError as err:
             async_create_issue(
                 self._hass,
@@ -352,6 +366,41 @@ class HourlyRefresher:
 
         async_delete_issue(self._hass, DOMAIN, _ISSUE_FORECAST_PARSE)
         return changed
+
+    def _grouped_params(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """Split the demanded hourly files into date-major / point-major groups.
+
+        Which group a file rides is decided by its **last detected layout** (the
+        backend's :meth:`~ogd.backend.BulkCsvBackend.layout_hint`), not the static
+        list it was written into (issue #153): upstream re-sorts files without
+        notice (ADR-0008), so a file such as ``zprfr0hs`` — date-major upstream
+        since 2026-09-16 (docs/ogd.md §E4) yet still in ``HOURLY_POINT_MAJOR_PARAMS``
+        — must follow the date-major group's near/far cadence, or its far hours
+        would be re-fetched on every changed run. A file with no hint yet keeps its
+        static assignment. Order is preserved (date-major params first, then
+        point-major), so the date-major canary stays the temperature file and the
+        point-major canary the wind file.
+        """
+        assert self._demand is not None
+        static_date_major = set(self._demand.date_major)
+        layout_hint = getattr(self._backend, "layout_hint", None)
+        date_major: list[str] = []
+        point_major: list[str] = []
+        for param in self._demand.params:
+            layout = layout_hint(param) if layout_hint is not None else None
+            if layout is FileLayout.DATE_MAJOR:
+                is_date_major = True
+            elif layout in (
+                FileLayout.POINT_MAJOR_TYPE,
+                FileLayout.POINT_MAJOR_ID,
+            ):
+                is_date_major = False
+            else:
+                # No hint yet, or an unrecognised layout: trust the static list
+                # until a real fetch classifies the file.
+                is_date_major = param in static_date_major
+            (date_major if is_date_major else point_major).append(param)
+        return tuple(date_major), tuple(point_major)
 
     async def _canary_changed(
         self, param: str, run: Run, now: datetime
@@ -375,7 +424,7 @@ class HourlyRefresher:
         )
 
     async def _refresh_date_major(
-        self, run: Run, stamp: datetime, now: datetime
+        self, run: Run, stamp: datetime, now: datetime, params: tuple[str, ...]
     ) -> bool:
         """Refresh the date-major group, split into a near window and a far tail.
 
@@ -398,8 +447,13 @@ class HourlyRefresher:
 
         A new run whose canary proved the group unchanged and whose far tail is
         still fresh keeps the stored series and re-stamps it to the run.
+
+        ``params`` is the date-major group **as detected this tick** (issue #153):
+        the temperature file, the gated cloud/percentile files, and any file the
+        backend now classifies as date-major even though it was listed elsewhere.
         """
-        params = self._demand.date_major
+        if not params:
+            return False
         run_changed = stamp != self._date_major_run
         # Read the canary at most once, and only when the near fallback has not
         # already made the near window due (a never-fetched or stale tier fetches
@@ -458,15 +512,20 @@ class HourlyRefresher:
         return changed
 
     async def _refresh_point_major(
-        self, run: Run, stamp: datetime, now: datetime
+        self, run: Run, stamp: datetime, now: datetime, params: tuple[str, ...]
     ) -> bool:
         """Refresh the point-major group when the canary or the fallback says so.
 
         The wind file is the group's canary. A new run whose canary changed (or
         the max-age fallback firing) refreshes the whole group; a new run the
         canary proves unchanged keeps the stored series and re-stamps it (#125).
+
+        ``params`` is the point-major group **as detected this tick** (issue
+        #153): a file that upstream re-sorted to date-major has already been moved
+        to the date-major group, so it is not fetched whole per run here.
         """
-        params = self._demand.point_major
+        if not params:
+            return False
         run_changed = stamp != self._point_major_run
         due = (
             self._point_major_fetch is None
