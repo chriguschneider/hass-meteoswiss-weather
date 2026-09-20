@@ -23,6 +23,7 @@ from homeassistant.const import (
     DEGREE,
     PERCENTAGE,
     EntityCategory,
+    UnitOfInformation,
     UnitOfIrradiance,
     UnitOfLength,
     UnitOfPrecipitationDepth,
@@ -484,6 +485,8 @@ async def async_setup_entry(
             | {f"{device_unique_id}_{_ZERO_DEGREE_DESCRIPTION.key}"}
             | {f"{device_unique_id}_{_MEASUREMENT_TIME_DESCRIPTION.key}"}
             | {f"{device_unique_id}_{desc.key}" for desc in _POLLEN_SENSORS}
+            | {f"{device_unique_id}_{_DATA_FETCHED_DESCRIPTION.key}"}
+            | {f"{device_unique_id}_{_REQUESTS_TODAY_DESCRIPTION.key}"}
         )
         # The precipitation sensor is created from the precip station below and
         # is excluded from ``supported``, so keep its id in the valid set.
@@ -551,6 +554,16 @@ async def async_setup_entry(
             )
             for description in supported_pollen
         )
+    async_add_entities([
+        DataFetchedTodaySensor(
+            runtime.forecast_coordinator, _DATA_FETCHED_DESCRIPTION,
+            device_unique_id, device_info,
+        ),
+        RequestsTodaySensor(
+            runtime.forecast_coordinator, _REQUESTS_TODAY_DESCRIPTION,
+            device_unique_id, device_info,
+        ),
+    ])
 
 
 class MeteoSwissSensor(CoordinatorEntity[StationCoordinator], SensorEntity):
@@ -777,3 +790,138 @@ class MeasurementTimeSensor(CoordinatorEntity[StationCoordinator], SensorEntity)
         if obs is None:
             return None
         return obs.timestamp
+
+
+# B10 — daily traffic diagnostic sensors (issue #146): bytes and requests
+# fetched from the forecast backend today.  Both are entity_category: DIAGNOSTIC
+# and state_class: total_increasing (reset at local midnight).
+
+_DATA_FETCHED_DESCRIPTION = SensorEntityDescription(
+    key="data_fetched_today",
+    translation_key="data_fetched_today",
+    device_class=SensorDeviceClass.DATA_SIZE,
+    native_unit_of_measurement=UnitOfInformation.MEGABYTES,
+    state_class=SensorStateClass.TOTAL_INCREASING,
+    suggested_display_precision=3,
+    entity_category=EntityCategory.DIAGNOSTIC,
+)
+
+_REQUESTS_TODAY_DESCRIPTION = SensorEntityDescription(
+    key="requests_today",
+    translation_key="requests_today",
+    state_class=SensorStateClass.TOTAL_INCREASING,
+    entity_category=EntityCategory.DIAGNOSTIC,
+    entity_registry_enabled_default=False,
+)
+
+
+class DataFetchedTodaySensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
+    """Bytes fetched from the forecast backend today (issue #146).
+
+    Accumulates every real HTTP fetch — daily files, blocks, hourly files,
+    canaries — that the backend executed since local midnight.  Resets to zero
+    at local midnight so HA long-term statistics show a daily total.  Enabled
+    by default: it is the feedback loop for the traffic-cost options (issue #144).
+    Restored after a restart within the same day via the coordinator's persisted
+    store (issue #133 pattern, issue #146 requirement 3).
+    """
+
+    _attr_has_entity_name = True
+    _attr_attribution = ATTRIBUTION
+
+    def __init__(
+        self,
+        coordinator: ForecastCoordinator,
+        description: SensorEntityDescription,
+        device_unique_id: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{device_unique_id}_{description.key}"
+        self._attr_device_info = device_info
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to local midnight so the displayed value resets promptly."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_time_change(
+                self.hass,
+                self._handle_midnight,
+                hour=0,
+                minute=0,
+                second=0,
+            )
+        )
+
+    @callback
+    def _handle_midnight(self, _now: datetime) -> None:
+        """Reset the daily counter at local midnight and re-write state."""
+        today = dt_util.now().date()
+        self.coordinator.traffic.record(0, 0, today)
+        self.coordinator._save_traffic()  # noqa: SLF001
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> float:
+        """Return bytes fetched today in MB, or 0 when none recorded yet."""
+        traffic = self.coordinator.traffic
+        today = dt_util.now().date()
+        if traffic.reset_date != today:
+            return 0.0
+        return round(traffic.bytes_today / 1_000_000, 6)
+
+
+class RequestsTodaySensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
+    """HTTP requests made to the forecast backend today (issue #146).
+
+    Counts every real HTTP request — daily files, blocks, hourly files,
+    canaries — that the backend executed since local midnight.  Resets to zero
+    at local midnight.  Disabled by default (most users do not need the raw
+    request count; the bytes sensor is the more useful feedback signal).
+    """
+
+    _attr_has_entity_name = True
+    _attr_attribution = ATTRIBUTION
+
+    def __init__(
+        self,
+        coordinator: ForecastCoordinator,
+        description: SensorEntityDescription,
+        device_unique_id: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{device_unique_id}_{description.key}"
+        self._attr_device_info = device_info
+
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to local midnight so the displayed value resets promptly."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_time_change(
+                self.hass,
+                self._handle_midnight,
+                hour=0,
+                minute=0,
+                second=0,
+            )
+        )
+
+    @callback
+    def _handle_midnight(self, _now: datetime) -> None:
+        """Reset the daily counter at local midnight and re-write state."""
+        today = dt_util.now().date()
+        self.coordinator.traffic.record(0, 0, today)
+        self.coordinator._save_traffic()  # noqa: SLF001
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> int:
+        """Return requests made today, or 0 when none recorded yet."""
+        traffic = self.coordinator.traffic
+        today = dt_util.now().date()
+        if traffic.reset_date != today:
+            return 0
+        return traffic.requests_today

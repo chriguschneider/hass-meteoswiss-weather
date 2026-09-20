@@ -131,6 +131,71 @@ class ForecastData:
 _POINT_MAJOR_CANARY_PARAM = HOURLY_WIND_SPEED
 
 
+class DailyTrafficAccumulator:
+    """Bytes and requests fetched today from the forecast backend (issue #146).
+
+    Accumulates across all fetch paths — daily files, blocks, hourly files,
+    canaries — by receiving the delta popped from the backend after each
+    coordinator tick.  Resets at local midnight.  Serialisable to/from a plain
+    dict so the coordinator can persist it across restarts via a
+    ``helpers.storage.Store``.
+
+    Deliberately free of Home Assistant imports (same discipline as the store).
+    """
+
+    def __init__(self) -> None:
+        self.bytes_today: int = 0
+        self.requests_today: int = 0
+        # Local calendar date this accumulator covers; ``None`` before first record.
+        self.reset_date: date | None = None
+
+    def record(
+        self, bytes_delta: int, requests_delta: int, local_date: date
+    ) -> bool:
+        """Add ``bytes_delta`` / ``requests_delta`` to today's totals; return changed.
+
+        Resets both counters to zero (and starts fresh from the delta) when
+        ``local_date`` has moved past the last reset date — i.e. local midnight.
+        """
+        if self.reset_date != local_date:
+            self.bytes_today = 0
+            self.requests_today = 0
+            self.reset_date = local_date
+        if bytes_delta == 0 and requests_delta == 0:
+            return False
+        self.bytes_today += bytes_delta
+        self.requests_today += requests_delta
+        return True
+
+    def to_dict(self) -> dict:
+        """Serialise for ``helpers.storage.Store``."""
+        return {
+            "date": self.reset_date.isoformat() if self.reset_date else None,
+            "bytes": self.bytes_today,
+            "requests": self.requests_today,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict | None, local_date: date) -> DailyTrafficAccumulator:
+        """Restore from a previously persisted dict; discard if the date changed."""
+        acc = cls()
+        if not isinstance(data, dict):
+            return acc
+        try:
+            stored_date = date.fromisoformat(data["date"]) if data.get("date") else None
+        except (ValueError, TypeError):
+            return acc
+        if stored_date != local_date:
+            return acc
+        try:
+            acc.bytes_today = int(data.get("bytes", 0))
+            acc.requests_today = int(data.get("requests", 0))
+            acc.reset_date = stored_date
+        except (TypeError, ValueError):
+            return cls()
+        return acc
+
+
 class HourlyRefresher:
     """Refreshes the demanded hourly series into the store (ADR-0008).
 
@@ -622,6 +687,7 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         hourly_cloud_layers: bool = False,
         hourly_temp_percentiles: bool = False,
         hints_store: Store | None = None,
+        traffic_store: Store | None = None,
     ) -> None:
         super().__init__(
             hass,
@@ -645,6 +711,11 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         # Whether a persisted hint set was restored at setup; for diagnostics
         # (the raw hints are never dumped — they are kept small, issue #133).
         self.hints_restored = False
+        # Daily traffic counters (issue #146): bytes and requests fetched today,
+        # fed from the backend after each tick. Persisted per config entry so the
+        # sensors survive a restart within the day without resetting to zero.
+        self._traffic_store = traffic_store
+        self.traffic = DailyTrafficAccumulator()
         # Timestamp of the run the current daily data came from; exposed for
         # diagnostics and used to skip re-downloading an unchanged run. The
         # weather entity also watches it to trigger the lazy hourly refresh.
@@ -789,6 +860,16 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         # Persist the backend's fetch hints when this tick changed them, so the
         # next restart is warm (issue #133). Debounced and no-op on no change.
         self._save_hints_if_changed()
+        # Accumulate bytes and requests into the daily traffic counters so the
+        # diagnostic sensors can show what today's fetches cost (issue #146).
+        # pop_fetch_totals() is duck-typed: a FakeBackend without it is treated as
+        # zero traffic.
+        pop = getattr(self._backend, "pop_fetch_totals", None)
+        if pop is not None:
+            b, r = pop()
+            local_today = dt_util.now().date()
+            if self.traffic.record(b, r, local_today):
+                self._save_traffic()
         self.last_success = dt_util.utcnow()
         return ForecastData(daily=daily)
 
@@ -838,6 +919,43 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
             return
         self._saved_hints = hints
         self._hints_store.async_delay_save(lambda: hints, HINTS_SAVE_DELAY)
+
+    async def async_load_traffic(self) -> None:
+        """Restore the daily traffic totals from disk (issue #146).
+
+        Called once before the first refresh so the sensors start from the
+        saved daily total rather than zero when HA restarts mid-day. A missing,
+        unreadable or stale (wrong day) store is silently ignored.
+        """
+        if self._traffic_store is None:
+            return
+        try:
+            stored = await self._traffic_store.async_load()
+        except (HomeAssistantError, ValueError, OSError) as err:
+            _LOGGER.debug(
+                "stored traffic totals unreadable, starting from zero: %s", err
+            )
+            return
+        if not stored:
+            return
+        self.traffic = DailyTrafficAccumulator.from_dict(stored, dt_util.now().date())
+        _LOGGER.debug(
+            "restored traffic totals: %d bytes, %d requests",
+            self.traffic.bytes_today,
+            self.traffic.requests_today,
+        )
+
+    def _save_traffic(self) -> None:
+        """Persist the daily traffic totals immediately (issue #146).
+
+        Called after every tick that produced new fetches.  Synchronous
+        (uses async_delay_save with 0 delay so the Store coalesces writes
+        within the same event loop iteration).
+        """
+        if self._traffic_store is None:
+            return
+        data = self.traffic.to_dict()
+        self._traffic_store.async_delay_save(lambda: data, 0)
 
     def _sync_escalation_issues(self, run: Run) -> None:
         """Post or clear ``forecast_fetch_escalated_<param>`` repair issues.

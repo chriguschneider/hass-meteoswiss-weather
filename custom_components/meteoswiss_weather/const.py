@@ -137,3 +137,11 @@ POLLEN_UPDATE_INTERVAL = timedelta(hours=1)
 HINTS_STORAGE_VERSION = 1
 HINTS_STORAGE_KEY = f"{DOMAIN}.hints"
 HINTS_SAVE_DELAY = 30
+
+# Persisted daily traffic totals (issue #146). The two diagnostic sensors —
+# data fetched today and requests today — reset at local midnight. To survive a
+# restart within the day the coordinator saves and restores the daily totals with
+# ``helpers.storage.Store`` under the key below. No debounce: the sensor only
+# writes to storage when the value actually changes (a new fetch happened).
+TRAFFIC_STORAGE_VERSION = 1
+TRAFFIC_STORAGE_KEY = f"{DOMAIN}.traffic"

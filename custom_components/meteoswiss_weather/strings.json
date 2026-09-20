@@ -54,7 +54,9 @@
       "pollen_hazel": { "name": "Hazel pollen" },
       "pollen_beech": { "name": "Beech pollen" },
       "pollen_ash": { "name": "Ash pollen" },
-      "pollen_oak": { "name": "Oak pollen" }
+      "pollen_oak": { "name": "Oak pollen" },
+      "data_fetched_today": { "name": "Data fetched today" },
+      "requests_today": { "name": "Requests today" }
     }
   },
   "config": {

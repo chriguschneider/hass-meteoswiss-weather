@@ -54,7 +54,9 @@
       "pollen_hazel": { "name": "Haselnusspollen" },
       "pollen_beech": { "name": "Buchenpollen" },
       "pollen_ash": { "name": "Eschenpollen" },
-      "pollen_oak": { "name": "Eichenpollen" }
+      "pollen_oak": { "name": "Eichenpollen" },
+      "data_fetched_today": { "name": "Heute abgerufene Datenmenge" },
+      "requests_today": { "name": "Anfragen heute" }
     }
   },
   "config": {

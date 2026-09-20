@@ -42,6 +42,8 @@ from .const import (
     DOMAIN,
     HINTS_STORAGE_KEY,
     HINTS_STORAGE_VERSION,
+    TRAFFIC_STORAGE_KEY,
+    TRAFFIC_STORAGE_VERSION,
 )
 from .coordinator import (
     ForecastCoordinator,
@@ -125,6 +127,17 @@ def _hints_store(hass: HomeAssistant, entry: ConfigEntry) -> Store:
     return Store(hass, HINTS_STORAGE_VERSION, f"{HINTS_STORAGE_KEY}.{entry.entry_id}")
 
 
+def _traffic_store(hass: HomeAssistant, entry: ConfigEntry) -> Store:
+    """The per-entry store for the daily traffic totals (issue #146).
+
+    Persists today's bytes and requests so the diagnostic sensors survive a
+    restart within the day without resetting to zero.  Keyed by entry id and
+    removed with the entry.
+    """
+    key = f"{TRAFFIC_STORAGE_KEY}.{entry.entry_id}"
+    return Store(hass, TRAFFIC_STORAGE_VERSION, key)
+
+
 def _point_from_entry(entry: ConfigEntry) -> ForecastPoint:
     """Rebuild the forecast point from the entry (no network at startup).
 
@@ -178,12 +191,16 @@ async def async_setup_entry(
         hourly_cloud_layers=hourly_cloud_layers,
         hourly_temp_percentiles=hourly_temp_percentiles,
         hints_store=_hints_store(hass, entry),
+        traffic_store=_traffic_store(hass, entry),
     )
 
     # Restore the backend's fetch-ladder hints before the first refresh so it is
     # warm (issue #133): a cold refresh re-discovers positions known a minute
     # before the restart. A missing or corrupt store just starts cold.
     await forecast_coordinator.async_load_hints()
+    # Restore today's traffic totals so the diagnostic sensors survive a restart
+    # within the day without resetting to zero (issue #146).
+    await forecast_coordinator.async_load_traffic()
 
     # A first-refresh failure raises ConfigEntryNotReady so HA retries setup.
     await station_coordinator.async_config_entry_first_refresh()
@@ -348,10 +365,11 @@ async def async_unload_entry(
 async def async_remove_entry(
     hass: HomeAssistant, entry: MeteoSwissConfigEntry
 ) -> None:
-    """Drop the entry's persisted fetch-hint store when the entry is removed.
+    """Drop the entry's persisted stores when the entry is removed.
 
-    The hints are a per-entry cache of upstream byte positions (issue #133);
-    they are meaningless once the entry (and its forecast point) is gone, so
-    the store file is removed rather than left behind under ``.storage/``.
+    The hints (issue #133) and the traffic totals (issue #146) are per-entry
+    caches that are meaningless once the entry is gone, so both store files are
+    removed rather than left behind under ``.storage/``.
     """
     await _hints_store(hass, entry).async_remove()
+    await _traffic_store(hass, entry).async_remove()
