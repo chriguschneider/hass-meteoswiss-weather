@@ -9,6 +9,8 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+## [v0.4.0] — 2026-09-20
+
 ### Added
 
 - **Settings map in CONFIGURATION.md** (#147). A new
@@ -40,76 +42,6 @@ using the matching section below as release notes.
   longer fit row addressing it states the honest consequence (a large prefix of
   the ~30 MB source files) rather than a fixed number.
 
-### Changed
-
-- **The options dialog is now a menu with an overview page** (#144). Instead of a
-  hidden wizard whose second page only appeared after ticking "hourly" and
-  pressing submit, the options flow opens a menu with three entries: **Hourly
-  forecast** (toggle, horizon, cloud layers and percentiles on one page),
-  **Pollen monitoring** (toggle and station on one page) and **Overview**. The
-  overview is read-only: it shows what is on now, which forecast fields that
-  produces, and how many of the entry's entities are currently created disabled
-  (with where to enable them), plus a pointer to `docs/CONFIGURATION.md`. Each
-  page saves only its own options, so changing the hourly settings no longer
-  resets the pollen settings or vice versa. The stored option keys are unchanged,
-  so existing entries keep their settings without a migration.
-
-### Fixed
-
-- **A point-major-group file re-sorted to date-major upstream no longer falls to
-  the whole ~30 MB file** (#153,
-  [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). `zprfr0hs` (zero-degree
-  level) is date-major upstream since 2026-09-16 but still lives in the static
-  point-major group; at "Full run" a changed canary (about every hour) dragged it
-  to the whole ~32 MB file, and at a 3–8 day horizon to a 16–30 MB prefix — up to
-  ~780 MB a day for one sensor value. Two changes fix this by construction: the
-  **fetch ladder** now decides about chunking from a file's *detected* layout, not
-  the group it was listed in — a date-major demand that overruns the request cap
-  (a long window, or a whole run with too many blocks) is row-addressed in
-  consecutive cap-sized windows (the #143 far-tail mechanism), with the prefix and
-  whole file kept only as the per-window fallback; and the coordinator **schedules
-  each demanded file by its last detected layout**, so a file that turned
-  date-major follows the date-major near/far cadence (near window on a changed
-  canary, far remainder at most every 6 h) instead of being re-fetched whole on
-  every changed run. A genuinely point-major file is still one ~5 KB block per run;
-  the hourly forecast still carries `zero_degree_level` for every hour to the
-  horizon; default-horizon behaviour and cost are unchanged.
-
-- **Long hourly horizons no longer read a multi-MB prefix on every run** (#143,
-  [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). With the hourly option
-  on and a horizon of 3+ days or "Full run", a changed forecast (which MeteoSwiss
-  publishes almost every hour) made the date-major group fall back to a prefix of
-  the ~30 MB files — up to ~16–30 MB per file per hour, a regression against
-  v0.3.1's 6-hourly far range. The date-major refresh is now split by distance:
-  a changed run refreshes only the **near window** (what fits row addressing under
-  the request cap, ~100–150 KB), while the **far remainder** rides the 6-hourly
-  far cadence and is fetched by row addressing in consecutive cap-sized windows —
-  never the prefix. The forecast still reaches the configured horizon at all
-  times, because a near-only refresh keeps the previous run's far hours until the
-  far refresh replaces them. Default-horizon behaviour and cost are unchanged. The
-  horizon option text no longer warns that longer horizons read "a much larger
-  part of the ~30 MB files on every refresh".
-
-- **The option dialog and the docs describe what each setting really does and
-  costs.** The texts still promised a refresh "at most every 3 hours", "7–11 MB
-  per refresh" and cloud layers that "quadruple the traffic". Measured on a
-  live instance, everything switched on costs about 1.2 MB per refresh, about
-  hourly; the cloud layers are the cheapest extra (~0.05 MB) and the
-  temperature percentiles the most expensive (~0.5 MB). Every option now says
-  what it gives you, what it costs and what works without it, in all four
-  languages, and `docs/CONFIGURATION.md` lists the entities that are created
-  disabled. `docs/ogd.md` records that MeteoSwiss adjusts the near term about
-  every hour, not on the 3-hourly rhythm measured in August.
-
-- **`radiation` and `zero_degree_level` now appear in the hourly forecast** (#135).
-  Both fields were already fetched and parsed (`gre000h0` / `zprfr0hs`, part of
-  `HOURLY_REQUIRED_PARAMS`) but were silently dropped by `_as_hourly_forecast`.
-  `weather.get_forecasts(type: hourly)` now carries `radiation` (W/m²) and
-  `zero_degree_level` (m) for every hour that has a value; hours without a value
-  omit the key rather than sending `null`.
-
-### Added
-
 - **Persisted fetch-ladder hints across restarts** (#133,
   [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). The fetch ladder's
   per-file hints (the row-order layout and the point's learned byte positions,
@@ -139,18 +71,19 @@ using the matching section below as release notes.
   observed row-order layout for every hourly file so a layout drift is visible
   in the CI log without waiting for three escalated fetches.
 
-### Fixed
-
-- **`zprfr0hs` fetched once per run with the hourly option on** (#134). With
-  the hourly option on, the zero-degree level file (`zprfr0hs`) was fetched
-  twice per run: once by the daily path (fixed 48 h window) and again by the
-  hourly refresh (configured horizon, typically 49–72 h). The shared series
-  cache from #123 could not serve the second request because 48 h < the hourly
-  horizon. The daily path now uses `max(48 h, hourly horizon)` as the
-  zero-degree window so one fetch serves both consumers; with the hourly option
-  off the 48 h window is unchanged.
-
 ### Changed
+
+- **The options dialog is now a menu with an overview page** (#144). Instead of a
+  hidden wizard whose second page only appeared after ticking "hourly" and
+  pressing submit, the options flow opens a menu with three entries: **Hourly
+  forecast** (toggle, horizon, cloud layers and percentiles on one page),
+  **Pollen monitoring** (toggle and station on one page) and **Overview**. The
+  overview is read-only: it shows what is on now, which forecast fields that
+  produces, and how many of the entry's entities are currently created disabled
+  (with where to enable them), plus a pointer to `docs/CONFIGURATION.md`. Each
+  page saves only its own options, so changing the hourly settings no longer
+  resets the pollen settings or vice versa. The stored option keys are unchanged,
+  so existing entries keep their settings without a migration.
 
 - **A refresh is a steady trickle, not an ~800-request burst** (#132,
   [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). A cold forecast
@@ -239,6 +172,69 @@ using the matching section below as release notes.
   the brief window after 00:00 UTC when the new day's item is not yet published)
   and then to the full listing as a last resort. Traffic for discovery drops from
   ~15 MB/day to a few KB/day per instance.
+
+### Fixed
+
+- **A point-major-group file re-sorted to date-major upstream no longer falls to
+  the whole ~30 MB file** (#153,
+  [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). `zprfr0hs` (zero-degree
+  level) is date-major upstream since 2026-09-16 but still lives in the static
+  point-major group; at "Full run" a changed canary (about every hour) dragged it
+  to the whole ~32 MB file, and at a 3–8 day horizon to a 16–30 MB prefix — up to
+  ~780 MB a day for one sensor value. Two changes fix this by construction: the
+  **fetch ladder** now decides about chunking from a file's *detected* layout, not
+  the group it was listed in — a date-major demand that overruns the request cap
+  (a long window, or a whole run with too many blocks) is row-addressed in
+  consecutive cap-sized windows (the #143 far-tail mechanism), with the prefix and
+  whole file kept only as the per-window fallback; and the coordinator **schedules
+  each demanded file by its last detected layout**, so a file that turned
+  date-major follows the date-major near/far cadence (near window on a changed
+  canary, far remainder at most every 6 h) instead of being re-fetched whole on
+  every changed run. A genuinely point-major file is still one ~5 KB block per run;
+  the hourly forecast still carries `zero_degree_level` for every hour to the
+  horizon; default-horizon behaviour and cost are unchanged.
+
+- **Long hourly horizons no longer read a multi-MB prefix on every run** (#143,
+  [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). With the hourly option
+  on and a horizon of 3+ days or "Full run", a changed forecast (which MeteoSwiss
+  publishes almost every hour) made the date-major group fall back to a prefix of
+  the ~30 MB files — up to ~16–30 MB per file per hour, a regression against
+  v0.3.1's 6-hourly far range. The date-major refresh is now split by distance:
+  a changed run refreshes only the **near window** (what fits row addressing under
+  the request cap, ~100–150 KB), while the **far remainder** rides the 6-hourly
+  far cadence and is fetched by row addressing in consecutive cap-sized windows —
+  never the prefix. The forecast still reaches the configured horizon at all
+  times, because a near-only refresh keeps the previous run's far hours until the
+  far refresh replaces them. Default-horizon behaviour and cost are unchanged. The
+  horizon option text no longer warns that longer horizons read "a much larger
+  part of the ~30 MB files on every refresh".
+
+- **The option dialog and the docs describe what each setting really does and
+  costs.** The texts still promised a refresh "at most every 3 hours", "7–11 MB
+  per refresh" and cloud layers that "quadruple the traffic". Measured on a
+  live instance, everything switched on costs about 1.2 MB per refresh, about
+  hourly; the cloud layers are the cheapest extra (~0.05 MB) and the
+  temperature percentiles the most expensive (~0.5 MB). Every option now says
+  what it gives you, what it costs and what works without it, in all four
+  languages, and `docs/CONFIGURATION.md` lists the entities that are created
+  disabled. `docs/ogd.md` records that MeteoSwiss adjusts the near term about
+  every hour, not on the 3-hourly rhythm measured in August.
+
+- **`radiation` and `zero_degree_level` now appear in the hourly forecast** (#135).
+  Both fields were already fetched and parsed (`gre000h0` / `zprfr0hs`, part of
+  `HOURLY_REQUIRED_PARAMS`) but were silently dropped by `_as_hourly_forecast`.
+  `weather.get_forecasts(type: hourly)` now carries `radiation` (W/m²) and
+  `zero_degree_level` (m) for every hour that has a value; hours without a value
+  omit the key rather than sending `null`.
+
+- **`zprfr0hs` fetched once per run with the hourly option on** (#134). With
+  the hourly option on, the zero-degree level file (`zprfr0hs`) was fetched
+  twice per run: once by the daily path (fixed 48 h window) and again by the
+  hourly refresh (configured horizon, typically 49–72 h). The shared series
+  cache from #123 could not serve the second request because 48 h < the hourly
+  horizon. The daily path now uses `max(48 h, hourly horizon)` as the
+  zero-degree window so one fetch serves both consumers; with the hourly option
+  off the 48 h window is unchanged.
 
 ## [v0.3.1] — 2026-09-19
 
@@ -548,7 +544,8 @@ integration produces a weather entity (see the tracking issue in the README).
   tag-triggered release gate with a zip asset, and the opt-in Claude agent
   workflows (label, mention, autopilot, reviewer)
 
-[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.4.0...HEAD
+[v0.4.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.3.1...v0.4.0
 [v0.3.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.3.0...v0.3.1
 [v0.3.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.2.2...v0.3.0
 [v0.2.2]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.2.1...v0.2.2
