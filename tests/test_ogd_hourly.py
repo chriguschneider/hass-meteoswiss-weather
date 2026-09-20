@@ -563,6 +563,126 @@ async def test_ladder_absent_point_is_proven_by_the_full_file() -> None:
     assert not result.has_rows
 
 
+# --- the far remainder: a long window split into cap-sized windows (#143) ----
+#
+# Once a demanded window needs more than SERIES_REQUEST_CAP requests, a single
+# fetch_series skips row addressing and reads the multi-MB prefix. The far
+# remainder of a long horizon is instead fetched by ``_fetch_series_windows`` as
+# consecutive windows that each fit the cap, so every window stays on row
+# addressing (level ≤ 2) and never touches the prefix.
+
+_FAR_HOURS = 220  # a full run: nine days and a few hours
+_FAR_POINTS = [(pid, 1) for pid in range(1, 301)] + [
+    (pid, 2) for pid in range(309700, 310000)
+]
+
+
+def _long_date_major(hours: int = _FAR_HOURS) -> bytes:
+    """A date-major file with ``hours`` hour blocks (600 points each).
+
+    Block sizes vary by a few dozen bytes per hour — the ±60 B the live
+    ``tre200h0`` shows on its ~150 KB blocks (docs/ogd.md §E4), scaled to these
+    ~16 KB blocks — so a position extrapolated from the file start drifts and
+    each found row must re-anchor the next, exactly as upstream.
+    """
+    order = _FAR_POINTS[::2] + _FAR_POINTS[1::2]  # fixed, unsorted, like upstream
+    lines = [_HEADER]
+    for h in range(hours):
+        when = _H0 + timedelta(hours=h)
+        wider = h % 24  # this many points carry one extra char this hour
+        for i, (pid, ptype) in enumerate(order):
+            base = 100 + (pid % 90)
+            value = f"{base}.{h % 10}" + ("5" if i < wider else "")
+            lines.append(f"{pid};{ptype};{_stamp(when)};{value}")
+    return ("\n".join(lines) + "\n").encode("iso-8859-1")
+
+
+async def _windows(data, *, start, end, hint=None, utc_day=None, cap=96):
+    """Drive ``_fetch_series_windows`` over one in-memory reader, counting bytes."""
+    mem = _MemReader(data)
+
+    def make_reader() -> H._CountingReader:
+        return H._CountingReader(mem, cap)
+
+    result = await H._fetch_series_windows(
+        make_reader,
+        _TARGET,
+        window_start=start,
+        window_end=end,
+        hint=hint,
+        utc_day=utc_day,
+        step=timedelta(hours=1),
+        request_cap=cap,
+    )
+    return result, mem
+
+
+async def test_far_remainder_220h_stays_on_row_addressing() -> None:
+    """Acceptance #143.2: a far refresh of a 220 h horizon stays on level ≤ 2 for
+    every window and never reads the prefix; total bytes far below the file."""
+    data = _long_date_major()
+    start = _H0 + timedelta(hours=72)  # begins past the near window
+    end = _H0 + timedelta(hours=_FAR_HOURS)
+    result, _mem = await _windows(data, start=start, end=end, utc_day=_DAY)
+
+    assert result.layout is FileLayout.DATE_MAJOR
+    assert result.level <= 2  # every window row-addressed, never the prefix (L3+)
+    assert not result.whole_run
+    # Every far hour, only the point's rows, in order.
+    assert _series_hours(result) == [
+        _stamp(start + timedelta(hours=h)) for h in range(_FAR_HOURS - 72)
+    ]
+    assert all(
+        line.startswith(f"{_TARGET.point_id};{_TARGET.point_type_id};")
+        for line in _series_lines(result)
+    )
+    # Bytes far below the whole file, despite spanning ~148 h across the cap.
+    assert result.bytes < len(data) / 4
+    # The parser reads the merged text like any other file.
+    assert len(parse_hourly({"tre200h0": result.text}, _TARGET, None)) == (
+        _FAR_HOURS - 72
+    )
+
+
+def test_far_remainder_uses_more_than_one_window() -> None:
+    """A 148 h remainder needs several cap-sized windows, not one over-cap read."""
+    start = _H0 + timedelta(hours=72)
+    end = _H0 + timedelta(hours=_FAR_HOURS)
+    # Each window fits the cap, so a single fetch_series of the whole span would
+    # have overrun it and fallen to the prefix; the split keeps it row-addressed.
+    windows = H._split_window(start, end, timedelta(hours=1), 96)
+    assert len(windows) >= 2
+    assert all(
+        int((we - ws) / timedelta(hours=1)) + 1 + H._ADDRESSING_OVERHEAD_REQUESTS <= 96
+        for ws, we in windows
+    )
+
+
+async def test_far_remainder_full_run_resolves_the_end() -> None:
+    """An open-ended (full-run) far remainder learns the run's last block and row-
+    addresses to it, without a hint (the probe path)."""
+    data = _long_date_major()
+    start = _H0 + timedelta(hours=72)
+    result, _mem = await _windows(data, start=start, end=None, utc_day=_DAY)
+
+    assert result.level <= 2
+    assert _series_hours(result)[0] == _stamp(start)
+    assert _series_hours(result)[-1] == _stamp(_H0 + timedelta(hours=_FAR_HOURS - 1))
+    assert result.bytes < len(data) / 4
+
+
+async def test_far_remainder_full_run_end_from_hint() -> None:
+    """A same-day hint's last_stamp resolves the open end without any probe."""
+    data = _long_date_major()
+    start = _H0 + timedelta(hours=72)
+    seeded = (await _windows(data, start=start, end=None, utc_day=_DAY))[0].hint
+    assert seeded is not None and seeded.last_stamp
+    warm, _mem = await _windows(data, start=start, end=None, hint=seeded, utc_day=_DAY)
+
+    assert warm.level <= 1  # warm: no classification, no geometry learning
+    assert _series_hours(warm)[-1] == _stamp(_H0 + timedelta(hours=_FAR_HOURS - 1))
+
+
 # --- the per-file hint, remembered per UTC day (issue #121) ------------------
 
 # The file's UTC day: _big_date_major starts at 21:00 the previous day.

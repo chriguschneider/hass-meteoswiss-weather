@@ -126,6 +126,7 @@ class FakeBackend:
         horizon_days: int = -1,
         params: tuple[str, ...] = (),
         run=None,
+        window_start_override=None,
     ) -> list[HourlyForecast]:
         # The tiered provider (issue #68) asks for the temperature and the
         # point-major group on separate schedules; this in-memory backend

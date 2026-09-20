@@ -11,6 +11,21 @@ using the matching section below as release notes.
 
 ### Fixed
 
+- **Long hourly horizons no longer read a multi-MB prefix on every run** (#143,
+  [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). With the hourly option
+  on and a horizon of 3+ days or "Full run", a changed forecast (which MeteoSwiss
+  publishes almost every hour) made the date-major group fall back to a prefix of
+  the ~30 MB files — up to ~16–30 MB per file per hour, a regression against
+  v0.3.1's 6-hourly far range. The date-major refresh is now split by distance:
+  a changed run refreshes only the **near window** (what fits row addressing under
+  the request cap, ~100–150 KB), while the **far remainder** rides the 6-hourly
+  far cadence and is fetched by row addressing in consecutive cap-sized windows —
+  never the prefix. The forecast still reaches the configured horizon at all
+  times, because a near-only refresh keeps the previous run's far hours until the
+  far refresh replaces them. Default-horizon behaviour and cost are unchanged. The
+  horizon option text no longer warns that longer horizons read "a much larger
+  part of the ~30 MB files on every refresh".
+
 - **The option dialog and the docs describe what each setting really does and
   costs.** The texts still promised a refresh "at most every 3 hours", "7–11 MB
   per refresh" and cloud layers that "quadruple the traffic". Measured on a

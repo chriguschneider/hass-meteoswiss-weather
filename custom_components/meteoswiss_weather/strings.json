@@ -189,7 +189,7 @@
           "hourly_temp_percentiles": "Include temperature percentiles"
         },
         "data_description": {
-          "hourly_horizon_days": "Counted in full local calendar days. Default: the rest of today plus two full days (49–72 hours). Up to there every hourly file is read row by row and stays small. Longer horizons and \"Full run\" (about 220 hours, 9 days) read a much larger part of the ~30 MB files on every refresh, so choose them only if you need them.",
+          "hourly_horizon_days": "Counted in full local calendar days. Default: the rest of today plus two full days (49–72 hours), read row by row and kept small on every refresh. Longer horizons and \"Full run\" (about 220 hours, 9 days) add a far tail beyond that: it is read row by row too, but refreshed at most every 6 hours rather than on every change, so it costs a little more without ever downloading a large part of the ~30 MB files.",
           "hourly_cloud_layers": "Gives you: cloud_coverage (the maximum of the high, mid and low layers) plus the three layers on every forecast hour. Costs: about 0.05 MB per refresh, three small per-point blocks. Off by default.",
           "hourly_temp_percentiles": "Gives you: temperature_p10 and temperature_p90, the forecast's uncertainty band, on every forecast hour. Costs: about 0.5 MB per refresh, the most expensive extra (two files read row by row). Off by default."
         }

@@ -189,7 +189,7 @@
           "hourly_temp_percentiles": "Inclure les percentiles de température"
         },
         "data_description": {
-          "hourly_horizon_days": "Compté en jours calendaires locaux complets. Par défaut : le reste d'aujourd'hui plus deux jours complets (49 à 72 heures). Jusque-là, chaque fichier horaire est lu ligne par ligne et reste petit. Les horizons plus longs et « Cycle complet » (environ 220 heures, 9 jours) lisent à chaque actualisation une part bien plus grande des fichiers de ~30 Mo ; ne les choisissez qu'en cas de besoin.",
+          "hourly_horizon_days": "Compté en jours calendaires locaux complets. Par défaut : le reste d'aujourd'hui plus deux jours complets (49 à 72 heures), lu ligne par ligne et gardé petit à chaque actualisation. Les horizons plus longs et « Cycle complet » (environ 220 heures, 9 jours) ajoutent au-delà une partie lointaine : elle est aussi lue ligne par ligne, mais actualisée au plus toutes les 6 heures plutôt qu'à chaque changement ; elle coûte donc un peu plus sans jamais télécharger une grande partie des fichiers de ~30 Mo.",
           "hourly_cloud_layers": "Apporte : cloud_coverage (le maximum des couches haute, moyenne et basse) ainsi que les trois couches pour chaque heure de prévision. Coût : environ 0,05 Mo par actualisation, trois petits blocs par point. Désactivé par défaut.",
           "hourly_temp_percentiles": "Apporte : temperature_p10 et temperature_p90, la marge d'incertitude de la prévision, pour chaque heure de prévision. Coût : environ 0,5 Mo par actualisation, le complément le plus coûteux (deux fichiers lus ligne par ligne). Désactivé par défaut."
         }
