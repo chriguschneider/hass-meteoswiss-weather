@@ -171,35 +171,44 @@
     "step": {
       "init": {
         "title": "MeteoSwiss Weather options",
-        "data": {
-          "hourly_forecast": "Enable hourly forecast",
-          "pollen": "Enable pollen monitoring"
-        },
-        "data_description": {
-          "hourly_forecast": "Gives you: an hourly forecast on the weather entity (condition, temperature, precipitation and its probability, wind, gusts, direction, global radiation, zero-degree level), and the current condition follows the hourly symbol. Costs: about 0.3 MB per refresh at the default horizon. The data is refreshed whenever MeteoSwiss changed the coming hours, in practice about once an hour, whether or not a card is open. Not needed for: the daily forecast, the zero-degree level sensor and the \"today\" sensors.",
-          "pollen": "Gives you: one sensor per pollen type the station measures, in grains/m³. Grass and birch are enabled, the others stay disabled until you enable them in the entity settings. Costs: one small file per hour."
+        "description": "Choose what to configure. Each page is independent — saving one does not change the others.",
+        "menu_options": {
+          "hourly": "Hourly forecast",
+          "pollen": "Pollen monitoring",
+          "overview": "Overview (what is on now)"
         }
       },
       "hourly": {
-        "title": "Hourly forecast horizon",
-        "description": "How far ahead the hourly forecast reaches and which extras it carries. Costs were measured for one location in September 2026; the integration's diagnostics download shows the real numbers for yours.",
+        "title": "Hourly forecast",
+        "description": "Enable the hourly forecast and choose how far it reaches and which extras it carries. The horizon and the extras are ignored while the toggle is off. Costs were measured for one location in September 2026; the integration's diagnostics download shows the real numbers for yours.",
         "data": {
+          "hourly_forecast": "Enable hourly forecast",
           "hourly_horizon_days": "Forecast horizon",
           "hourly_cloud_layers": "Include cloud cover layers",
           "hourly_temp_percentiles": "Include temperature percentiles"
         },
         "data_description": {
+          "hourly_forecast": "Gives you: an hourly forecast on the weather entity (condition, temperature, precipitation and its probability, wind, gusts, direction, global radiation, zero-degree level), and the current condition follows the hourly symbol. Costs: about 0.3 MB per refresh at the default horizon. The data is refreshed whenever MeteoSwiss changed the coming hours, in practice about once an hour, whether or not a card is open. Not needed for: the daily forecast, the zero-degree level sensor and the \"today\" sensors.",
           "hourly_horizon_days": "Counted in full local calendar days. Default: the rest of today plus two full days (49–72 hours), read row by row and kept small on every refresh. Longer horizons and \"Full run\" (about 220 hours, 9 days) add a far tail beyond that: it is read row by row too, but refreshed at most every 6 hours rather than on every change, so it costs a little more without ever downloading a large part of the ~30 MB files.",
           "hourly_cloud_layers": "Gives you: cloud_coverage (the maximum of the high, mid and low layers) plus the three layers on every forecast hour. Costs: about 0.05 MB per refresh, three small per-point blocks. Off by default.",
           "hourly_temp_percentiles": "Gives you: temperature_p10 and temperature_p90, the forecast's uncertainty band, on every forecast hour. Costs: about 0.5 MB per refresh, the most expensive extra (two files read row by row). Off by default."
         }
       },
-      "pollen_station": {
-        "title": "Select pollen station",
-        "description": "Choose the pollen monitoring station to use. The three nearest stations to your forecast point are shown; the nearest is pre-selected.",
+      "pollen": {
+        "title": "Pollen monitoring",
+        "description": "Enable pollen monitoring and choose the station. The station is ignored while the toggle is off.",
         "data": {
+          "pollen": "Enable pollen monitoring",
           "pollen_station": "Pollen station"
+        },
+        "data_description": {
+          "pollen": "Gives you: one sensor per pollen type the station measures, in grains/m³. Grass and birch are enabled, the others stay disabled until you enable them in the entity settings. Costs: one small file per hour.",
+          "pollen_station": "The three nearest stations to your forecast point are shown; the nearest is pre-selected."
         }
+      },
+      "overview": {
+        "title": "Overview",
+        "description": "What this entry is doing now:\n\n{active}\n\nForecast fields it produces:\n\n{forecast_fields}\n\n**Disabled entities:** {disabled_count} of this entry's entities are currently created disabled (zero-degree level, measurement time, most station sensors and most pollen types). No option here controls them — enable the ones you want in this entry's entity list (Settings → Devices & Services → MeteoSwiss Weather → this entry → entities); enabling one costs no extra traffic.\n\nFull field and cost reference: docs/CONFIGURATION.md."
       }
     }
   }

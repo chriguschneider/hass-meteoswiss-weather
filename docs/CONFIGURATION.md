@@ -120,6 +120,20 @@ One sensor entity per measured field from the SwissMetNet station. All are disab
 
 ## Options
 
+Open **Settings → Devices & Services → MeteoSwiss Weather → the entry → Configure**.
+The options dialog is a menu with three entries:
+
+- **Hourly forecast** — the toggle, horizon, cloud layers and temperature
+  percentiles on one page (the horizon and extras are ignored while the toggle
+  is off).
+- **Pollen monitoring** — the toggle and the pollen station on one page.
+- **Overview** — a read-only summary of what is on now, which forecast fields it
+  produces, and how many of the entry's entities are currently created disabled
+  (see [Entities that are disabled by default](#entities-that-are-disabled-by-default)).
+
+Each page saves only its own options, so changing the hourly settings never
+resets the pollen settings or vice versa.
+
 ### Hourly Forecast
 
 **Default:** Off

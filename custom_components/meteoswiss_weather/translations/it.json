@@ -167,39 +167,48 @@
       }
     }
   },
-  "options": {
+  "options":   {
     "step": {
       "init": {
         "title": "Opzioni MeteoSwiss Weather",
-        "data": {
-          "hourly_forecast": "Abilita previsioni orarie",
-          "pollen": "Abilita monitoraggio pollini"
-        },
-        "data_description": {
-          "hourly_forecast": "Offre: una previsione oraria sull'entità meteo (condizione, temperatura, precipitazioni e relativa probabilità, vento, raffiche, direzione, radiazione globale, isoterma di zero gradi); la condizione attuale segue il simbolo orario. Costo: circa 0,3 MB per aggiornamento con l'orizzonte predefinito. I dati vengono aggiornati non appena MeteoSvizzera modifica le prossime ore, in pratica circa una volta all'ora, che una scheda sia aperta o meno. Non serve per: la previsione giornaliera, il sensore dell'isoterma di zero gradi e i sensori «oggi».",
-          "pollen": "Offre: un sensore per ogni tipo di polline misurato dalla stazione, in granuli/m³. Graminacee e betulla sono attivi, gli altri restano disattivati finché non li attivi nelle impostazioni delle entità. Costo: un piccolo file all'ora."
+        "description": "Scegli cosa configurare. Ogni pagina è indipendente: salvarne una non modifica le altre.",
+        "menu_options": {
+          "hourly": "Previsioni orarie",
+          "pollen": "Monitoraggio pollini",
+          "overview": "Panoramica (cosa è attivo)"
         }
       },
       "hourly": {
-        "title": "Orizzonte delle previsioni orarie",
-        "description": "Fin dove arriva la previsione oraria e quali extra contiene. I costi sono stati misurati per una località nel settembre 2026; il download della diagnostica dell'integrazione mostra i valori reali per la tua.",
+        "title": "Previsioni orarie",
+        "description": "Abilita le previsioni orarie e scegli fin dove arrivano e quali extra contengono. L'orizzonte e gli extra vengono ignorati finché l'interruttore è disattivato. I costi sono stati misurati per una località nel settembre 2026; il download della diagnostica dell'integrazione mostra i valori reali per la tua.",
         "data": {
+          "hourly_forecast": "Abilita previsioni orarie",
           "hourly_horizon_days": "Orizzonte di previsione",
           "hourly_cloud_layers": "Includi gli strati di copertura nuvolosa",
           "hourly_temp_percentiles": "Includi i percentili di temperatura"
         },
         "data_description": {
+          "hourly_forecast": "Offre: una previsione oraria sull'entità meteo (condizione, temperatura, precipitazioni e relativa probabilità, vento, raffiche, direzione, radiazione globale, isoterma di zero gradi); la condizione attuale segue il simbolo orario. Costo: circa 0,3 MB per aggiornamento con l'orizzonte predefinito. I dati vengono aggiornati non appena MeteoSvizzera modifica le prossime ore, in pratica circa una volta all'ora, che una scheda sia aperta o meno. Non serve per: la previsione giornaliera, il sensore dell'isoterma di zero gradi e i sensori «oggi».",
           "hourly_horizon_days": "Contato in giorni di calendario locali interi. Predefinito: il resto di oggi più due giorni interi (49–72 ore), letto riga per riga e mantenuto piccolo a ogni aggiornamento. Orizzonti più lunghi e «Ciclo completo» (circa 220 ore, 9 giorni) aggiungono oltre quello una coda lontana: viene letta riga per riga anch’essa, ma aggiornata al massimo ogni 6 ore invece che a ogni cambiamento; costa quindi un po’ di più senza mai scaricare una parte grande dei file da ~30 MB.",
           "hourly_cloud_layers": "Offre: cloud_coverage (il massimo degli strati alto, medio e basso) e i tre strati per ogni ora di previsione. Costo: circa 0,05 MB per aggiornamento, tre piccoli blocchi per punto. Disattivato per impostazione predefinita.",
           "hourly_temp_percentiles": "Offre: temperature_p10 e temperature_p90, la banda di incertezza della previsione, per ogni ora di previsione. Costo: circa 0,5 MB per aggiornamento, l'extra più costoso (due file letti riga per riga). Disattivato per impostazione predefinita."
         }
       },
-      "pollen_station": {
-        "title": "Seleziona stazione pollinica",
-        "description": "Scegliere la stazione di monitoraggio dei pollini. Vengono mostrate le tre stazioni più vicine al punto di previsione; la più vicina è preselezionata.",
+      "pollen": {
+        "title": "Monitoraggio pollini",
+        "description": "Abilita il monitoraggio dei pollini e scegli la stazione. La stazione viene ignorata finché l'interruttore è disattivato.",
         "data": {
+          "pollen": "Abilita monitoraggio pollini",
           "pollen_station": "Stazione pollinica"
+        },
+        "data_description": {
+          "pollen": "Offre: un sensore per ogni tipo di polline misurato dalla stazione, in granuli/m³. Graminacee e betulla sono attivi, gli altri restano disattivati finché non li attivi nelle impostazioni delle entità. Costo: un piccolo file all'ora.",
+          "pollen_station": "Vengono mostrate le tre stazioni più vicine al punto di previsione; la più vicina è preselezionata."
         }
+      },
+      "overview": {
+        "title": "Panoramica",
+        "description": "Cosa sta facendo ora questa voce:\n\n{active}\n\nCampi di previsione prodotti:\n\n{forecast_fields}\n\n**Entità disattivate:** {disabled_count} entità di questa voce sono attualmente create disattivate (isoterma di zero gradi, ora della misurazione, la maggior parte dei sensori di stazione e la maggior parte dei tipi di polline). Nessuna opzione qui le controlla: attiva quelle che vuoi nell'elenco delle entità di questa voce (Impostazioni → Dispositivi e servizi → MeteoSwiss Weather → questa voce → entità); l'attivazione non costa traffico aggiuntivo.\n\nRiferimento completo di campi e costi: docs/CONFIGURATION.md."
       }
     }
   }

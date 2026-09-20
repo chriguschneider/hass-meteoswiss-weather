@@ -167,39 +167,48 @@
       }
     }
   },
-  "options": {
+  "options":   {
     "step": {
       "init": {
         "title": "MeteoSwiss Weather Optionen",
-        "data": {
-          "hourly_forecast": "Stundenprognose aktivieren",
-          "pollen": "Pollenmessung aktivieren"
-        },
-        "data_description": {
-          "hourly_forecast": "Bringt: eine Stundenprognose auf der Wetter-Entität (Zustand, Temperatur, Niederschlag und dessen Wahrscheinlichkeit, Wind, Böen, Richtung, Globalstrahlung, Nullgradgrenze); der aktuelle Zustand folgt dem Stundensymbol. Kostet: rund 0,3 MB pro Aktualisierung beim Standardhorizont. Aktualisiert wird, sobald MeteoSwiss die kommenden Stunden geändert hat, in der Praxis etwa einmal pro Stunde, unabhängig davon, ob eine Karte offen ist. Nicht nötig für: die Tagesprognose, den Nullgradgrenze-Sensor und die «Heute»-Sensoren.",
-          "pollen": "Bringt: einen Sensor pro Pollenart, die die Station misst, in Körnern/m³. Gräser und Birke sind aktiv, die übrigen bleiben deaktiviert, bis Sie sie in den Entitätseinstellungen aktivieren. Kostet: eine kleine Datei pro Stunde."
+        "description": "Wählen Sie, was Sie konfigurieren möchten. Jede Seite ist eigenständig – das Speichern der einen ändert die andere nicht.",
+        "menu_options": {
+          "hourly": "Stundenprognose",
+          "pollen": "Pollenmessung",
+          "overview": "Übersicht (was ist aktiv)"
         }
       },
       "hourly": {
-        "title": "Horizont der Stundenprognose",
-        "description": "Wie weit die Stundenprognose reicht und welche Zusätze sie enthält. Die Kosten wurden im September 2026 für einen Ort gemessen; der Diagnose-Download der Integration zeigt die echten Werte für Ihren.",
+        "title": "Stundenprognose",
+        "description": "Aktivieren Sie die Stundenprognose und legen Sie fest, wie weit sie reicht und welche Zusätze sie enthält. Horizont und Zusätze werden ignoriert, solange der Schalter aus ist. Die Kosten wurden im September 2026 für einen Ort gemessen; der Diagnose-Download der Integration zeigt die echten Werte für Ihren.",
         "data": {
+          "hourly_forecast": "Stundenprognose aktivieren",
           "hourly_horizon_days": "Prognosehorizont",
           "hourly_cloud_layers": "Wolkendecke-Schichten einschliessen",
           "hourly_temp_percentiles": "Temperaturperzentile einschliessen"
         },
         "data_description": {
+          "hourly_forecast": "Bringt: eine Stundenprognose auf der Wetter-Entität (Zustand, Temperatur, Niederschlag und dessen Wahrscheinlichkeit, Wind, Böen, Richtung, Globalstrahlung, Nullgradgrenze); der aktuelle Zustand folgt dem Stundensymbol. Kostet: rund 0,3 MB pro Aktualisierung beim Standardhorizont. Aktualisiert wird, sobald MeteoSwiss die kommenden Stunden geändert hat, in der Praxis etwa einmal pro Stunde, unabhängig davon, ob eine Karte offen ist. Nicht nötig für: die Tagesprognose, den Nullgradgrenze-Sensor und die «Heute»-Sensoren.",
           "hourly_horizon_days": "Gezählt in vollen lokalen Kalendertagen. Standard: der Rest von heute plus zwei volle Tage (49–72 Stunden), zeilenweise gelesen und bei jeder Aktualisierung klein gehalten. Längere Horizonte und «Voller Lauf» (rund 220 Stunden, 9 Tage) fügen dahinter einen fernen Teil hinzu: Auch er wird zeilenweise gelesen, aber höchstens alle 6 Stunden statt bei jeder Änderung aktualisiert. Das kostet etwas mehr, lädt aber nie einen grossen Teil der ~30 MB grossen Dateien herunter.",
           "hourly_cloud_layers": "Bringt: cloud_coverage (das Maximum der hohen, mittleren und tiefen Schicht) sowie die drei Schichten für jede Prognosestunde. Kostet: rund 0,05 MB pro Aktualisierung, drei kleine Blöcke pro Punkt. Standardmässig aus.",
           "hourly_temp_percentiles": "Bringt: temperature_p10 und temperature_p90, das Unsicherheitsband der Prognose, für jede Prognosestunde. Kostet: rund 0,5 MB pro Aktualisierung, der teuerste Zusatz (zwei zeilenweise gelesene Dateien). Standardmässig aus."
         }
       },
-      "pollen_station": {
-        "title": "Pollenstation auswählen",
-        "description": "Wählen Sie die Pollenüberwachungsstation. Die drei nächstgelegenen Stationen zu Ihrem Vorhersagepunkt werden angezeigt; die nächste ist vorausgewählt.",
+      "pollen": {
+        "title": "Pollenmessung",
+        "description": "Aktivieren Sie die Pollenmessung und wählen Sie die Station. Die Station wird ignoriert, solange der Schalter aus ist.",
         "data": {
+          "pollen": "Pollenmessung aktivieren",
           "pollen_station": "Pollenstation"
+        },
+        "data_description": {
+          "pollen": "Bringt: einen Sensor pro Pollenart, die die Station misst, in Körnern/m³. Gräser und Birke sind aktiv, die übrigen bleiben deaktiviert, bis Sie sie in den Entitätseinstellungen aktivieren. Kostet: eine kleine Datei pro Stunde.",
+          "pollen_station": "Die drei nächstgelegenen Stationen zu Ihrem Vorhersagepunkt werden angezeigt; die nächste ist vorausgewählt."
         }
+      },
+      "overview": {
+        "title": "Übersicht",
+        "description": "Was dieser Eintrag gerade tut:\n\n{active}\n\nDaraus erzeugte Prognosefelder:\n\n{forecast_fields}\n\n**Deaktivierte Entitäten:** {disabled_count} Entitäten dieses Eintrags sind derzeit deaktiviert angelegt (Nullgradgrenze, Messzeitpunkt, die meisten Stationssensoren und die meisten Pollenarten). Keine Option hier steuert sie – aktivieren Sie die gewünschten in der Entitätenliste dieses Eintrags (Einstellungen → Geräte & Dienste → MeteoSwiss Weather → dieser Eintrag → Entitäten); das Aktivieren kostet keinen zusätzlichen Datenverkehr.\n\nVollständige Feld- und Kostenreferenz: docs/CONFIGURATION.md."
       }
     }
   }
