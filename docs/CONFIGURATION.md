@@ -166,7 +166,56 @@ The integration's diagnostics download lists, per file, the run, the bytes and t
 
 ### Entities that are disabled by default
 
-Many sensors are created but **disabled** until you enable them under *Settings → Devices & Services → MeteoSwiss Weather → entities*: the zero-degree level, the measurement time, most station sensors (radiation, soil temperatures, pressure variants, snow depth, …) and most pollen types. No option in the dialog controls them, and enabling one costs no extra traffic.
+Many sensors are created but **disabled** until you enable them under
+*Settings → Devices & Services → MeteoSwiss Weather → the entry → entities*.
+No option in the dialog controls them, and enabling one costs no extra traffic.
+See [What each setting controls](#what-each-setting-controls) for the complete
+map from settings to entities.
+
+**How to enable:** open *Settings → Devices & Services → MeteoSwiss Weather*,
+click the entry, click *N entities not shown*, find the sensor, click it, then
+toggle *Enable*.
+
+#### Station sensors (disabled by default)
+
+| Sensor key | Description |
+|---|---|
+| `dew_point` | Dew point at 2 m |
+| `pressure_qfe` | Pressure at station level (not reduced) |
+| `pressure_qnh` | Pressure reduced to sea level, ICAO standard (aviation) |
+| `sunshine_duration` | Minutes of sunshine in the last 10 minutes |
+| `global_radiation` | Incoming short-wave solar radiation, 10-minute mean |
+| `diffuse_radiation` | Diffuse part of the solar radiation |
+| `longwave_radiation` | Incoming long-wave (thermal) radiation |
+| `snow_depth` | Automatically measured snow depth |
+| `wind_chill` | Perceived temperature from wind and air temperature |
+| `air_temp_5cm` | Temperature just above the ground — ground-frost indicator |
+| `soil_temp_5cm` | Soil temperature at 5 cm depth |
+| `soil_temp_10cm` | Soil temperature at 10 cm depth |
+| `soil_temp_20cm` | Soil temperature at 20 cm depth |
+| `measurement_time` | Timestamp of the last delivered observation (diagnostic) |
+
+#### Forecast sensors (disabled by default)
+
+| Sensor key | Description |
+|---|---|
+| `zero_degree_level` | Altitude of the 0 °C isotherm for the current hour; works without the hourly option |
+
+#### Pollen sensors (disabled by default, requires pollen option on)
+
+| Sensor key | Description |
+|---|---|
+| `pollen_alder` | Alder pollen concentration |
+| `pollen_hazel` | Hazel pollen concentration |
+| `pollen_beech` | Beech pollen concentration |
+| `pollen_ash` | Ash pollen concentration |
+| `pollen_oak` | Oak pollen concentration |
+
+#### Diagnostic sensors (disabled by default)
+
+| Sensor key | Description |
+|---|---|
+| `requests_today` | HTTP request count since local midnight |
 
 ### Diagnostic traffic sensors
 
@@ -178,6 +227,33 @@ Two diagnostic sensors are always created under the forecast device:
 | `requests_today` | Disabled | — | HTTP request count since local midnight; same reset behaviour |
 
 Both counters reset at local midnight and survive a restart within the same day (state is persisted to `.storage`). They count bytes and requests that the fetch ladder already tracks — daily files, blocks, hourly files, canaries, and run discovery — so they add no extra network traffic. The counters feed from `BulkCsvBackend.pop_fetch_totals()`, which is called after each coordinator refresh.
+
+## What each setting controls
+
+One table, derived from the code, so every settings page and entity-registry
+toggle has a known mapping to what it produces and what it costs.
+
+Sensor keys match the entity unique-id suffix (e.g. `temperature` →
+`sensor.<name>_temperature`). Hourly forecast keys are the attribute names on
+each entry in the `forecast` list. **Disabled by default** means the entity is
+created but not enabled; see
+[Entities that are disabled by default](#entities-that-are-disabled-by-default)
+for the full grouped list and the one-step path to enable them.
+
+| Where | Setting | What it produces | Extra traffic | Works without it |
+|---|---|---|---|---|
+| Setup / Reconfigure | **Weather station** | Station sensors (enabled by default): `temperature`, `humidity`, `pressure_qff`, `wind_speed`, `wind_bearing`, `gust_speed`, `precipitation`. Disabled by default: `dew_point`, `pressure_qfe`, `pressure_qnh`, `sunshine_duration`, `global_radiation`, `diffuse_radiation`, `longwave_radiation`, `snow_depth`, `wind_chill`, `air_temp_5cm`, `soil_temp_5cm`, `soil_temp_10cm`, `soil_temp_20cm`, `measurement_time`. Weather entity current conditions (`temperature`, `humidity`, `pressure`, `wind_speed`, `wind_bearing`, `wind_gust_speed`, `condition`). | ~17.6 KB / 10 min (conditional 304) | Daily forecast, zero-degree level, forecast sensors, pollen |
+| Setup / Reconfigure | **Precipitation station** (optional) | `precipitation` sourced from the rain-only network instead of the main station | ~1.2 KB / 10 min (conditional 304) | Everything else |
+| Options → Hourly | **Hourly forecast toggle** (`hourly_forecast`) | Hourly forecast entries: `condition`, `temperature`, `precipitation`, `precipitation_probability`, `wind_speed`, `wind_gust_speed`, `wind_bearing`, `radiation`, `zero_degree_level`. Weather entity current `condition` follows the hourly symbol. | ~0.3 MB / refresh (~1×/h) | Daily forecast, station sensors, `zero_degree_level` sensor, forecast sensors |
+| Options → Hourly | **Horizon** (`hourly_horizon_days`) | Depth of the hourly window (default: rest of today + 2 full days) | Grows with horizon; full run reads ~30 MB / file | All other sensors and options |
+| Options → Hourly | **Cloud layers** (`hourly_cloud_layers`) | `cloud_coverage`, `cloud_coverage_high`, `cloud_coverage_mid`, `cloud_coverage_low` on every hourly entry | +~0.05 MB / refresh | All other hourly fields |
+| Options → Hourly | **Temperature percentiles** (`hourly_temp_percentiles`) | `temperature_p10`, `temperature_p90` on every hourly entry | +~0.5 MB / refresh | All other hourly fields |
+| Options → Pollen | **Pollen toggle** (`pollen`) | `pollen_grasses`, `pollen_birch` (enabled by default). Disabled by default: `pollen_alder`, `pollen_hazel`, `pollen_beech`, `pollen_ash`, `pollen_oak`. | ~1.2 KB / h (conditional) | Weather entity, station sensors, forecast |
+| Options → Pollen | **Pollen station** (`pollen_station`) | Which of the 15 pollen stations the sensors read | None | All other options |
+| Entity settings | **Enable a disabled sensor** | Individual enablement of any sensor in [Disabled by default](#entities-that-are-disabled-by-default) | No extra traffic | Nothing else changes |
+| Always on | **Forecast sensors** | `temp_max_today`, `temp_min_today`, `precipitation_today` (today's aggregates from the daily forecast, enabled by default) | Included in the daily forecast cost | Station sensors, hourly option |
+| Always on | **Zero-degree level sensor** | `zero_degree_level` sensor (disabled by default); filled by the daily refresh, no hourly opt-in required | Included in the daily fetch | Hourly option |
+| Always on | **Diagnostic sensors** | `data_fetched_today` (enabled by default); `requests_today` (disabled by default) | None | Everything |
 
 ## Services
 
@@ -278,6 +354,16 @@ cards:
 ```
 
 ## FAQ
+
+### Which entities are disabled by default, and how do I enable them?
+
+See [Entities that are disabled by default](#entities-that-are-disabled-by-default)
+for the full grouped list. To enable one: *Settings → Devices & Services →
+MeteoSwiss Weather → the entry → N entities not shown → click the sensor →
+toggle Enable*. No extra data is fetched.
+
+For the complete picture of what each setting produces and costs, see
+[What each setting controls](#what-each-setting-controls).
 
 ### Why no weather warnings?
 

@@ -11,6 +11,15 @@ using the matching section below as release notes.
 
 ### Added
 
+- **Settings map in CONFIGURATION.md** (#147). A new
+  [What each setting controls](docs/CONFIGURATION.md#what-each-setting-controls)
+  section lists every setting (setup, reconfigure, options, entity registry)
+  alongside what it produces (entity and forecast field keys), its extra
+  traffic cost, and what works without it. The disabled-entities section is
+  expanded into a full grouped list (station / forecast / pollen / diagnostic).
+  A new test guards the table and fails when a sensor key or extra hourly
+  forecast field is added to the code without a matching entry.
+
 - **Two diagnostic sensors show daily traffic to the MeteoSwiss backend** (#146).
   `sensor.<name>_data_fetched_today` (enabled by default, MB, `DATA_SIZE` device
   class, `total_increasing`) counts bytes transferred by the forecast coordinator

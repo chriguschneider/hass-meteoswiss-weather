@@ -35,6 +35,10 @@ the automatic pollen network. Every entity carries the attribution
 *Source: MeteoSwiss*. Entities marked **off** are created but disabled in the
 entity registry — enable them on the device page when you need them.
 
+For a complete map from each setting to what it produces and costs, see
+[**What each setting controls**](docs/CONFIGURATION.md#what-each-setting-controls)
+in CONFIGURATION.md.
+
 ### The `weather` entity
 
 One per config entry, named after the forecast point.
@@ -210,7 +214,10 @@ Or use the My-link shortcut:
 
 ## Configuration
 
-See [**CONFIGURATION.md**](docs/CONFIGURATION.md) for setup steps, the hourly forecast option and its cost, entity references, dashboard examples, and a FAQ (warnings, traffic, station selection, etc.).
+See [**CONFIGURATION.md**](docs/CONFIGURATION.md) for setup steps, the hourly
+forecast option and its cost, a [complete settings map](docs/CONFIGURATION.md#what-each-setting-controls)
+(what each setting produces and costs), entity references, dashboard examples,
+and a FAQ (warnings, traffic, station selection, etc.).
 
 ## The radar
 
