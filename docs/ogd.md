@@ -342,6 +342,15 @@ point. Fetching the near term at 02/05/08/…/23 UTC and the far range at
 fetches per day; fetching every run wastes 6 of 24 downloads outright.
 This was the basis of the tiered refresh (ADR-0002, revision 2; #54).
 
+**Superseded by a second measurement (2026-09-20, `tre200h0` and `fu3010h0`,
+point 309800;2, runs 06:00 and 07:00 UTC):** the 07:00 run, one of the six that
+"changed nothing" above, moved every one of the next six hours — temperature by
+up to 1.3 °C (07 h: 13.3 → 12.0 °C, 08 h: 15.5 → 16.3 °C), wind speed by up to
+1.2 km/h. MeteoSwiss adjusts the near term about every hour. A timetable
+derived from one day is therefore not a contract; the refresh is decided by a
+canary read per run instead (ADR-0008 section 3, #125), and with the hourly
+option on that means roughly one refresh per hour.
+
 **No longer the refresh trigger (issue #125, ADR-0008 section 3, owner
 decision 2).** These landing hours were measured once, on a single day, for one
 parameter — not a contract. The integration no longer decides what to refresh

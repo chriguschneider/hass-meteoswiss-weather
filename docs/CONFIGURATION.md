@@ -124,15 +124,35 @@ One sensor entity per measured field from the SwissMetNet station. All are disab
 
 **Default:** Off
 
-**Cost:** Roughly **70 MB per day per Home Assistant instance** worst case at the default 2-day horizon. A naive full download would cost ~1 GB/day; the integration avoids that with HTTP-Range fetches and a tiered refresh (see below). This is still a real cost that sums across the HACS install base, so please enable it only if you actually need an hourly view.
+**Gives you:** an hourly forecast on the weather entity — condition, temperature, precipitation and its probability, wind, gusts, direction, global radiation (`radiation`) and the zero-degree level (`zero_degree_level`) — and the entity's current condition follows the hourly symbol. **Not needed for** the daily forecast, the zero-degree level sensor and the "today" sensors; those work without it.
 
-**How it works:** With the option on, the hourly data is fetched on the integration's own forecast refresh, whether or not a card is open, so it is always ready when you look at it (an instance with the option on pays for it even when idle — ADR-0008). The integration follows the measured model run rhythm instead of downloading every hour:
+**How it works:** with the option on, the hourly data is fetched on the integration's own forecast refresh, whether or not a card is open, so it is always ready (an idle instance pays for it too — ADR-0008). Every hour the integration checks for a new run and reads a few rows as a canary; only when those differ from what it holds does it refresh. MeteoSwiss adjusts the coming hours about hourly, so in practice the hourly data refreshes about once an hour while the daily files are re-read far less often.
 
-- **Near term (today + tomorrow):** refreshed at the ICON-CH1 model runs (02, 05, 08, 11, 14, 17, 20, 23 UTC), or at least every 3 hours.
-- **Days 2 and beyond:** refreshed at the ICON-CH2 model runs (05, 11, 17, 23 UTC), or at least every 6 hours.
-- **Precipitation, symbol and wind:** refreshed with every new run — each of these is a tiny per-point block (a few KB).
+**What it costs** (measured 2026-09-20 for one location, warm, default horizon):
 
-Six runs a day change nothing for a given point, so they are never downloaded. A `hourly_horizon_days` option (0–8 days, or the full run) trades horizon for traffic: a smaller horizon fetches a shorter temperature prefix.
+| part | per refresh |
+|---|---|
+| without the hourly option (daily forecast, daily wind and probability, zero-degree level) | ~0.35 MB |
+| hourly forecast | ~0.3 MB |
+| + cloud cover layers | ~0.05 MB |
+| + temperature percentiles | ~0.5 MB |
+| everything on | **~1.2 MB, about 30 MB a day** |
+
+The integration's diagnostics download lists, per file, the run, the bytes and the number of requests of the last fetch, so you can see the real numbers for your location.
+
+**Horizon (`hourly_horizon_days`):** counted in full local calendar days; the default is the rest of today plus two full days (49–72 hours). Up to there every file is read row by row. Longer horizons and "Full run" (~220 hours) read a much larger part of the ~30 MB files on every refresh — choose them only if you need them.
+
+**Cloud cover layers:** adds `cloud_coverage` (the maximum of the three layers) and `cloud_coverage_high` / `_mid` / `_low` to every forecast hour.
+
+**Temperature percentiles:** adds `temperature_p10` and `temperature_p90` to every forecast hour. This is the most expensive extra.
+
+### Pollen
+
+**Default:** Off. Adds one sensor per pollen type the chosen station measures (grains/m³). Grass and birch are enabled; the other types are created disabled — enable them in the entity settings. One small file per hour.
+
+### Entities that are disabled by default
+
+Many sensors are created but **disabled** until you enable them under *Settings → Devices & Services → MeteoSwiss Weather → entities*: the zero-degree level, the measurement time, most station sensors (radiation, soil temperatures, pressure variants, snow depth, …) and most pollen types. No option in the dialog controls them, and enabling one costs no extra traffic.
 
 ## Services
 
@@ -240,7 +260,7 @@ Weather warnings (thunderstorms, hail, heavy snow) are not in the official Meteo
 
 ### Why is the hourly forecast off by default?
 
-The hourly forecast is published as whole-of-Switzerland CSV files (30–33 MB per parameter per hour). Even at the throttled rate of once per 3 hours, this costs roughly 1 GB per day per Home Assistant instance. With hundreds of HACS installations, that traffic reaches the scale where swisstopo's fair-use policy applies. MeteoSwiss has announced a per-point API for the end of 2026, which will remove this limitation. Until then, hourly is an informed opt-in.
+The hourly forecast is published as whole-of-Switzerland CSV files (30–33 MB per parameter per hour). The integration reads only your point's rows out of them (about 1 MB per refresh with everything on, see [Hourly Forecast](#hourly-forecast)), but that rests on how MeteoSwiss happens to sort the files, which is undocumented and has changed without notice. When a cheap read cannot prove it delivered every hour, the integration reads more, up to the whole file ([ADR-0008](adr/0008-run-scoped-forecast-store.md)), and raises a repair issue so you notice. MeteoSwiss has announced a per-point API (a beta by the end of 2026), which will remove the problem. Until then, hourly is an informed opt-in.
 
 See [ADR-0002](adr/0002-traffic-budget-bulk-local-forecast.md) for the full context and measured file sizes.
 
@@ -278,7 +298,7 @@ Changing only the **forecast point** never touches history — forecast entities
 
 - **Current conditions (station):** Every 10 minutes. The station file is polled, but unchanged files cost only a single 304 (Not Modified) response.
 - **Daily forecast:** Every hour. The integration checks the forecast run stamp hourly and only downloads the daily files if the run changed.
-- **Hourly forecast (if enabled):** In tiers, on the integration's own forecast refresh — whether or not a card is open. The near term (today + tomorrow) refreshes at the ICON-CH1 runs or at least every 3 hours; days 2+ refresh at the ICON-CH2 runs or at least every 6 hours; precipitation, symbol and wind refresh with every new run. See the [Hourly Forecast](#hourly-forecast) option above.
+- **Hourly forecast (if enabled):** Checked every hour on the integration's own forecast refresh, whether or not a card is open. A small canary read decides whether the new run changed anything; MeteoSwiss adjusts the coming hours about hourly, so expect roughly one refresh per hour. See the [Hourly Forecast](#hourly-forecast) option above.
 
 See [ADR-0002](adr/0002-traffic-budget-bulk-local-forecast.md) for details on traffic optimization.
 

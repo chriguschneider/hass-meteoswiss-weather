@@ -176,22 +176,22 @@
           "pollen": "Pollenmessung aktivieren"
         },
         "data_description": {
-          "hourly_forecast": "Die Stundenprognose wird mit HTTP-Range-Anfragen geladen; die Datenmenge hängt vom Horizont ab, den Sie als Nächstes wählen. Wird höchstens alle 3 Stunden aktualisiert. Standardmässig deaktiviert, um das Traffic-Budget einzuhalten.",
-          "pollen": "Zeigt stündliche Pollenkonzentrationen der nächsten automatischen Messstation (Körner/m³). Wird höchstens einmal pro Stunde abgerufen. Standardmässig deaktiviert."
+          "hourly_forecast": "Bringt: eine Stundenprognose auf der Wetter-Entität (Zustand, Temperatur, Niederschlag und dessen Wahrscheinlichkeit, Wind, Böen, Richtung, Globalstrahlung, Nullgradgrenze); der aktuelle Zustand folgt dem Stundensymbol. Kostet: rund 0,3 MB pro Aktualisierung beim Standardhorizont. Aktualisiert wird, sobald MeteoSwiss die kommenden Stunden geändert hat, in der Praxis etwa einmal pro Stunde, unabhängig davon, ob eine Karte offen ist. Nicht nötig für: die Tagesprognose, den Nullgradgrenze-Sensor und die «Heute»-Sensoren.",
+          "pollen": "Bringt: einen Sensor pro Pollenart, die die Station misst, in Körnern/m³. Gräser und Birke sind aktiv, die übrigen bleiben deaktiviert, bis Sie sie in den Entitätseinstellungen aktivieren. Kostet: eine kleine Datei pro Stunde."
         }
       },
       "hourly": {
         "title": "Horizont der Stundenprognose",
-        "description": "Wie weit die Stundenprognose vorausgeladen wird, in vollen lokalen Kalendertagen. Ein kürzerer Horizont lädt weniger. «Voller Lauf» lädt alle ~220 Stunden (rund 9 Tage).",
+        "description": "Wie weit die Stundenprognose reicht und welche Zusätze sie enthält. Die Kosten wurden im September 2026 für einen Ort gemessen; der Diagnose-Download der Integration zeigt die echten Werte für Ihren.",
         "data": {
           "hourly_horizon_days": "Prognosehorizont",
           "hourly_cloud_layers": "Wolkendecke-Schichten einschliessen",
           "hourly_temp_percentiles": "Temperaturperzentile einschliessen"
         },
         "data_description": {
-          "hourly_horizon_days": "Standard: der Rest von heute plus zwei volle Tage (rund 7–11 MB pro Aktualisierung). «Voller Lauf» lädt jede Stunde (rund 30 MB pro Aktualisierung).",
-          "hourly_cloud_layers": "Fügt cloud_coverage (das Maximum der hohen, mittleren und tiefen Schicht) sowie die drei Schichten als stündliche Attribute hinzu. Lädt drei zusätzliche Dateien pro Aktualisierung, vervierfacht also etwa den stündlichen Datenverkehr. Standardmässig aus.",
-          "hourly_temp_percentiles": "Fügt das 10.- und 90.-Temperaturperzentil (das Unsicherheitsband der Prognose) als stündliche Attribute hinzu. Lädt zwei zusätzliche Dateien pro Aktualisierung. Standardmässig aus."
+          "hourly_horizon_days": "Gezählt in vollen lokalen Kalendertagen. Standard: der Rest von heute plus zwei volle Tage (49–72 Stunden). Bis dahin wird jede Stundendatei zeilenweise gelesen und bleibt klein. Längere Horizonte und «Voller Lauf» (rund 220 Stunden, 9 Tage) lesen bei jeder Aktualisierung einen viel grösseren Teil der ~30 MB grossen Dateien; wählen Sie sie nur bei Bedarf.",
+          "hourly_cloud_layers": "Bringt: cloud_coverage (das Maximum der hohen, mittleren und tiefen Schicht) sowie die drei Schichten für jede Prognosestunde. Kostet: rund 0,05 MB pro Aktualisierung, drei kleine Blöcke pro Punkt. Standardmässig aus.",
+          "hourly_temp_percentiles": "Bringt: temperature_p10 und temperature_p90, das Unsicherheitsband der Prognose, für jede Prognosestunde. Kostet: rund 0,5 MB pro Aktualisierung, der teuerste Zusatz (zwei zeilenweise gelesene Dateien). Standardmässig aus."
         }
       },
       "pollen_station": {
