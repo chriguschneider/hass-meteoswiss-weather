@@ -683,6 +683,104 @@ async def test_far_remainder_full_run_end_from_hint() -> None:
     assert _series_hours(warm)[-1] == _stamp(_H0 + timedelta(hours=_FAR_HOURS - 1))
 
 
+# --- the ladder call decides about chunking, not the static group (#153) -----
+#
+# A date-major file demanded through the point-major group (a whole-run "Full
+# run" demand, or a horizon longer than the request cap) must be detected as
+# date-major and split into cap-sized row-addressed windows by ``fetch_series``
+# itself — never the multi-MB prefix or the whole file. This is what happens to
+# ``zprfr0hs`` once MeteoSwiss re-sorts it to date-major while it still lives in
+# the point-major group. A genuinely point-major file is untouched: one block.
+
+
+async def _auto(
+    data, *, start, end, cap=96, hint=None, utc_day=None, step=timedelta(hours=1)
+):
+    """Drive ``_fetch_series_auto`` over one in-memory reader (the public path)."""
+    mem = _MemReader(data)
+
+    def make_reader() -> H._CountingReader:
+        return H._CountingReader(mem, cap)
+
+    result = await H._fetch_series_auto(
+        make_reader,
+        _TARGET,
+        window_start=start,
+        window_end=end,
+        hint=hint,
+        utc_day=utc_day,
+        step=step,
+        request_cap=cap,
+    )
+    return result, mem
+
+
+async def test_over_cap_date_major_full_run_chunks_not_full_file() -> None:
+    """Acceptance #153.1: a date-major file demanded whole-run ("Full run") stays
+    on level ≤ 2 for every window, its bytes far below the file, and covers the
+    whole run — instead of escalating to the ~30 MB file."""
+    data = _long_date_major()  # 220 blocks: whole run overruns the request cap
+    result, _mem = await _auto(data, start=None, end=None, utc_day=_DAY)
+
+    assert result.layout is FileLayout.DATE_MAJOR
+    assert result.level <= 2  # every window row-addressed, never prefix/full
+    assert result.whole_run  # a chunked whole-run demand still covers the run
+    assert _series_hours(result) == [
+        _stamp(_H0 + timedelta(hours=h)) for h in range(_FAR_HOURS)
+    ]
+    assert all(
+        line.startswith(f"{_TARGET.point_id};{_TARGET.point_type_id};")
+        for line in _series_lines(result)
+    )
+    assert result.bytes < len(data) / 4
+    assert len(parse_hourly({"tre200h0": result.text}, _TARGET, None)) == _FAR_HOURS
+
+
+async def test_over_cap_date_major_five_day_window_chunks() -> None:
+    """Acceptance #153.1: a 5-day (120 h) window on a date-major file — longer than
+    the request cap — is row-addressed in cap-sized windows, level ≤ 2."""
+    data = _long_date_major()
+    start = _H0
+    end = _H0 + timedelta(days=5)  # 120 h > SERIES_REQUEST_CAP: would prefix
+    result, _mem = await _auto(data, start=start, end=end, utc_day=_DAY)
+
+    assert result.layout is FileLayout.DATE_MAJOR
+    assert result.level <= 2
+    assert not result.whole_run  # a windowed demand covers only its window
+    assert _series_hours(result) == [
+        _stamp(start + timedelta(hours=h)) for h in range(120)
+    ]
+    assert result.bytes < len(data) / 4
+
+
+async def test_auto_within_cap_is_single_shot() -> None:
+    """A demand that already fits the cap is served by the single-shot ladder,
+    unchanged: a short date-major window stays level ≤ 1, not chunked."""
+    data = _long_date_major()
+    start, end = _H0 + timedelta(hours=10), _H0 + timedelta(hours=40)  # 30 h < cap
+    result, _mem = await _auto(data, start=start, end=end, utc_day=_DAY)
+
+    assert result.level <= 1
+    assert not result.whole_run
+    assert len(_series_hours(result)) == 30
+
+
+async def test_auto_point_major_is_one_block_warm_three_requests() -> None:
+    """Acceptance #153.3: a genuinely point-major file is fetched as one whole-run
+    block through the auto path and a warm same-day fetch costs ≤ 3 requests — it
+    is never chunked."""
+    data = _point_major_type()
+    start, end = _H0 + timedelta(hours=3), _H0 + timedelta(hours=9)
+    cold, _mem = await _auto(data, start=start, end=end, utc_day=_DAY)
+    warm, _mem = await _auto(data, start=start, end=end, hint=cold.hint, utc_day=_DAY)
+
+    assert cold.layout is FileLayout.POINT_MAJOR_TYPE
+    assert cold.whole_run and warm.whole_run
+    assert len(_series_hours(cold)) == _HOURS
+    assert warm.level == 0
+    assert warm.requests <= 3
+
+
 # --- the per-file hint, remembered per UTC day (issue #121) ------------------
 
 # The file's UTC day: _big_date_major starts at 21:00 the previous day.

@@ -42,6 +42,7 @@ from .forecast import (
 from .hourly import FileHint, fetch_series, fetch_series_windows, horizon_end_utc
 from .models import (
     DailyBundle,
+    FileLayout,
     ForecastPoint,
     HourlyForecast,
     OgdConnectionError,
@@ -447,6 +448,20 @@ class BulkCsvBackend:
         :meth:`~.store.ForecastStore.confirm` (ADR-0008 section 5).
         """
         return self._last_meta.get(param)
+
+    def layout_hint(self, param: str) -> FileLayout | None:
+        """The layout ``param``'s file was last classified as, or ``None``.
+
+        Read from the per-file :class:`~.hourly.FileHint` the fetch ladder keeps
+        (updated on every fetch). The coordinator uses it to schedule a file by
+        its **detected** layout rather than the static group it was listed in
+        (issue #153): a file that upstream re-sorted — e.g. ``zprfr0hs``, now
+        date-major (docs/ogd.md §E4) while still in the point-major group — then
+        follows its real layout's cadence. ``None`` when no hint exists yet, so
+        the caller keeps the file's static assignment until a fetch classifies it.
+        """
+        hint = self._hints.get(param)
+        return hint.layout if hint is not None else None
 
     def pop_fetch_totals(self) -> tuple[int, int]:
         """Return ``(bytes, requests)`` fetched since the last call, then reset.
