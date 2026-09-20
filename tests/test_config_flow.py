@@ -496,157 +496,122 @@ async def test_mountain_daily_fixture_carries_type3_rows(
 # ---------------------------------------------------------------------------
 
 
-async def test_options_flow_stores_hourly_flag(
-    hass: HomeAssistant,
-) -> None:
-    """The options flow persists the hourly_forecast toggle."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        unique_id="2-309800",
-        data={
-            CONF_POINT_ID: 309800,
-            CONF_POINT_TYPE_ID: 2,
-            CONF_POSTAL_CODE: "3098",
-            CONF_POINT_NAME: "Köniz",
-            CONF_STATION_ABBR: "BER",
-            CONF_STATION_NAME: "Bern / Zollikofen",
-        },
-        title="Köniz",
-    )
+async def test_options_menu_lists_three_entries(hass: HomeAssistant) -> None:
+    """The options flow opens a menu with hourly, pollen and overview (issue #144)."""
+    entry = _koniz_entry()
     entry.add_to_hass(hass)
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert not entry.options.get(CONF_HOURLY_FORECAST, False)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] == FlowResultType.FORM
+    assert result["type"] == FlowResultType.MENU
     assert result["step_id"] == "init"
-
-    # Enabling the hourly forecast leads to the horizon step (issue #50).
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], user_input={CONF_HOURLY_FORECAST: True}
-    )
-    assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "hourly"
-    # The horizon defaults to two days ahead.
-    schema_default = result["data_schema"]({})
-    assert schema_default[CONF_HOURLY_HORIZON_DAYS] == DEFAULT_HOURLY_HORIZON_DAYS
-
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], user_input={CONF_HOURLY_HORIZON_DAYS: 4}
-    )
-    assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_HOURLY_FORECAST] is True
-    assert result["data"][CONF_HOURLY_HORIZON_DAYS] == 4
+    assert set(result["menu_options"]) == {"hourly", "pollen", "overview"}
 
 
-async def test_options_flow_hourly_step_gated_additions(
+async def test_options_flow_hourly_page_one_step_and_gated_additions(
     hass: HomeAssistant,
 ) -> None:
-    """The hourly step carries the B9/B11 toggles and persists them (issue #69)."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        unique_id="2-309800",
-        data={
-            CONF_POINT_ID: 309800,
-            CONF_POINT_TYPE_ID: 2,
-            CONF_POSTAL_CODE: "3098",
-            CONF_POINT_NAME: "Köniz",
-            CONF_STATION_ABBR: "BER",
-            CONF_STATION_NAME: "Bern / Zollikofen",
-        },
-        title="Köniz",
-    )
+    """The hourly page carries the toggle plus the B9/B11 toggles on one page."""
+    entry = _koniz_entry()
     entry.add_to_hass(hass)
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], user_input={CONF_HOURLY_FORECAST: True}
+        result["flow_id"], user_input={"next_step_id": "hourly"}
     )
+    assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "hourly"
-    # Both gated toggles default off (ADR-0002 gating; the expensive path).
+    # Everything is on this single page; both gated toggles default off, and the
+    # horizon defaults to two days ahead.
     schema_default = result["data_schema"]({})
+    assert schema_default[CONF_HOURLY_FORECAST] is False
+    assert schema_default[CONF_HOURLY_HORIZON_DAYS] == DEFAULT_HOURLY_HORIZON_DAYS
     assert schema_default[CONF_HOURLY_CLOUD_LAYERS] is False
     assert schema_default[CONF_HOURLY_TEMP_PERCENTILES] is False
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
-            CONF_HOURLY_HORIZON_DAYS: 2,
+            CONF_HOURLY_FORECAST: True,
+            CONF_HOURLY_HORIZON_DAYS: 4,
             CONF_HOURLY_CLOUD_LAYERS: True,
             CONF_HOURLY_TEMP_PERCENTILES: False,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_HOURLY_FORECAST] is True
+    assert result["data"][CONF_HOURLY_HORIZON_DAYS] == 4
     assert result["data"][CONF_HOURLY_CLOUD_LAYERS] is True
     assert result["data"][CONF_HOURLY_TEMP_PERCENTILES] is False
+
+
+async def test_options_flow_hourly_page_preserves_pollen_options(
+    hass: HomeAssistant,
+) -> None:
+    """Saving the hourly page leaves the pollen options untouched (issue #144)."""
+    entry = _koniz_entry()
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry,
+        options={CONF_POLLEN: True, CONF_POLLEN_STATION: "PBE"},
+    )
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={"next_step_id": "hourly"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_HOURLY_FORECAST: True,
+            CONF_HOURLY_HORIZON_DAYS: DEFAULT_HOURLY_HORIZON_DAYS,
+            CONF_HOURLY_CLOUD_LAYERS: False,
+            CONF_HOURLY_TEMP_PERCENTILES: False,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_HOURLY_FORECAST] is True
+    # The pollen options the hourly page never touched are preserved as-is.
+    assert result["data"][CONF_POLLEN] is True
+    assert result["data"][CONF_POLLEN_STATION] == "PBE"
 
 
 async def test_options_flow_hourly_off_forces_gated_additions_off(
     hass: HomeAssistant,
 ) -> None:
-    """Turning hourly off writes both gated toggles as False (issue #69)."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        unique_id="2-309800",
-        data={
-            CONF_POINT_ID: 309800,
-            CONF_POINT_TYPE_ID: 2,
-            CONF_POSTAL_CODE: "3098",
-            CONF_POINT_NAME: "Köniz",
-            CONF_STATION_ABBR: "BER",
-            CONF_STATION_NAME: "Bern / Zollikofen",
-        },
-        # Previously enabled; turning hourly off must not leave them dangling on.
+    """The hourly toggle off stores both gated toggles as False (issue #69).
+
+    The gated additions only make sense with the hourly forecast on, so a page
+    submitted with the toggle off writes them off whatever the checkbox says.
+    """
+    entry = _koniz_entry()
+    # Previously enabled; turning hourly off must not leave them dangling on.
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry,
         options={
             CONF_HOURLY_FORECAST: True,
             CONF_HOURLY_CLOUD_LAYERS: True,
             CONF_HOURLY_TEMP_PERCENTILES: True,
         },
-        title="Köniz",
     )
-    entry.add_to_hass(hass)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], user_input={CONF_HOURLY_FORECAST: False}
+        result["flow_id"], user_input={"next_step_id": "hourly"}
     )
-    assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_HOURLY_CLOUD_LAYERS] is False
-    assert result["data"][CONF_HOURLY_TEMP_PERCENTILES] is False
-
-
-async def test_options_flow_hourly_off_skips_horizon_step(
-    hass: HomeAssistant,
-) -> None:
-    """Leaving the hourly forecast off finishes at the init step (no horizon)."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        unique_id="2-309800",
-        data={
-            CONF_POINT_ID: 309800,
-            CONF_POINT_TYPE_ID: 2,
-            CONF_POSTAL_CODE: "3098",
-            CONF_POINT_NAME: "Köniz",
-            CONF_STATION_ABBR: "BER",
-            CONF_STATION_NAME: "Bern / Zollikofen",
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_HOURLY_FORECAST: False,
+            CONF_HOURLY_HORIZON_DAYS: DEFAULT_HOURLY_HORIZON_DAYS,
+            CONF_HOURLY_CLOUD_LAYERS: True,
+            CONF_HOURLY_TEMP_PERCENTILES: True,
         },
-        title="Köniz",
-    )
-    entry.add_to_hass(hass)
-
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], user_input={CONF_HOURLY_FORECAST: False}
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_HOURLY_FORECAST] is False
-    # The horizon key is still written (with its default) but the hourly path
-    # never uses it while the toggle is off.
-    assert result["data"][CONF_HOURLY_HORIZON_DAYS] == DEFAULT_HOURLY_HORIZON_DAYS
+    assert result["data"][CONF_HOURLY_CLOUD_LAYERS] is False
+    assert result["data"][CONF_HOURLY_TEMP_PERCENTILES] is False
 
 
 # ---------------------------------------------------------------------------
@@ -679,10 +644,18 @@ def _koniz_entry() -> MockConfigEntry:
     )
 
 
-async def test_options_flow_pollen_on_shows_station_step_and_saves(
+async def _open_menu_step(hass: HomeAssistant, entry: MockConfigEntry, step: str):
+    """Open the options menu and select ``step``, returning the flow result."""
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    return await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={"next_step_id": step}
+    )
+
+
+async def test_options_flow_pollen_page_shows_toggle_and_station_and_saves(
     hass: HomeAssistant,
 ) -> None:
-    """Enabling pollen leads to the station step; the nearest is pre-selected."""
+    """The pollen page carries the toggle and station; the nearest is default."""
     entry = _koniz_entry()
     entry.add_to_hass(hass)
 
@@ -694,35 +667,40 @@ async def test_options_flow_pollen_on_shows_station_step_and_saves(
         ),
         patch(f"{_FLOW}.fetch_points", AsyncMock(return_value=_POINTS)),
     ):
-        result = await hass.config_entries.options.async_init(entry.entry_id)
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            user_input={CONF_HOURLY_FORECAST: False, CONF_POLLEN: True},
-        )
+        result = await _open_menu_step(hass, entry, "pollen")
         assert result["type"] == FlowResultType.FORM
-        assert result["step_id"] == "pollen_station"
+        assert result["step_id"] == "pollen"
         # The three nearest stations are offered; PBE (Bern) is nearest.
         options = result["data_schema"].schema[CONF_POLLEN_STATION].container
         assert set(options) == {"PBE", "PBS", "PLU"}
         assert result["data_schema"]({})[CONF_POLLEN_STATION] == "PBE"
+        assert result["data_schema"]({})[CONF_POLLEN] is False
 
         result = await hass.config_entries.options.async_configure(
-            result["flow_id"], user_input={CONF_POLLEN_STATION: "PBE"}
+            result["flow_id"],
+            user_input={CONF_POLLEN: True, CONF_POLLEN_STATION: "PBE"},
         )
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_POLLEN] is True
     assert result["data"][CONF_POLLEN_STATION] == "PBE"
-    # Hourly stays off and its horizon default is preserved alongside pollen.
-    assert result["data"][CONF_HOURLY_FORECAST] is False
 
 
-async def test_options_flow_hourly_and_pollen_both_on(
+async def test_options_flow_pollen_page_preserves_hourly_options(
     hass: HomeAssistant,
 ) -> None:
-    """Both toggles on: hourly-horizon step then the pollen-station step."""
+    """Saving the pollen page leaves the hourly options untouched (issue #144)."""
     entry = _koniz_entry()
     entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry,
+        options={
+            CONF_HOURLY_FORECAST: True,
+            CONF_HOURLY_HORIZON_DAYS: 4,
+            CONF_HOURLY_CLOUD_LAYERS: True,
+            CONF_HOURLY_TEMP_PERCENTILES: True,
+        },
+    )
 
     with (
         patch(f"{_FLOW}.async_get_clientsession", return_value=object()),
@@ -732,31 +710,30 @@ async def test_options_flow_hourly_and_pollen_both_on(
         ),
         patch(f"{_FLOW}.fetch_points", AsyncMock(return_value=_POINTS)),
     ):
-        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await _open_menu_step(hass, entry, "pollen")
         result = await hass.config_entries.options.async_configure(
             result["flow_id"],
-            user_input={CONF_HOURLY_FORECAST: True, CONF_POLLEN: True},
-        )
-        assert result["step_id"] == "hourly"
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"], user_input={CONF_HOURLY_HORIZON_DAYS: 4}
-        )
-        assert result["step_id"] == "pollen_station"
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"], user_input={CONF_POLLEN_STATION: "PBS"}
+            user_input={CONF_POLLEN: True, CONF_POLLEN_STATION: "PBS"},
         )
 
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_HOURLY_FORECAST] is True
-    assert result["data"][CONF_HOURLY_HORIZON_DAYS] == 4
     assert result["data"][CONF_POLLEN] is True
     assert result["data"][CONF_POLLEN_STATION] == "PBS"
+    # The hourly options the pollen page never touched survive unchanged.
+    assert result["data"][CONF_HOURLY_FORECAST] is True
+    assert result["data"][CONF_HOURLY_HORIZON_DAYS] == 4
+    assert result["data"][CONF_HOURLY_CLOUD_LAYERS] is True
+    assert result["data"][CONF_HOURLY_TEMP_PERCENTILES] is True
 
 
-async def test_options_flow_pollen_station_cannot_connect(
+async def test_options_flow_pollen_page_cannot_connect(
     hass: HomeAssistant,
 ) -> None:
-    """A metadata fetch error shows the station step with a cannot_connect error."""
+    """A metadata fetch error shows the pollen page with only the toggle.
+
+    The station picker cannot be built without the fetch, but the toggle is
+    still offered so pollen can be turned off while OGD is unreachable.
+    """
     entry = _koniz_entry()
     entry.add_to_hass(hass)
 
@@ -767,54 +744,43 @@ async def test_options_flow_pollen_station_cannot_connect(
             AsyncMock(side_effect=OgdError("boom")),
         ),
     ):
-        result = await hass.config_entries.options.async_init(entry.entry_id)
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            user_input={CONF_HOURLY_FORECAST: False, CONF_POLLEN: True},
-        )
+        result = await _open_menu_step(hass, entry, "pollen")
 
     assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "pollen_station"
+    assert result["step_id"] == "pollen"
     assert result["errors"] == {"base": "cannot_connect"}
+    assert CONF_POLLEN in result["data_schema"].schema
+    assert CONF_POLLEN_STATION not in result["data_schema"].schema
 
 
-async def test_options_flow_pollen_station_retry_after_error(
+async def test_options_flow_pollen_toggle_off_works_offline(
     hass: HomeAssistant,
 ) -> None:
-    """Resubmitting the empty error form retries the fetch without crashing.
-
-    Regression guard: the empty error form carries no station field, so its
-    resubmission must re-run the fetch rather than read a missing key.
-    """
+    """Pollen can be turned off from the error page without a station fetch."""
     entry = _koniz_entry()
     entry.add_to_hass(hass)
-
-    # First metadata fetch fails, the retry succeeds.
-    stations_mock = AsyncMock(side_effect=[OgdError("boom"), _POLLEN_STATIONS])
+    hass.config_entries.async_update_entry(
+        entry, options={CONF_POLLEN: True, CONF_POLLEN_STATION: "PBE"}
+    )
 
     with (
         patch(f"{_FLOW}.async_get_clientsession", return_value=object()),
-        patch(f"{_FLOW}.fetch_pollen_stations", stations_mock),
-        patch(f"{_FLOW}.fetch_points", AsyncMock(return_value=_POINTS)),
+        patch(
+            f"{_FLOW}.fetch_pollen_stations",
+            AsyncMock(side_effect=OgdError("boom")),
+        ),
     ):
-        result = await hass.config_entries.options.async_init(entry.entry_id)
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            user_input={CONF_HOURLY_FORECAST: False, CONF_POLLEN: True},
-        )
-        assert result["step_id"] == "pollen_station"
+        result = await _open_menu_step(hass, entry, "pollen")
         assert result["errors"] == {"base": "cannot_connect"}
-
-        # Resubmit the empty error form: the fetch is retried and now succeeds,
-        # so the real station selector is shown (no KeyError).
+        # Submitting the toggle alone saves without needing the station list.
         result = await hass.config_entries.options.async_configure(
-            result["flow_id"], user_input={}
+            result["flow_id"], user_input={CONF_POLLEN: False}
         )
-        assert result["type"] == FlowResultType.FORM
-        assert result["step_id"] == "pollen_station"
-        assert not result["errors"]
-        options = result["data_schema"].schema[CONF_POLLEN_STATION].container
-        assert set(options) == {"PBE", "PBS", "PLU"}
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_POLLEN] is False
+    # The previously stored station is preserved (the page did not touch it).
+    assert result["data"][CONF_POLLEN_STATION] == "PBE"
 
 
 # ---------------------------------------------------------------------------
@@ -1159,28 +1125,65 @@ async def test_reconfigure_mountain_to_postal_code(
 
 async def test_options_flow_full_run_horizon(hass: HomeAssistant) -> None:
     """The "full run" sentinel can be selected as the horizon."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        unique_id="2-309800",
-        data={
-            CONF_POINT_ID: 309800,
-            CONF_POINT_TYPE_ID: 2,
-            CONF_POSTAL_CODE: "3098",
-            CONF_POINT_NAME: "Köniz",
-            CONF_STATION_ABBR: "BER",
-            CONF_STATION_NAME: "Bern / Zollikofen",
-        },
-        title="Köniz",
-    )
+    entry = _koniz_entry()
     entry.add_to_hass(hass)
 
-    result = await hass.config_entries.options.async_init(entry.entry_id)
-    result = await hass.config_entries.options.async_configure(
-        result["flow_id"], user_input={CONF_HOURLY_FORECAST: True}
-    )
+    result = await _open_menu_step(hass, entry, "hourly")
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        user_input={CONF_HOURLY_HORIZON_DAYS: HOURLY_HORIZON_FULL_RUN},
+        user_input={
+            CONF_HOURLY_FORECAST: True,
+            CONF_HOURLY_HORIZON_DAYS: HOURLY_HORIZON_FULL_RUN,
+            CONF_HOURLY_CLOUD_LAYERS: False,
+            CONF_HOURLY_TEMP_PERCENTILES: False,
+        },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_HOURLY_HORIZON_DAYS] == HOURLY_HORIZON_FULL_RUN
+
+
+async def test_options_overview_counts_disabled_entities(
+    hass: HomeAssistant,
+) -> None:
+    """The overview page reports the real disabled-entity count (issue #144)."""
+    from homeassistant.helpers import entity_registry as er
+
+    entry = _koniz_entry()
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry, options={CONF_HOURLY_FORECAST: True, CONF_POLLEN: False}
+    )
+
+    registry = er.async_get(hass)
+    # Two enabled entities and three disabled ones for this entry.
+    for i in range(2):
+        registry.async_get_or_create(
+            "sensor", DOMAIN, f"enabled-{i}", config_entry=entry
+        )
+    for i in range(3):
+        registry.async_get_or_create(
+            "sensor",
+            DOMAIN,
+            f"disabled-{i}",
+            config_entry=entry,
+            disabled_by=er.RegistryEntryDisabler.INTEGRATION,
+        )
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={"next_step_id": "overview"}
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "overview"
+    placeholders = result["description_placeholders"]
+    assert placeholders["disabled_count"] == "3"
+    # The active-summary reflects the stored options.
+    assert "Hourly forecast: on" in placeholders["active"]
+    assert "Pollen monitoring: off" in placeholders["active"]
+
+    # Submitting the read-only overview changes nothing and returns to the menu.
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input={}
+    )
+    assert result["type"] == FlowResultType.MENU
+    assert result["step_id"] == "init"

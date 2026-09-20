@@ -9,6 +9,20 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- **The options dialog is now a menu with an overview page** (#144). Instead of a
+  hidden wizard whose second page only appeared after ticking "hourly" and
+  pressing submit, the options flow opens a menu with three entries: **Hourly
+  forecast** (toggle, horizon, cloud layers and percentiles on one page),
+  **Pollen monitoring** (toggle and station on one page) and **Overview**. The
+  overview is read-only: it shows what is on now, which forecast fields that
+  produces, and how many of the entry's entities are currently created disabled
+  (with where to enable them), plus a pointer to `docs/CONFIGURATION.md`. Each
+  page saves only its own options, so changing the hourly settings no longer
+  resets the pollen settings or vice versa. The stored option keys are unchanged,
+  so existing entries keep their settings without a migration.
+
 ### Fixed
 
 - **Long hourly horizons no longer read a multi-MB prefix on every run** (#143,

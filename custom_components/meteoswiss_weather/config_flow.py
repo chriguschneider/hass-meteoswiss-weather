@@ -19,6 +19,7 @@ from homeassistant.config_entries import (
     OptionsFlow,
 )
 from homeassistant.core import callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     SelectSelector,
@@ -604,95 +605,70 @@ def _horizon_label(days: int) -> str:
 class MeteoSwissWeatherOptionsFlow(OptionsFlow):
     """Options flow: hourly forecast (ADR-0002) and pollen opt-in (ADR-0005).
 
-    Steps:
-      init       — toggle hourly forecast and pollen
-      hourly     — pick the hourly horizon (shown only when hourly is on)
-      pollen_station — pick the pollen monitoring station (shown only when
-                   pollen is on)
+    Presented as a menu (issue #144) rather than a hidden wizard:
 
-    Intermediate choices are stored on the instance so each step can see the
-    user's earlier selections.
+      init     — a menu with three entries
+      hourly   — toggle, horizon, cloud layers and percentiles on one page;
+                 the fields are simply ignored when the toggle is off
+      pollen   — toggle and station on one page
+      overview — a read-only summary of what is on now, which forecast fields
+                 that produces, and how many of the entry's entities are
+                 currently disabled in the entity registry
+
+    Each page merges its own keys into the stored options and leaves the other
+    page's keys untouched, so saving one never resets the other. The stored keys
+    and their semantics are unchanged, so no migration is needed.
     """
 
     def __init__(self) -> None:
-        self._hourly: bool = False
-        self._pollen: bool = False
-        self._hourly_horizon: int = DEFAULT_HOURLY_HORIZON_DAYS
-        # B9/B11 gated date-major additions (issue #69); only offered on the
-        # hourly step, so they are False whenever the hourly opt-in is off.
-        self._cloud_layers: bool = False
-        self._temp_percentiles: bool = False
-        # Loaded lazily in async_step_pollen_station.
+        # The pollen station list is fetched once and cached on the instance.
         self._pollen_stations: list[PollenStation] | None = None
         self._pollen_ref_lat: float = 0.0
         self._pollen_ref_lon: float = 0.0
 
+    def _merge_and_create(self, changes: dict[str, Any]) -> ConfigFlowResult:
+        """Persist ``changes`` merged over the current options.
+
+        Only the keys a page owns are passed in, so the other page's stored
+        options survive untouched (issue #144 acceptance).
+        """
+        data = dict(self.config_entry.options)
+        data.update(changes)
+        return self.async_create_entry(data=data)
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        current = self.config_entry.options
-        if user_input is not None:
-            self._hourly = bool(user_input[CONF_HOURLY_FORECAST])
-            self._pollen = bool(user_input[CONF_POLLEN])
-            self._hourly_horizon = int(
-                current.get(CONF_HOURLY_HORIZON_DAYS, DEFAULT_HOURLY_HORIZON_DAYS)
-            )
-            if self._hourly:
-                return await self.async_step_hourly()
-            if self._pollen:
-                return await self.async_step_pollen_station()
-            return self.async_create_entry(
-                data={
-                    CONF_HOURLY_FORECAST: False,
-                    CONF_HOURLY_HORIZON_DAYS: self._hourly_horizon,
-                    # Hourly off: the gated additions cannot apply (issue #69).
-                    CONF_HOURLY_CLOUD_LAYERS: False,
-                    CONF_HOURLY_TEMP_PERCENTILES: False,
-                    CONF_POLLEN: False,
-                    CONF_POLLEN_STATION: current.get(CONF_POLLEN_STATION, ""),
-                }
-            )
-
-        return self.async_show_form(
+        """Show the options menu (issue #144)."""
+        return self.async_show_menu(
             step_id="init",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_HOURLY_FORECAST,
-                        default=current.get(CONF_HOURLY_FORECAST, False),
-                    ): bool,
-                    vol.Required(
-                        CONF_POLLEN,
-                        default=current.get(CONF_POLLEN, False),
-                    ): bool,
-                }
-            ),
+            menu_options=["hourly", "pollen", "overview"],
         )
 
     async def async_step_hourly(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Second step (hourly on): horizon plus the B9/B11 gated additions.
+        """Hourly forecast page: toggle, horizon and the B9/B11 gated additions.
 
-        The cloud-layer and percentile toggles live here rather than on the init
-        step because each only makes sense with the hourly forecast on, and each
-        turns on extra expensive date-major files (issue #69, ADR-0002 gating).
+        The cloud-layer and percentile toggles live here because each only makes
+        sense with the hourly forecast on, and each turns on extra expensive
+        date-major files (issue #69, ADR-0002 gating). When the hourly toggle is
+        off the gated additions are stored off regardless of their field values,
+        matching how the runtime gates them (``__init__.py``).
         """
         current = self.config_entry.options
         if user_input is not None:
-            self._hourly_horizon = int(user_input[CONF_HOURLY_HORIZON_DAYS])
-            self._cloud_layers = bool(user_input[CONF_HOURLY_CLOUD_LAYERS])
-            self._temp_percentiles = bool(user_input[CONF_HOURLY_TEMP_PERCENTILES])
-            if self._pollen:
-                return await self.async_step_pollen_station()
-            return self.async_create_entry(
-                data={
-                    CONF_HOURLY_FORECAST: True,
-                    CONF_HOURLY_HORIZON_DAYS: self._hourly_horizon,
-                    CONF_HOURLY_CLOUD_LAYERS: self._cloud_layers,
-                    CONF_HOURLY_TEMP_PERCENTILES: self._temp_percentiles,
-                    CONF_POLLEN: False,
-                    CONF_POLLEN_STATION: current.get(CONF_POLLEN_STATION, ""),
+            hourly = bool(user_input[CONF_HOURLY_FORECAST])
+            return self._merge_and_create(
+                {
+                    CONF_HOURLY_FORECAST: hourly,
+                    CONF_HOURLY_HORIZON_DAYS: int(
+                        user_input[CONF_HOURLY_HORIZON_DAYS]
+                    ),
+                    CONF_HOURLY_CLOUD_LAYERS: hourly
+                    and bool(user_input[CONF_HOURLY_CLOUD_LAYERS]),
+                    CONF_HOURLY_TEMP_PERCENTILES: hourly
+                    and bool(user_input[CONF_HOURLY_TEMP_PERCENTILES]),
                 }
             )
 
@@ -701,6 +677,10 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
             step_id="hourly",
             data_schema=vol.Schema(
                 {
+                    vol.Required(
+                        CONF_HOURLY_FORECAST,
+                        default=current.get(CONF_HOURLY_FORECAST, False),
+                    ): bool,
                     vol.Required(
                         CONF_HOURLY_HORIZON_DAYS,
                         default=current.get(
@@ -719,19 +699,29 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
             ),
         )
 
-    async def async_step_pollen_station(
+    async def async_step_pollen(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Pick the pollen monitoring station (shown only when pollen is on).
+        """Pollen page: toggle and station on one page (issue #144).
 
-        Offers the three nearest pollen stations to the configured forecast
-        point (fetched once and cached on the instance), with the nearest
-        pre-selected.  The current station is pre-selected when it is among the
-        three nearest.
+        The station picker offers the three nearest pollen stations to the
+        configured forecast point (fetched once, cached on the instance), with
+        the current or nearest one pre-selected. A submission that carries the
+        toggle is saved without (re)fetching, so pollen can be turned off even
+        when the OGD service is unreachable; showing the picker needs the fetch.
         """
         current = self.config_entry.options
-        errors: dict[str, str] = {}
 
+        # A submission carrying the toggle is saved directly: the station list
+        # is not needed to store the choice, and the picker's fetch may be down.
+        if user_input is not None and CONF_POLLEN in user_input:
+            changes: dict[str, Any] = {CONF_POLLEN: bool(user_input[CONF_POLLEN])}
+            if CONF_POLLEN_STATION in user_input:
+                changes[CONF_POLLEN_STATION] = str(user_input[CONF_POLLEN_STATION])
+            return self._merge_and_create(changes)
+
+        # Showing the form (or retrying after a fetch error): load the stations.
+        errors: dict[str, str] = {}
         if self._pollen_stations is None:
             session = async_get_clientsession(self.hass)
             try:
@@ -756,26 +746,13 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
             except OgdError:
                 errors["base"] = "cannot_connect"
 
-        # Only treat this as a real submission when the station field is
-        # present: a transient fetch error shows an empty form (no fields), and
-        # resubmitting it must retry the fetch, not read a missing key.
-        if user_input is not None and CONF_POLLEN_STATION in user_input and not errors:
-            pollen_abbr = str(user_input[CONF_POLLEN_STATION])
-            return self.async_create_entry(
-                data={
-                    CONF_HOURLY_FORECAST: self._hourly,
-                    CONF_HOURLY_HORIZON_DAYS: self._hourly_horizon,
-                    CONF_HOURLY_CLOUD_LAYERS: self._cloud_layers,
-                    CONF_HOURLY_TEMP_PERCENTILES: self._temp_percentiles,
-                    CONF_POLLEN: True,
-                    CONF_POLLEN_STATION: pollen_abbr,
-                }
-            )
-
+        toggle = vol.Required(CONF_POLLEN, default=current.get(CONF_POLLEN, False))
         if self._pollen_stations is None:
+            # Offline: still offer the toggle so pollen can be turned off, but
+            # drop the station picker we could not build.
             return self.async_show_form(
-                step_id="pollen_station",
-                data_schema=vol.Schema({}),
+                step_id="pollen",
+                data_schema=vol.Schema({toggle: bool}),
                 errors=errors,
             )
 
@@ -794,13 +771,96 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
         )
 
         return self.async_show_form(
-            step_id="pollen_station",
+            step_id="pollen",
             data_schema=vol.Schema(
                 {
+                    toggle: bool,
                     vol.Required(CONF_POLLEN_STATION, default=default_abbr): vol.In(
                         options
-                    )
+                    ),
                 }
             ),
             errors=errors,
         )
+
+    async def async_step_overview(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Read-only summary of the entry's current configuration (issue #144).
+
+        A form with no fields: submitting it changes nothing and returns to the
+        menu. The dynamic parts are supplied through ``description_placeholders``
+        — what is on now, which forecast fields that produces, and how many of
+        the entry's entities are currently disabled in the entity registry.
+        """
+        if user_input is not None:
+            return await self.async_step_init()
+
+        return self.async_show_form(
+            step_id="overview",
+            data_schema=vol.Schema({}),
+            description_placeholders=self._overview_placeholders(),
+        )
+
+    def _overview_placeholders(self) -> dict[str, str]:
+        """Build the overview page's description placeholders.
+
+        The surrounding prose is translated in ``strings.json``; the values here
+        are the dynamic, non-translatable facts (like ``radar_hint`` on the
+        setup station step): the current on/off state, the forecast fields it
+        produces, and the count of disabled entities.
+        """
+        current = self.config_entry.options
+        hourly = bool(current.get(CONF_HOURLY_FORECAST, False))
+        pollen = bool(current.get(CONF_POLLEN, False))
+        cloud = hourly and bool(current.get(CONF_HOURLY_CLOUD_LAYERS, False))
+        percentiles = hourly and bool(current.get(CONF_HOURLY_TEMP_PERCENTILES, False))
+
+        active_lines: list[str] = []
+        if hourly:
+            horizon = int(
+                current.get(CONF_HOURLY_HORIZON_DAYS, DEFAULT_HOURLY_HORIZON_DAYS)
+            )
+            extras = []
+            if cloud:
+                extras.append("cloud layers")
+            if percentiles:
+                extras.append("temperature percentiles")
+            extra = f"; extras: {', '.join(extras)}" if extras else ""
+            active_lines.append(
+                f"- Hourly forecast: on ({_horizon_label(horizon).lower()}{extra})"
+            )
+        else:
+            active_lines.append("- Hourly forecast: off")
+        if pollen:
+            station = str(current.get(CONF_POLLEN_STATION, "")) or "none selected"
+            active_lines.append(f"- Pollen monitoring: on (station {station})")
+        else:
+            active_lines.append("- Pollen monitoring: off")
+
+        field_lines = [
+            "- Daily forecast (always on): 9 days of high/low temperature, "
+            "precipitation and its probability, wind and condition"
+        ]
+        if hourly:
+            hourly_fields = (
+                "condition, temperature, precipitation and its probability, "
+                "wind, gusts, direction, global radiation, zero-degree level"
+            )
+            if cloud:
+                hourly_fields += ", cloud coverage (and the high/mid/low layers)"
+            if percentiles:
+                hourly_fields += ", temperature p10/p90"
+            field_lines.append(f"- Hourly forecast fields: {hourly_fields}")
+
+        registry = er.async_get(self.hass)
+        entities = er.async_entries_for_config_entry(
+            registry, self.config_entry.entry_id
+        )
+        disabled_count = sum(1 for entity in entities if entity.disabled)
+
+        return {
+            "active": "\n".join(active_lines),
+            "forecast_fields": "\n".join(field_lines),
+            "disabled_count": str(disabled_count),
+        }

@@ -167,39 +167,48 @@
       }
     }
   },
-  "options": {
+  "options":   {
     "step": {
       "init": {
         "title": "Options MeteoSwiss Weather",
-        "data": {
-          "hourly_forecast": "Activer la prévision horaire",
-          "pollen": "Activer la surveillance du pollen"
-        },
-        "data_description": {
-          "hourly_forecast": "Apporte : une prévision horaire sur l'entité météo (état, température, précipitations et leur probabilité, vent, rafales, direction, rayonnement global, isotherme du zéro degré) ; l'état actuel suit le symbole horaire. Coût : environ 0,3 Mo par actualisation avec l'horizon par défaut. Les données sont actualisées dès que MétéoSuisse a modifié les prochaines heures, en pratique environ une fois par heure, qu'une carte soit ouverte ou non. Pas nécessaire pour : la prévision quotidienne, le capteur d'isotherme du zéro degré et les capteurs « aujourd'hui ».",
-          "pollen": "Apporte : un capteur par type de pollen mesuré par la station, en grains/m³. Graminées et bouleau sont activés, les autres restent désactivés jusqu'à ce que vous les activiez dans les paramètres des entités. Coût : un petit fichier par heure."
+        "description": "Choisissez ce que vous voulez configurer. Chaque page est indépendante — enregistrer l'une ne modifie pas les autres.",
+        "menu_options": {
+          "hourly": "Prévision horaire",
+          "pollen": "Surveillance du pollen",
+          "overview": "Aperçu (ce qui est actif)"
         }
       },
       "hourly": {
-        "title": "Horizon de la prévision horaire",
-        "description": "Jusqu'où porte la prévision horaire et quels compléments elle contient. Les coûts ont été mesurés pour un lieu en septembre 2026 ; le téléchargement des diagnostics de l'intégration montre les valeurs réelles pour le vôtre.",
+        "title": "Prévision horaire",
+        "description": "Activez la prévision horaire et choisissez jusqu'où elle porte et quels compléments elle contient. L'horizon et les compléments sont ignorés tant que l'interrupteur est désactivé. Les coûts ont été mesurés pour un lieu en septembre 2026 ; le téléchargement des diagnostics de l'intégration montre les valeurs réelles pour le vôtre.",
         "data": {
+          "hourly_forecast": "Activer la prévision horaire",
           "hourly_horizon_days": "Horizon de prévision",
           "hourly_cloud_layers": "Inclure les couches de couverture nuageuse",
           "hourly_temp_percentiles": "Inclure les percentiles de température"
         },
         "data_description": {
+          "hourly_forecast": "Apporte : une prévision horaire sur l'entité météo (état, température, précipitations et leur probabilité, vent, rafales, direction, rayonnement global, isotherme du zéro degré) ; l'état actuel suit le symbole horaire. Coût : environ 0,3 Mo par actualisation avec l'horizon par défaut. Les données sont actualisées dès que MétéoSuisse a modifié les prochaines heures, en pratique environ une fois par heure, qu'une carte soit ouverte ou non. Pas nécessaire pour : la prévision quotidienne, le capteur d'isotherme du zéro degré et les capteurs « aujourd'hui ».",
           "hourly_horizon_days": "Compté en jours calendaires locaux complets. Par défaut : le reste d'aujourd'hui plus deux jours complets (49 à 72 heures), lu ligne par ligne et gardé petit à chaque actualisation. Les horizons plus longs et « Cycle complet » (environ 220 heures, 9 jours) ajoutent au-delà une partie lointaine : elle est aussi lue ligne par ligne, mais actualisée au plus toutes les 6 heures plutôt qu'à chaque changement ; elle coûte donc un peu plus sans jamais télécharger une grande partie des fichiers de ~30 Mo.",
           "hourly_cloud_layers": "Apporte : cloud_coverage (le maximum des couches haute, moyenne et basse) ainsi que les trois couches pour chaque heure de prévision. Coût : environ 0,05 Mo par actualisation, trois petits blocs par point. Désactivé par défaut.",
           "hourly_temp_percentiles": "Apporte : temperature_p10 et temperature_p90, la marge d'incertitude de la prévision, pour chaque heure de prévision. Coût : environ 0,5 Mo par actualisation, le complément le plus coûteux (deux fichiers lus ligne par ligne). Désactivé par défaut."
         }
       },
-      "pollen_station": {
-        "title": "Sélectionner la station pollen",
-        "description": "Choisissez la station de surveillance du pollen. Les trois stations les plus proches de votre point de prévision sont affichées ; la plus proche est présélectionnée.",
+      "pollen": {
+        "title": "Surveillance du pollen",
+        "description": "Activez la surveillance du pollen et choisissez la station. La station est ignorée tant que l'interrupteur est désactivé.",
         "data": {
+          "pollen": "Activer la surveillance du pollen",
           "pollen_station": "Station pollen"
+        },
+        "data_description": {
+          "pollen": "Apporte : un capteur par type de pollen mesuré par la station, en grains/m³. Graminées et bouleau sont activés, les autres restent désactivés jusqu'à ce que vous les activiez dans les paramètres des entités. Coût : un petit fichier par heure.",
+          "pollen_station": "Les trois stations les plus proches de votre point de prévision sont affichées ; la plus proche est présélectionnée."
         }
+      },
+      "overview": {
+        "title": "Aperçu",
+        "description": "Ce que fait cette entrée actuellement :\n\n{active}\n\nChamps de prévision produits :\n\n{forecast_fields}\n\n**Entités désactivées :** {disabled_count} entités de cette entrée sont actuellement créées désactivées (isotherme du zéro degré, heure de mesure, la plupart des capteurs de station et la plupart des types de pollen). Aucune option ici ne les contrôle — activez celles que vous voulez dans la liste des entités de cette entrée (Paramètres → Appareils et services → MeteoSwiss Weather → cette entrée → entités) ; l'activation ne coûte aucun trafic supplémentaire.\n\nRéférence complète des champs et des coûts : docs/CONFIGURATION.md."
       }
     }
   }
