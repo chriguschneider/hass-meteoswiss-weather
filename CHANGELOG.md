@@ -9,6 +9,16 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- **README rewritten for a wider audience.** Plain-language introduction, install
+  and first dashboard card up front, an options table with the measured cost of
+  each choice, mountain points mentioned, the reference tables of entities and
+  forecast fields folded into collapsible sections, plus release, download and
+  star badges and quick links in the style of the sibling repositories. The
+  weather-card example in `docs/CONFIGURATION.md` now uses the valid
+  `forecast_type` key.
+
 ## [v0.4.0] — 2026-09-20
 
 ### Added

@@ -300,7 +300,7 @@ The standard Home Assistant weather card works out of the box:
 ```yaml
 type: weather-forecast
 entity: weather.postal_code_location
-show_forecast_period: true
+forecast_type: daily
 ```
 
 This displays the current conditions, today's forecast summary, and a daily forecast timeline.
