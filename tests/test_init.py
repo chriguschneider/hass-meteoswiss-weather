@@ -279,6 +279,35 @@ async def test_hourly_fetched_eagerly_at_setup(
         assert hourly is not None and len(hourly) == 24
 
 
+async def test_hourly_forecast_starts_at_the_running_hour(
+    hass: HomeAssistant,
+    hourly_config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """The forecast follows the clock although the store keeps past hours (#92).
+
+    The store merges each refresh over the last and never drops an hour, so
+    hours fetched earlier outlive their time. The forecast must still begin at
+    the running hour, not at the hour of the first fetch.
+    """
+    start = datetime(2026, 8, 27, 0, 0, tzinfo=UTC)
+
+    with freeze_time(start) as frozen:
+        hourly_config_entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(hourly_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+        coordinator = hourly_config_entry.runtime_data.forecast_coordinator
+        assert coordinator.hourly_forecast()[0].time == start
+
+        frozen.move_to(start + timedelta(hours=3, minutes=20))
+        hourly = coordinator.hourly_forecast()
+        assert hourly is not None and len(hourly) == 21
+        assert hourly[0].time == start + timedelta(hours=3)
+        # The past hours are still stored; only the forecast leaves them out.
+        assert start in coordinator.store.get(HOURLY_SYMBOL).values
+
+
 def _tre_calls(aioclient_mock: AiohttpClientMocker) -> int:
     """Downloads of the date-major temperature file (near/far tier, issue #68)."""
     suffix = f"{_RUN_TS}.tre200h0.csv"

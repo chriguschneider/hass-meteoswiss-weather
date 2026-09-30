@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from freezegun import freeze_time
 from homeassistant.components.sun import STATE_ABOVE_HORIZON
 from homeassistant.components.weather import WeatherEntityFeature
 from homeassistant.core import HomeAssistant
@@ -324,13 +325,17 @@ async def test_hourly_forecast_from_fake_backend(
     features = hass.states.get(_ENTITY_ID).attributes["supported_features"]
     assert features & WeatherEntityFeature.FORECAST_HOURLY
 
-    response = await hass.services.async_call(
-        "weather",
-        "get_forecasts",
-        {"entity_id": _ENTITY_ID, "type": "hourly"},
-        blocking=True,
-        return_response=True,
-    )
+    # Read at the fake's first hour: the forecast starts at the running hour, so
+    # on the real clock these fixed hours would all be past (issue #92). Setup
+    # stays on the real clock because the STAC mock is keyed on today's date.
+    with freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC)):
+        response = await hass.services.async_call(
+            "weather",
+            "get_forecasts",
+            {"entity_id": _ENTITY_ID, "type": "hourly"},
+            blocking=True,
+            return_response=True,
+        )
     forecasts = response[_ENTITY_ID]["forecast"]
 
     assert len(forecasts) == len(FakeBackend.HOURLY)
