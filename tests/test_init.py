@@ -286,9 +286,10 @@ async def test_hourly_forecast_starts_at_the_running_hour(
 ) -> None:
     """The forecast follows the clock although the store keeps past hours (#92).
 
-    The store merges each refresh over the last and never drops an hour, so
-    hours fetched earlier outlive their time. The forecast must still begin at
-    the running hour, not at the hour of the first fetch.
+    The store merges each refresh over the last and only drops passed hours on
+    the next tick (#164), so between ticks hours fetched earlier outlive their
+    time. The forecast must still begin at the running hour, not at the hour of
+    the first fetch.
     """
     start = datetime(2026, 8, 27, 0, 0, tzinfo=UTC)
 
@@ -306,6 +307,14 @@ async def test_hourly_forecast_starts_at_the_running_hour(
         assert hourly[0].time == start + timedelta(hours=3)
         # The past hours are still stored; only the forecast leaves them out.
         assert start in coordinator.store.get(HOURLY_SYMBOL).values
+
+        # The next tick prunes them from the store (#164); the forecast is the
+        # same, since it already started at the running hour.
+        await coordinator.async_refresh()
+        assert min(coordinator.store.get(HOURLY_SYMBOL).values) == start + timedelta(
+            hours=3
+        )
+        assert coordinator.hourly_forecast() == hourly
 
 
 def _tre_calls(aioclient_mock: AiohttpClientMocker) -> int:

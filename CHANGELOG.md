@@ -32,6 +32,11 @@ using the matching section below as release notes.
   kept the forecast it loaded with until the page was reloaded. Every forecast
   refresh is now pushed, and with the hourly option on the hourly forecast is
   also pushed at the top of every hour so the hour that just ended drops out.
+- **The forecast store no longer grows without bound** (#164,
+  [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). It kept every hour
+  every refresh had delivered for as long as Home Assistant ran; the hours
+  before the running hour are now dropped on every forecast check. The
+  diagnostics' `hours` count per parameter now covers the coming hours only.
 
 ## [v0.4.0] — 2026-09-20
 

@@ -828,6 +828,12 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
             self._today_item_cache = CachedResponse(body="")
             self._day_item_date = today_date
 
+        # The store never forgets an hour on its own (issue #164); drop the
+        # passed ones every tick, keeping the running hour.
+        self.store.prune(
+            dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
+        )
+
         try:
             run = await latest_run_from_day_item(
                 self._session,

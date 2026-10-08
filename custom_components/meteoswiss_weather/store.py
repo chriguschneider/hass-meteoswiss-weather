@@ -159,6 +159,34 @@ class ForecastStore:
         )
         return True
 
+    def prune(self, before: datetime) -> int:
+        """Drop every stored hour before ``before``; return how many were dropped.
+
+        ``put`` merges each refresh over the stored series and never forgets an
+        hour, so without pruning the store grows for as long as Home Assistant
+        runs (issue #164). The owner calls this once per tick with the start of
+        the running hour: no reader needs an earlier hour — the forecast starts
+        at the running hour, "now" entities read it, and the canary compares
+        from it on.
+
+        Provenance and escalation streaks are kept as they are: pruning is
+        bookkeeping, not a fetch, and it is not a change for ``put``'s callers.
+        A series whose hours have all passed stays, empty, so its provenance
+        still shows in diagnostics.
+        """
+        dropped = 0
+        for param, series in self._series.items():
+            kept = {
+                when: value
+                for when, value in series.values.items()
+                if when >= before
+            }
+            if len(kept) == len(series.values):
+                continue
+            dropped += len(series.values) - len(kept)
+            self._series[param] = Series(values=kept, provenance=series.provenance)
+        return dropped
+
     def get(self, param: str) -> Series | None:
         """The stored series for ``param``, or ``None``."""
         return self._series.get(param)
