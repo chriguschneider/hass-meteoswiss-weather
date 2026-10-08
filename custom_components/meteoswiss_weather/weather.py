@@ -10,6 +10,9 @@ day/night variant chosen from ``sun.sun`` (ADR-0001/0002).
 
 from __future__ import annotations
 
+from datetime import datetime
+from typing import Literal
+
 from homeassistant.components.sun import STATE_ABOVE_HORIZON
 from homeassistant.components.weather import (
     Forecast,
@@ -25,6 +28,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
@@ -105,12 +109,21 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
         """Subscribe to the forecast coordinator in addition to the station one."""
         await super().async_added_to_hass()
         # A forecast refresh (daily data, and — with the option on — the eager
-        # hourly series in the store) must re-render the entity.
+        # hourly series in the store) must re-render the entity and reach the
+        # forecast subscribers (issue #162).
         self.async_on_remove(
             self._forecast_coordinator.async_add_listener(
-                self._handle_coordinator_update
+                self._handle_forecast_update
             )
         )
+        # The hourly forecast starts at the running hour, so an open card must
+        # drop the hour that just ended even when no refresh happens (#162).
+        if self._hourly_enabled:
+            self.async_on_remove(
+                async_track_time_change(
+                    self.hass, self._handle_hour_change, minute=0, second=0
+                )
+            )
         # A precipitation-station refresh must re-write the current precipitation
         # attribute too (ADR-0006). Its failure never affects availability —
         # precipitation is one opt-in attribute, not a core condition.
@@ -360,3 +373,28 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
         the entity re-reads on the next render.
         """
         self.async_write_ha_state()
+
+    @callback
+    def _handle_forecast_update(self) -> None:
+        """Write state and push the forecast to subscribed cards (issue #162).
+
+        ``async_write_ha_state`` does not reach ``weather/subscribe_forecast``
+        listeners; only ``async_update_listeners`` does. Without it an open card
+        keeps the forecast it got when it subscribed.
+        """
+        self._handle_coordinator_update()
+        self._push_forecast(None)
+
+    @callback
+    def _handle_hour_change(self, _now: datetime) -> None:
+        """Push the hourly forecast at the top of every hour (issue #162)."""
+        self._push_forecast(["hourly"])
+
+    @callback
+    def _push_forecast(
+        self, forecast_types: list[Literal["daily", "hourly"]] | None
+    ) -> None:
+        assert self.platform.config_entry
+        self.platform.config_entry.async_create_task(
+            self.hass, self.async_update_listeners(forecast_types)
+        )

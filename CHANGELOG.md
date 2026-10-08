@@ -27,6 +27,11 @@ using the matching section below as release notes.
   forecast kept starting at the hour of the first fetch after a restart — two
   days later a weather card still opened on that afternoon. The forecast is now
   cut at the running hour when it is read from the store.
+- **Open weather cards now follow forecast updates** (#162). The weather entity
+  never pushed a refreshed forecast to subscribed cards, so an open dashboard
+  kept the forecast it loaded with until the page was reloaded. Every forecast
+  refresh is now pushed, and with the hourly option on the hourly forecast is
+  also pushed at the top of every hour so the hour that just ended drops out.
 
 ## [v0.4.0] — 2026-09-20
 
