@@ -16,7 +16,10 @@ from freezegun import freeze_time
 from homeassistant.components.sun import STATE_ABOVE_HORIZON, STATE_BELOW_HORIZON
 from homeassistant.components.weather import WeatherEntityFeature
 from homeassistant.core import HomeAssistant
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
 from custom_components.meteoswiss_weather.const import (
@@ -552,3 +555,55 @@ async def test_condition_keeps_a_night_symbol_while_the_sun_is_down(
         await hass.async_block_till_done()
 
         assert hass.states.get(_ENTITY_ID).state == "clear-night"
+
+
+
+def _subscribe(hass: HomeAssistant, forecast_type: str) -> list:
+    """Subscribe to the entity's forecast like a card does; return the pushes."""
+    entity = hass.data["entity_components"]["weather"].get_entity(_ENTITY_ID)
+    pushes: list = []
+    entity.async_subscribe_forecast(forecast_type, pushes.append)
+    return pushes
+
+
+async def test_forecast_refresh_reaches_subscribers(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A forecast-coordinator update is pushed to an open card (issue #162)."""
+    await _setup(hass, config_entry)
+    pushes = _subscribe(hass, "daily")
+
+    coordinator = config_entry.runtime_data.forecast_coordinator
+    coordinator.async_update_listeners()
+    await hass.async_block_till_done()
+
+    assert len(pushes) == 1
+    assert pushes[0]
+
+
+async def test_hourly_subscribers_drop_the_past_hour(
+    hass: HomeAssistant,
+    hourly_config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """At the top of the hour an open card loses the hour that ended (#162).
+
+    No refresh is due then, so only the hourly tick can push it.
+    """
+    # Set up at half past, so the top of the hour is not also a refresh due
+    # time: only the hourly tick can push then.
+    start = datetime(2026, 8, 27, 0, 30, tzinfo=UTC)
+    with freeze_time(start) as frozen:
+        await _setup(hass, hourly_config_entry)
+        pushes = _subscribe(hass, "hourly")
+
+        next_hour = datetime(2026, 8, 27, 1, 0, tzinfo=UTC)
+        frozen.move_to(next_hour)
+        async_fire_time_changed(hass, next_hour)
+        await hass.async_block_till_done()
+
+    assert len(pushes) == 1
+    assert pushes[0][0]["datetime"] == next_hour.isoformat()
+    assert len(pushes[0]) == 23
