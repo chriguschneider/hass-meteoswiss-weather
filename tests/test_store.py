@@ -271,3 +271,46 @@ def test_escalation_streak_not_updated_by_confirm() -> None:
     store.confirm(_P, run=_RUN + timedelta(hours=1), fetched_at=_NOW)
     # Streak unchanged — confirm is not a real fetch.
     assert store.escalation_streak(_P) == 1
+
+
+# --- pruning past hours (issue #164) -------------------------------------------
+
+
+def test_prune_drops_hours_before_and_keeps_the_boundary() -> None:
+    store = ForecastStore()
+    h1, h2 = _H0 + timedelta(hours=1), _H0 + timedelta(hours=2)
+    _put(store, {_H0: 1.0, h1: 2.0, h2: 3.0})
+    store.put(
+        "tre200h0", {_H0: 10.0, h2: 12.0}, run=_RUN, fetched_at=_NOW, source="hourly"
+    )
+
+    assert store.prune(h1) == 2
+    assert dict(store.get(_P).values) == {h1: 2.0, h2: 3.0}
+    assert dict(store.get("tre200h0").values) == {h2: 12.0}
+    assert store.prune(h1) == 0
+
+
+def test_prune_keeps_provenance_and_escalation_streak() -> None:
+    store = ForecastStore()
+    _put_with_level(store, {_H0: 1.0, _H0 + timedelta(hours=1): 2.0}, level=3)
+    before = store.get(_P).provenance
+
+    store.prune(_H0 + timedelta(hours=1))
+
+    assert store.get(_P).provenance == before
+    assert store.escalation_streak(_P) == 1
+    assert not store.is_stale(_P, _RUN)
+
+
+def test_prune_keeps_a_fully_passed_series_empty() -> None:
+    """Its provenance still shows in diagnostics; the next put refills it."""
+    store = ForecastStore()
+    _put(store, {_H0: 1.0})
+
+    assert store.prune(_H0 + timedelta(hours=1)) == 1
+    assert dict(store.get(_P).values) == {}
+    assert store.as_diagnostics(_RUN)[_P]["hours"] == 0
+
+    later = _H0 + timedelta(hours=1)
+    assert _put(store, {later: 2.0}, run=_RUN + timedelta(hours=1))
+    assert store.value_at(_P, later) == 2.0

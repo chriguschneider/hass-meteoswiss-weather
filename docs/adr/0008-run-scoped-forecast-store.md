@@ -180,6 +180,20 @@ trickle (~10–20 s cold) rather than a spike. This bounds concurrency *across*
 files and is orthogonal to the per-file `SERIES_REQUEST_CAP` of section 4. The
 first refresh still blocks setup and setup does not time out.
 
+### Past hours are pruned, added 2026-10-08 (issue #164)
+
+Section 1's last-good retention plus the merge-over `put` (issue #143) meant
+the store never forgot an hour: it grew by every hour each run delivered for
+as long as Home Assistant ran, and the hourly forecast started at the first
+fetch after a restart until #160 cut it at read time. `ForecastCoordinator`
+now calls `ForecastStore.prune()` at the start of every tick with the start of
+the running hour. Nothing reads an earlier hour: the hourly forecast starts at
+the running hour, "now" entities read the running hour, and the canary
+(section 3) compares from the running hour on, so pruning cannot turn an
+unchanged canary into a refetch. Pruning keeps provenance and escalation
+streaks, is not a "change" for `put`'s callers, and leaves a fully passed
+series in place, empty, so diagnostics still show where it came from.
+
 ### Verified 2026-09-18 (run `202609180600`, point 309800;2)
 
 - **Row addressing holds for variable-width files.** In `tre200h0` every hour
