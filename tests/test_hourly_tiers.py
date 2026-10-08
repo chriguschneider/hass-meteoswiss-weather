@@ -923,6 +923,23 @@ def test_from_store_drops_ragged_head_after_near_refresh() -> None:
     assert [h.time for h in result] == [h1]
 
 
+def test_from_store_drops_hours_before_start() -> None:
+    """Hours before ``start`` are dropped; the ``start`` hour itself is kept."""
+    h0 = datetime(2026, 8, 28, 20, 0, tzinfo=UTC)
+    h1 = h0 + timedelta(hours=1)
+    h2 = h0 + timedelta(hours=2)
+    store = _store_with(
+        {
+            _TEMPERATURE: {h0: 20.0, h1: 21.0, h2: 22.0},
+            HOURLY_PRECIPITATION: {h0: 0.0, h1: 0.5, h2: 0.0},
+            HOURLY_SYMBOL: {h0: 1, h1: 6, h2: 2},
+            HOURLY_WIND_SPEED: {h0: 10.0, h1: 15.0, h2: 12.0},
+        }
+    )
+    result = hourly_from_store(store, _DEMAND, start=h1)
+    assert [h.time for h in result] == [h1, h2]
+
+
 # --- the refresher files what it fetched in the store (ADR-0008) ---------------
 
 

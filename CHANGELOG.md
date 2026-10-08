@@ -19,6 +19,15 @@ using the matching section below as release notes.
   weather-card example in `docs/CONFIGURATION.md` now uses the valid
   `forecast_type` key.
 
+### Fixed
+
+- **The hourly forecast no longer begins in the past** (regression of #92,
+  [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md)). The forecast store
+  merges every refresh over the last and never drops an hour, so the hourly
+  forecast kept starting at the hour of the first fetch after a restart — two
+  days later a weather card still opened on that afternoon. The forecast is now
+  cut at the running hour when it is read from the store.
+
 ## [v0.4.0] — 2026-09-20
 
 ### Added

@@ -595,7 +595,9 @@ class HourlyRefresher:
 
 
 def hourly_from_store(
-    store: ForecastStore, params: tuple[str, ...]
+    store: ForecastStore,
+    params: tuple[str, ...],
+    start: datetime | None = None,
 ) -> list[HourlyForecast]:
     """Rebuild the hourly forecast from the store's per-parameter series (ADR-0008).
 
@@ -605,6 +607,11 @@ def hourly_from_store(
     the four fields a weather card must render (temperature, symbol,
     precipitation, wind speed) are dropped so a tier boundary or a ragged file
     head never emits a blank or half-filled entry (issue #92).
+
+    ``start`` (an aware UTC datetime) drops hours **before** it. The store merges
+    every refresh over the last and never forgets an hour, so the fetch-time trim
+    alone only bounds the first fetch: without this the forecast keeps starting
+    at the hour of that first fetch (issue #92). ``None`` keeps every stored hour.
     """
     series_by_param: dict[str, object] = {}
     hours: set[datetime] = set()
@@ -617,6 +624,8 @@ def hourly_from_store(
 
     result: list[HourlyForecast] = []
     for when in sorted(hours):
+        if start is not None and when < start:
+            continue
         fields: dict[str, float | int] = {}
         for param, values in series_by_param.items():
             value = values.get(when)  # type: ignore[attr-defined]
@@ -1064,12 +1073,16 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         """Rebuild the hourly forecast from the store, or ``None`` (ADR-0008).
 
         Reads the store — the single source the eager hourly refresh fills — and
-        never triggers a download of its own. ``None`` when the hourly option is
-        off or nothing has been delivered yet.
+        never triggers a download of its own. Starts at the running hour: the
+        store still holds the hours every earlier refresh delivered (issue #92).
+        ``None`` when the hourly option is off or nothing has been delivered yet.
         """
         if not self.hourly_refresher.enabled:
             return None
-        hourly = hourly_from_store(self.store, self.hourly_refresher.demanded_params)
+        this_hour = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
+        hourly = hourly_from_store(
+            self.store, self.hourly_refresher.demanded_params, start=this_hour
+        )
         return hourly or None
 
 
