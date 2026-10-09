@@ -12,7 +12,7 @@ Everything else follows from that.
 **Sourcing.** The facts about this integration come from its code, ADRs
 and the measured upstream numbers in [`ogd.md`](ogd.md). The facts about
 the other two come from their `README` and `manifest.json`, read on
-2026-08-28 — not from their source. Where a row below says "not
+2026-08-28 and re-checked on 2026-09-24 — not from their source. Where a row below says "not
 documented", the feature may still exist.
 
 ## The split that everything follows from
@@ -38,16 +38,16 @@ a thousand posts. That is the risk being traded away here — see
 | Data source | official OGD only | app API + OGD files | app API |
 | Breakage mode | announced change | silent API change | silent API change |
 | Daily forecast | 9 days, official symbols | yes | 8 days |
-| Hourly forecast | opt-in, ≥ 3 h apart, ~1 GB/day | yes, no traffic cost | yes, no traffic cost |
-| Current conditions | SwissMetNet, 10 min, 11 sensors, optional separate precipitation station | yes, interval configurable, separate precipitation station | yes, station code entered by hand |
+| Hourly forecast | opt-in, incl. radiation, zero-degree level, cloud layers and temperature percentiles; ~30–45 MB/day with every option | yes, no traffic cost | yes, no traffic cost |
+| Current conditions | SwissMetNet, 10 min, up to 21 sensors, optional separate precipitation station, station changeable later | yes, interval configurable, separate precipitation station | yes, station code entered by hand |
 | Warnings | no — use core `meteoalarm` | not documented | yes, several warning entities |
-| Pollen | no | no | yes |
+| Pollen | yes, opt-in, nearest station pre-selected | no | yes |
 | Radar | separate sibling integration (ADR-0003) | no | no |
 | Python requirements | none | `hamsclientfork`, `geopy` | own libraries |
 | Third-party services | none | Nominatim (OpenStreetMap) for the postal code | none known |
 | Setup | 3 steps, pre-filled from the HA location | UI, coordinates + postal code | UI, station codes by hand |
-| Default traffic | ~5 MB per new forecast run; 304s in between | negligible | negligible |
-| Maturity | young, `0.2.1`, small install base | established, `quality_scale: silver` | established |
+| Default traffic | ~0.35 MB per new forecast run; 304s in between | negligible | negligible |
+| Maturity | young, `0.4.0`, small install base | established, `quality_scale: silver` | established |
 
 ## What this integration gains
 
@@ -74,22 +74,22 @@ a thousand posts. That is the risk being traded away here — see
   open data and are not on the roadmap before 2027. Core
   [`meteoalarm`](https://www.home-assistant.io/integrations/meteoalarm/)
   carries the official CAP feed at region level and runs alongside.
-- **The hourly forecast is expensive.** The local forecast is published
-  as whole-of-Switzerland CSVs, 29–33 MB per parameter per run. Enabled,
-  the option costs roughly 1 GB/day and is throttled to at most every
-  3 hours ([ADR-0002](adr/0002-traffic-budget-bulk-local-forecast.md)).
-- **No pollen, no nowcast.** Not planned.
-- **The station cannot be changed after setup.** Delete and re-add the
-  entry for now.
+- **The hourly forecast costs traffic.** The local forecast is published
+  as whole-of-Switzerland CSVs, 29–33 MB per parameter per run. The
+  integration reads only the configured point's rows out of them
+  ([ADR-0008](adr/0008-run-scoped-forecast-store.md)), so with every option
+  on it fetches some 30–45 MB a day, not the gigabytes a naive download
+  would cost, but still far more than an app-API point query.
+- **No nowcast.** Not planned; radar is the sibling integration's job.
 - **Not every station measures everything.** Sensors a station does not
   carry stay `unknown`.
-- **Young.** Version 0.2.1, custom HACS repository, few installs, so
+- **Young.** Version 0.4.0, custom HACS repository, few installs, so
   correspondingly little field hardening.
 
 ## What the alternatives do better
 
-- **They are more complete.** An hourly forecast at no traffic cost;
-  izacus adds warnings and pollen on top — the full app picture.
+- **Warnings.** izacus carries the MeteoSwiss warnings, which the open
+  data does not have.
 - **Point queries.** The app API returns one location in a few kilobytes.
   No traffic dilemma, no throttle.
 - **They are proven.** Rudd-O carries `quality_scale: silver` and years
@@ -115,9 +115,10 @@ And what they carry with that:
 | If you want | Then |
 |---|---|
 | An entity that still works in a year | this integration — that is the entire point |
-| An hourly graph on a dashboard | Rudd-O or izacus — or enable the option here and accept ~1 GB/day |
+| The most data about your place: forecast, hourly details, up to 21 station sensors, pollen, history | this integration |
+| An hourly graph on a dashboard | this integration with the hourly option (~30–45 MB/day), or Rudd-O / izacus at no traffic cost |
 | Severe-weather automations | core `meteoalarm`, alongside any of the three |
-| Pollen | izacus, the only one |
+| Pollen | this integration or izacus |
 | Precipitation radar | [MeteoSwiss Radar](https://github.com/chriguschneider/hass-meteoswiss-radar), the sibling |
 | To republish the data | this integration — the only one with a clean CC BY basis |
 | The least ongoing maintenance | this integration for the entity, `meteoalarm` for warnings |
@@ -125,7 +126,7 @@ And what they carry with that:
 The app-API integrations bundle everything into one package, and thereby
 into one failure mode. Split up, the same coverage is: this integration
 for the entity and station sensors, `meteoalarm` for warnings, MeteoSwiss
-Radar for radar. What remains missing is pollen.
+Radar for radar. Nothing the app-API integrations offer is then missing.
 
 ## What changes at the end of 2026
 
