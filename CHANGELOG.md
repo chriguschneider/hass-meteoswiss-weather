@@ -18,6 +18,11 @@ using the matching section below as release notes.
   star badges and quick links in the style of the sibling repositories. The
   weather-card example in `docs/CONFIGURATION.md` now uses the valid
   `forecast_type` key.
+- **README leads with what the integration covers.** A table of everything it
+  brings into Home Assistant at the top, and a section on why the bulk open-data
+  files make it the best that can be built until MeteoSwiss's announced
+  single-place service arrives. `docs/comparison.md` is brought up to date
+  (pollen, up to 21 station sensors, changeable station, measured traffic).
 
 ### Fixed
 

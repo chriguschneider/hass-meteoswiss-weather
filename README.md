@@ -1,6 +1,7 @@
 <h1 align="center">MeteoSwiss Weather</h1>
 
-<p align="center"><em>The MeteoSwiss forecast for your postal code, from the official open data.</em></p>
+<p align="center"><strong>The most complete MeteoSwiss integration for Home Assistant.</strong><br />
+<em>Forecast, live station data, pollen and more for your postal code or summit, from the official open data.</em></p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
@@ -38,23 +39,54 @@
 -->
 
 If you live in Switzerland, the MeteoSwiss app is probably where you look before
-you plan the weekend. This puts that same forecast into Home Assistant, for your
-postal code or your favourite summit, read from the data MeteoSwiss publishes
-officially.
+you plan the weekend. This puts that forecast into Home Assistant, and a lot
+more besides: what the nearest weather station is measuring right now, the
+hour-by-hour details, pollen, and the station's history back to the 1980s. It
+all comes from the data MeteoSwiss publishes officially, set up in a few clicks.
 
-- **The forecast you know from the app.** Nine days for your postal code, with
-  the MeteoSwiss weather symbols, highs and lows, rain, chance of rain and wind.
-- **What is happening right now.** Temperature, humidity, pressure, wind, gusts
-  and rain from the nearest SwissMetNet station, fresh every 10 minutes.
-- **Mountains too.** Pick one of 631 summits, passes and resorts instead of a
-  postal code, and add as many places as you like.
-- **Hour by hour, if you want it.** Temperature, rain, wind, solar radiation for
-  your PV forecast, cloud layers and the zero-degree level, for the next days.
-- **Pollen** from the automatic MeteoSwiss pollen network, as an option.
-- **No YAML and no API key.** Setup is a few clicks, in English, German, French
-  or Italian, and it finds your place from your Home Assistant location.
-- **Built on the official open data**, not on the app's private backend, so it
-  does not break when the app changes.
+## Everything in one integration
+
+No other MeteoSwiss integration brings this much into Home Assistant. Here is
+what you get:
+
+| | What you get |
+|---|---|
+| **Forecast** | 9 days with the official MeteoSwiss symbols, highs and lows, rain, chance of rain, wind and gusts |
+| **Hour by hour** *(option)* | temperature, rain, chance of rain, wind, gusts, direction, solar radiation for your PV forecast, zero-degree level |
+| **Clouds and uncertainty** *(options)* | total cloud cover plus the high, mid and low layers; the 10–90 % band of the temperature forecast |
+| **Right now** | up to 21 sensors from the nearest SwissMetNet station, every 10 minutes: temperature, humidity, three pressures, wind, gusts, rain, sunshine, three kinds of radiation, snow depth, wind chill, ground and soil temperatures |
+| **Better rain readings** | optionally from the nearest station of the denser precipitation network |
+| **Mountains** | 631 summits, passes and ski resorts as well as every postal code, and as many places as you like |
+| **Pollen** *(option)* | grass, birch, alder, hazel, beech, ash and oak from the nearest of the 15 automatic pollen stations |
+| **Your graphs reach back** | one service imports the station's official history into Home Assistant's statistics, back to 1980 |
+| **Today at a glance** | high, low and rain for today, and the zero-degree level for the current hour |
+| **Nothing hidden** | two sensors show how much data it fetched today, and a diagnostics download lists every file it read and how |
+| **Easy to set up** | no YAML and no API key; English, German, French and Italian; your place, weather station and pollen station are pre-selected from your Home Assistant location |
+
+The one thing missing is **weather warnings**. MeteoSwiss does not include them in
+its open data, so pair this integration with Home Assistant's own
+[MeteoAlarm](https://www.home-assistant.io/integrations/meteoalarm/).
+[docs/comparison.md](docs/comparison.md) compares it with the other MeteoSwiss
+integrations, feature by feature.
+
+## As good as it gets until MeteoSwiss's new API arrives
+
+Since 2025, MeteoSwiss publishes its weather data officially: free to use,
+under a licence, and with changes announced ahead of time. For now, though, the
+forecast only comes as big files covering all of Switzerland, around 30 MB for
+each value. Reading your place out of them is the hard part, and it is what
+this integration does well. It reads only the rows for your place, checks that
+nothing is missing, and fetches only 1–2 MB an hour, even with every option on.
+
+That makes this the best that can be built on the official data today.
+MeteoSwiss has announced a simpler service that answers for one place at a time,
+as a beta by the end of 2026. When it arrives, the integration will switch to it,
+using far less data, and your entities, dashboards and automations will stay as
+they are.
+
+The other integrations read the private backend of the MeteoSwiss app instead,
+which can change with any app release without notice. This integration never
+does ([why](#why-another-meteoswiss-integration)).
 
 ## Install
 
@@ -281,9 +313,6 @@ download, details in [CONFIGURATION.md](docs/CONFIGURATION.md#services).
   got every hour, the integration reads more, up to the whole file, and raises a
   repair notice so you see it. MeteoSwiss has rearranged its files twice without
   notice, which is why every read is checked.
-- **A simpler source is coming.** MeteoSwiss has announced a service that answers
-  for a single place, as a beta by the end of 2026. The integration is built so
-  that switching to it will not change your entities.
 - **Something looks wrong?** *Settings → Devices & Services → MeteoSwiss
   Weather → ⋮ → Download diagnostics* lists every file, when it was read and
   how. Attach it to an [issue](https://github.com/chriguschneider/hass-meteoswiss-weather/issues).
