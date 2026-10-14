@@ -9,9 +9,11 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+## [v0.4.2] — 2026-10-14
+
 ### Fixed
 
-- **Daily low temperature missing on most forecast days.** The daily
+- **Daily low temperature missing on most forecast days** (#168). The daily
   minimum file's nine day blocks could line up with the layout probes so that
   the date-sorted file looked sorted by point; the integration then read a
   single row and showed a `templow` for one day only. The probes now check a
@@ -590,7 +592,8 @@ integration produces a weather entity (see the tracking issue in the README).
   tag-triggered release gate with a zip asset, and the opt-in Claude agent
   workflows (label, mention, autopilot, reviewer)
 
-[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.4.2...HEAD
+[v0.4.2]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.4.1...v0.4.2
 [v0.4.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.4.0...v0.4.1
 [v0.4.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.3.1...v0.4.0
 [v0.3.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.3.0...v0.3.1
