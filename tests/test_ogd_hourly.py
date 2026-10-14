@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import random
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -1066,3 +1067,184 @@ async def test_backend_import_keeps_the_good_drops_the_bad() -> None:
     mixed = {"fu3010h0": good.to_dict(), "broken": {"layout": "???"}}
     assert backend.import_hints(mixed) == 1
     assert backend._hints == {"fu3010h0": good}
+
+
+def _daily_aliasing_date_major(shift: int = 60) -> bytes:
+    """A nine-block date-major daily file whose blocks alias with the probes.
+
+    Block sizes are padded so each of the classifier's evenly spaced probes
+    lands a little deeper into its day block than the previous one did — the
+    geometry of upstream tre200pn in run 202610140400. The probed point keys
+    then rise monotonically while the dates repeat, which used to read as
+    point-major (issue: daily minimum missing on all but one day).
+    """
+    header = "point_id;point_type_id;Date;tre200pn\n"
+    points = [(pid, 1) for pid in range(1, 401)] + [
+        (_TARGET.point_id, _TARGET.point_type_id)
+    ] + [(pid, 2) for pid in range(310000, 310400)]
+
+    def block(d: int, pad: int) -> str:
+        stamp = _stamp(_DAY0 + timedelta(days=d))
+        # Spread the padding as extra trailing zeros, one per row.
+        return "".join(
+            f"{pid};{ptype};{stamp};1.5{'0' if i < pad else ''}\n"
+            for i, (pid, ptype) in enumerate(points)
+        )
+
+    base = [len(block(d, 0)) for d in range(_DAILY_DAYS)]
+    b = base[0]
+    # Probe i (at i*S//9) lands in day block i-1, `shift * (9 - i)` bytes
+    # before its end: each probe sits deeper into its block than the last, and
+    # probes 0 and 1 share day 0 so the dates repeat instead of rising strictly.
+    # `shift` is a few rows, so each probe sees a later point than the last.
+    size = len(header) + _DAILY_DAYS * (b + shift) + 90
+    starts = [len(header)] + [
+        i * size // _DAILY_DAYS + shift * (_DAILY_DAYS - i)
+        for i in range(1, _DAILY_DAYS)
+    ] + [size]
+    pads = [starts[d + 1] - starts[d] - base[d] for d in range(_DAILY_DAYS)]
+    assert all(0 <= p <= len(points) for p in pads), pads
+    data = (header + "".join(block(d, pads[d]) for d in range(_DAILY_DAYS))).encode(
+        "iso-8859-1"
+    )
+    assert len(data) == size
+    return data
+
+
+async def test_daily_aliasing_file_classifies_date_major() -> None:
+    """Probes that alias with the nine day blocks look point-sorted; the
+    adjacent-row check still identifies the file as date-major."""
+    data = _daily_aliasing_date_major()
+    reader = _MemReader(data)
+    size = len(data)
+    probed = [
+        await H._read_row_after(reader, size * i // H._LAYOUT_PROBES)
+        for i in range(H._LAYOUT_PROBES)
+    ]
+    keys = [(r.point_type_id, r.point_id) for r in probed if r is not None]
+    dates = [r.date for r in probed if r is not None]
+    # Guard: the fixture really reproduces the aliasing.
+    assert keys == sorted(keys) and len(set(keys)) > 1
+    assert dates == sorted(dates) and len(set(dates)) < len(dates)
+
+    assert await classify_layout(_MemReader(data)) is FileLayout.DATE_MAJOR
+
+
+async def test_daily_aliasing_file_returns_all_nine_days() -> None:
+    data = _daily_aliasing_date_major()
+    result = await _series(data, step=_ONE_DAY)
+
+    assert result.layout is FileLayout.DATE_MAJOR
+    assert result.whole_run
+    assert _series_hours(result) == [
+        _stamp(_DAY0 + timedelta(days=d)) for d in range(_DAILY_DAYS)
+    ]
+
+
+async def test_daily_point_major_hint_on_date_major_file_is_not_trusted() -> None:
+    """A same-day hint that wrongly names point-major (as persisted live) reads
+    a single stray row from a date-major file; a one-row whole-run block is not
+    proven, so the ladder re-classifies and returns every day."""
+    data = _daily_aliasing_date_major()
+    day = date(2026, 8, 26)
+    target_row = f"{_TARGET.point_id};{_TARGET.point_type_id};".encode()
+    wrong = H.FileHint(
+        layout=FileLayout.POINT_MAJOR_TYPE,
+        utc_day=day,
+        header="point_id;point_type_id;Date;tre200pn\n",
+        block_start=data.index(b"\n" + target_row) + 1,
+    )
+    result = await _series(data, step=_ONE_DAY, hint=wrong, utc_day=day)
+
+    assert result.layout is FileLayout.DATE_MAJOR
+    assert len(_series_hours(result)) == _DAILY_DAYS
+
+
+# --- invariants that would have caught the aliasing (tre200pn, 2026-10-14) ---
+#
+# The classifier only ever samples a file, so a verdict can be wrong for an
+# unlucky geometry. These tests pin what must hold whatever it decides: the
+# ladder's output equals the point's rows filtered from the whole file.
+
+
+@pytest.mark.parametrize("shift", [25, 40, 50, 60, 75, 90])
+async def test_daily_aliasing_sweep_never_truncates(shift: int) -> None:
+    """Several aliasing geometries: always date-major, always all nine days."""
+    data = _daily_aliasing_date_major(shift)
+
+    assert await classify_layout(_MemReader(data)) is FileLayout.DATE_MAJOR
+    result = await _series(data, step=_ONE_DAY)
+    assert len(_series_hours(result)) == _DAILY_DAYS
+
+
+_FIXTURES = Path(__file__).parent / "fixtures"
+_FORECAST_FIXTURES = sorted(_FIXTURES.glob("vnut12.lssw.*.csv"))
+
+
+def _true_layout(data: bytes) -> set[FileLayout]:
+    """The layouts a file's whole row order is consistent with."""
+    rows = [
+        line.split(b";", 3)
+        for line in data.splitlines()[1:]
+        if line
+    ]
+    dates = [r[2] for r in rows]
+    type_keys = [(int(r[1]), int(r[0])) for r in rows]
+    ids = [int(r[0]) for r in rows]
+    out: set[FileLayout] = set()
+    if dates == sorted(dates):
+        out.add(FileLayout.DATE_MAJOR)
+    if type_keys == sorted(type_keys):
+        out.add(FileLayout.POINT_MAJOR_TYPE)
+    if ids == sorted(ids):
+        out.add(FileLayout.POINT_MAJOR_ID)
+    return out
+
+
+def _fixture_step(path: Path) -> timedelta:
+    # The daily p-variants carry one row per day; everything else is hourly.
+    return _ONE_DAY if path.name.split(".")[3].startswith("tre200p") else timedelta(
+        hours=1
+    )
+
+
+@pytest.mark.parametrize("path", _FORECAST_FIXTURES, ids=lambda p: p.name)
+async def test_fixture_classification_never_contradicts_the_file(path: Path) -> None:
+    """A verdict may be "fallback" (download it all) but never a wrong order."""
+    data = path.read_bytes()
+    layout = await classify_layout(_MemReader(data))
+    assert layout is FileLayout.FALLBACK or layout in _true_layout(data)
+
+
+@pytest.mark.parametrize(
+    "hint_layout",
+    [
+        None,
+        FileLayout.DATE_MAJOR,
+        FileLayout.POINT_MAJOR_TYPE,
+        FileLayout.POINT_MAJOR_ID,
+    ],
+)
+@pytest.mark.parametrize("path", _FORECAST_FIXTURES, ids=lambda p: p.name)
+async def test_fixture_whole_run_equals_the_full_file(
+    path: Path, hint_layout: FileLayout | None
+) -> None:
+    """Cold or with a same-day hint naming any layout — right or wrong — the
+    whole-run result is exactly the point's rows of the whole file."""
+    data = path.read_bytes()
+    full = H._filter_point_rows(data.decode("iso-8859-1"), _TARGET)
+    expected = [line for line in full.split("\n")[1:] if line]
+    day = date(2026, 8, 27)
+    hint = None
+    if hint_layout is not None:
+        header = data.split(b"\n", 1)[0].decode("iso-8859-1") + "\n"
+        target = f"\n{_TARGET.point_id};{_TARGET.point_type_id};".encode()
+        hint = H.FileHint(
+            layout=hint_layout,
+            utc_day=day,
+            header=header,
+            block_start=data.index(target) + 1 if target in data else None,
+        )
+    result = await _series(data, step=_fixture_step(path), hint=hint, utc_day=day)
+
+    assert sorted(_series_lines(result)) == sorted(expected)

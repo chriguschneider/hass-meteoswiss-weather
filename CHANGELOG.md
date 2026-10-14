@@ -9,6 +9,16 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Daily low temperature missing on most forecast days.** The daily
+  minimum file's nine day blocks could line up with the layout probes so that
+  the date-sorted file looked sorted by point; the integration then read a
+  single row and showed a `templow` for one day only. The probes now check a
+  row's neighbour when both orders look plausible, and a whole-run read that
+  yields just one row is no longer accepted, so the ladder falls back to the
+  full file instead of a truncated forecast.
+
 ## [v0.4.1] — 2026-10-09
 
 ### Changed

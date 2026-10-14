@@ -265,6 +265,29 @@ def _increasing(values: list) -> bool:
     return all(a < b for a, b in zip(values, values[1:], strict=False))
 
 
+async def _adjacent_rows_date_major(reader: RangeReader, rows: list[_Row]) -> bool:
+    """Whether a probe row and the row right after it share a date, not a point.
+
+    Inside a date-major block consecutive rows are different points on the same
+    date; inside a point-major block they are the same point on successive
+    dates. A pair that straddles a block boundary differs in both and decides
+    nothing, so the next probe is tried.
+    """
+    for row in rows:
+        nxt = await _read_row_after(reader, row.start)
+        if nxt is None:
+            continue
+        same_point = (nxt.point_type_id, nxt.point_id) == (
+            row.point_type_id,
+            row.point_id,
+        )
+        if same_point:
+            return False
+        if nxt.date == row.date:
+            return True
+    return False
+
+
 async def classify_layout(reader: RangeReader) -> FileLayout:
     """Detect a file's row order from evenly spaced byte-offset probes.
 
@@ -296,10 +319,21 @@ async def classify_layout(reader: RangeReader) -> FileLayout:
     # it would drop the point's later hours — vanishingly unlikely.
     if _increasing(dates):
         return FileLayout.DATE_MAJOR
+    point_major: FileLayout | None = None
     if _nondecreasing(type_keys) and len(set(type_keys)) > 1:
-        return FileLayout.POINT_MAJOR_TYPE
-    if _nondecreasing(ids) and len(set(ids)) > 1:
-        return FileLayout.POINT_MAJOR_ID
+        point_major = FileLayout.POINT_MAJOR_TYPE
+    elif _nondecreasing(ids) and len(set(ids)) > 1:
+        point_major = FileLayout.POINT_MAJOR_ID
+    if point_major is not None:
+        # A few-block date-major file can alias with the probes: with about one
+        # probe per day block, each probe lands slightly deeper into its block
+        # than the last, so the point keys creep upward and look sorted
+        # (tre200pn, run 202610140400 — every forecast day but one lost its
+        # minimum). When the dates are non-decreasing too, the probes cannot
+        # tell the layouts apart; a row's successor can.
+        if _nondecreasing(dates) and await _adjacent_rows_date_major(reader, rows):
+            return FileLayout.DATE_MAJOR
+        return point_major
     # A few-block date-major file (the daily p-variants, only nine day blocks)
     # has more probes than blocks, so its dates are non-decreasing with repeats
     # rather than strictly increasing (issue #122). This branch is reached only
@@ -1078,9 +1112,14 @@ async def _address(
         # must also cover the demanded window: a hint that names the wrong layout
         # yields at most a stray row on a date-major file, which fails this and
         # falls back to a fresh classification (ADR-0008).
+        # A whole-run demand has no window to check against, so the one stray
+        # row of a misread date-major file is caught by its count instead:
+        # every forecast file spans several steps per point.
         ordered = bool(stamps) and stamps == sorted(set(stamps))
         proven = ordered and (
-            not windowed or _window_complete(text, window_start, window_end, step)
+            _window_complete(text, window_start, window_end, step)
+            if windowed
+            else len(stamps) > 1
         )
         if proven:
             header_line = text.split("\n", 1)[0] + "\n"
