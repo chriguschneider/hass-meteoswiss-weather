@@ -9,6 +9,15 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Added
+
+- **Sunshine duration in the forecast** (ADR-0010, #178/#181). Daily forecast
+  entries carry `sunshine_duration` (total minutes for the day, local calendar
+  day, absent for incomplete days at the tail of the run). Hourly forecast
+  entries carry `sunshine_duration` (minutes in that hour, 0–60) when the
+  hourly option is on. Both are fetched without the hourly option via the
+  existing daily point-block mechanism — one extra ~5 KB block per changed run.
+
 ## [v0.5.0] — 2026-10-19
 
 ### Added
