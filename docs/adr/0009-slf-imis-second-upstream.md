@@ -72,7 +72,33 @@ Measured 2026-10-19:
   a schema change shows up there first. A failing SLF fetch leaves the SLF
   entities unavailable and never affects the MeteoSwiss entities.
 - Snow height is near zero in summer and stations may report `null`;
-  sensors show unknown rather than inventing a value.
+  sensors show unknown rather than inventing a value. *Superseded for the
+  snow sensors by the amendment below.*
 - `ogd/` stays MeteoSwiss-only and keeps its path to PyPI (#20); `slf/`
   can follow the same way later.
 - Measured facts and fixtures: `docs/slf.md`. Implementation: #171.
+
+## Amendment 2026-10-19: station outages (#186, #187)
+
+Measured the same day: 6 of the 128 `SNOW_FLAT` stations (SCH2, CMA2,
+BRU2, BOV2, SAA4, GON2) answer `404` with `{"code": "NO_DATA"}`, because
+the live API looks back only 7 days and they last reported between
+18.09. and 06.10.2026. The SLF archive (`measurement-data.slf.ch`, read
+once by hand, **not** an allowed runtime host) shows SCH2 reporting year
+round without a gap of 3 days since 2015 and still flagged active: these
+are outages, not retired stations.
+
+Decided by the owner:
+
+- A station without current data stays in the pick, labelled as
+  currently without data.
+- The snow sensors are never `unavailable`/`unknown` because of the SLF.
+  During an outage they keep their **last real value**, restored across
+  restarts. Before the first real value has ever arrived they show **0**
+  as a placeholder. Both cases are marked: `measured_at` (time of the
+  value shown, `null` for the placeholder) and `placeholder: true|false`.
+- `NO_DATA` is logged at warning once per outage, not every poll; a repair
+  issue appears only after 30 days without data.
+- Accepted risk: an entry set up in winter on a silent station shows 0 cm
+  until the station reports.
+
