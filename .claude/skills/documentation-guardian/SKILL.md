@@ -1,6 +1,6 @@
 ---
 name: documentation-guardian
-description: Proactively suggests an ADR when an architectural change happens in the MeteoSwiss Weather repo, and checks planned changes against existing decisions in docs/adr/. Activate on a new upstream endpoint or dataset, a change to the fetch cadence or traffic constants, a new platform or config option, a new quality gate or CI job, or a deviation from an accepted ADR.
+description: Proactively suggests an ADR when an architectural change happens in the MeteoSwiss Weather repo, and checks planned changes against existing decisions in docs/adr/. Activate on a new upstream endpoint, dataset or dependency, a change to the fetch cadence or traffic constants, a new platform or config option, a new quality gate or CI job, the same logic in a second place, or a deviation from an accepted ADR.
 ---
 
 # Documentation Guardian
@@ -16,7 +16,9 @@ When the two disagree, that file wins.
 
 - A **new upstream endpoint, collection or file family** fetched by the
   client (`custom_components/meteoswiss_weather/ogd/`) — governed by
-  ADR-0001; a non-OGD host is a deviation, not an extension.
+  ADR-0001; a non-OGD host is a deviation, not an extension. A new SLF
+  endpoint is a deviation from ADR-0009.
+- A **new runtime dependency** (`requirements` in `manifest.json`).
 - A change to **fetch cadence or traffic constants** (refresh intervals,
   the set of hourly parameter files, conditional-request handling) —
   governed by ADR-0002.
@@ -27,6 +29,10 @@ When the two disagree, that file wins.
 - A **new platform** (`weather`, `sensor`, ...) or a **new config/option
   key** (public API, hard to remove).
 - A **pattern deviation** from an accepted ADR.
+- The **same logic in a second language or place** (a table in code and
+  in docs, a parser duplicated between `ogd/` and the smoke test):
+  propose one written spec plus a shared golden-fixture test both sides
+  run.
 
 ## Skip
 
@@ -42,5 +48,7 @@ When the two disagree, that file wins.
 2. If it deviates from an accepted ADR, say so and stop for the user.
 3. If it is a genuinely new decision, offer to draft an ADR from
    `docs/adr/template.md` with the next free number, and land it in the
-   same PR as the code.
+   same PR as the code. If it changes an accepted ADR, propose a dated
+   `## Amendment YYYY-MM-DD (#issue)` section instead of editing the
+   decision text (`docs/adr/README.md`, *Changing an accepted ADR*).
 4. Keep proposals rare and load-bearing: an ADR per bug fix is noise.

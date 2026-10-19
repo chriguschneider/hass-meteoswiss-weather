@@ -18,8 +18,7 @@ on:
     - cron: "0 2 * * 1"
   workflow_dispatch:
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: smoke-test
@@ -32,10 +31,15 @@ jobs:
     permissions:
       contents: read
       issues: write
+    env:
+      TITLE: "Upstream open data drift detected"
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
 
@@ -44,6 +48,8 @@ jobs:
       - name: Run the smoke test
         id: smoke
         env:
+          # The script prints ✓/✗. On a stdout that is not UTF-8 the print
+          # itself raises and the run reports drift that did not happen.
           PYTHONIOENCODING: utf-8
         run: |
           set +e
@@ -60,58 +66,59 @@ jobs:
         if: steps.smoke.outputs.exit_code != '0'
         env:
           GH_TOKEN: ${{ github.token }}
-          TITLE: "Upstream open data drift detected"
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          tail -c 4000 smoke.log > log-tail.txt
-
           {
             echo "The weekly smoke test could not fetch or parse the live MeteoSwiss open data."
             echo
             echo "- Run: $RUN_URL"
             echo "- Date: $(date -u +%Y-%m-%dT%H:%MZ)"
             echo
-            echo "\`\`\`"
-            cat log-tail.txt
-            echo "\`\`\`"
+            echo '```'
+            tail -c 4000 smoke.log
+            echo '```'
             echo
             echo "Per ADR-0004 this is tracked as an external contract change, not a repo regression."
-            echo "Check docs/ogd.md and the MeteoSwiss changelog (https://opendatadocs.meteoswiss.ch/changelog) before touching the client."
+            echo "Check docs/ogd.md (and docs/slf.md for the SLF stations) and the MeteoSwiss changelog (https://opendatadocs.meteoswiss.ch/changelog) before touching the client."
           } > body.md
 
-          existing="$(gh issue list --state open --search "$TITLE in:title" \
-            --json number,title --jq "[.[] | select(.title == \"$TITLE\")] | .[0].number // empty")"
+          existing="$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" --json number,title \
+            | jq -r --arg t "$TITLE" 'map(select(.title == $t)) | .[0].number // empty')"
 
           if [ -n "$existing" ]; then
             echo "Updating existing issue #$existing"
-            gh issue comment "$existing" --body-file body.md
+            gh issue comment "$existing" -R "$GITHUB_REPOSITORY" --body-file body.md
           else
             echo "Opening a new drift issue"
-            # Labelled `bug`/`area-client` on purpose and NOT with a P-label:
-            # the autopilot grinds the P-backlog, and it cannot fix MeteoSwiss
-            # changing their files. A human triages this one.
-            gh issue create --title "$TITLE" --body-file body.md \
-              --label bug --label area-client
+            # `tracking` (every agent flow skips it) plus `bug`/`area-client`,
+            # and NOT a P-label: the autopilot grinds the P-backlog, and it
+            # cannot fix MeteoSwiss changing their files. A human triages
+            # this one. Without the labels (not created yet) the issue is
+            # opened bare rather than not at all.
+            gh issue create -R "$GITHUB_REPOSITORY" --title "$TITLE" --body-file body.md \
+              --label tracking --label bug --label area-client \
+              || gh issue create -R "$GITHUB_REPOSITORY" --title "$TITLE" --body-file body.md
           fi
 
       - name: Note recovery on an open drift issue
         if: steps.smoke.outputs.exit_code == '0'
         env:
           GH_TOKEN: ${{ github.token }}
-          TITLE: "Upstream open data drift detected"
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          existing="$(gh issue list --state open --search "$TITLE in:title" \
-            --json number,title --jq "[.[] | select(.title == \"$TITLE\")] | .[0].number // empty")"
+          existing="$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" --json number,title \
+            | jq -r --arg t "$TITLE" 'map(select(.title == $t)) | .[0].number // empty')"
           if [ -n "$existing" ]; then
-            gh issue comment "$existing" --body \
+            # Left open on purpose: passing again does not prove the layout
+            # is unchanged (an empty answer passes too). A human closes it.
+            gh issue comment "$existing" -R "$GITHUB_REPOSITORY" --body \
               "Smoke test passed again on $(date -u +%Y-%m-%d) ($RUN_URL). Left open for a human to confirm the layout actually matches docs/ogd.md before closing."
           fi
 
       - name: Fail the job if the smoke test failed
         if: steps.smoke.outputs.exit_code != '0'
+        env:
+          EXIT_CODE: ${{ steps.smoke.outputs.exit_code }}
         run: |
-          echo "::error::Smoke test exited ${{ steps.smoke.outputs.exit_code }} -- see the drift issue."
+          echo "::error::Smoke test exited $EXIT_CODE -- see the drift issue \"$TITLE\"."
           exit 1

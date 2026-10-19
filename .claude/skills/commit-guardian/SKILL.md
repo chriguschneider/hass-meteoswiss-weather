@@ -61,15 +61,34 @@ From the ADRs:
   configured, or an SLF-fed entity carrying the MeteoSwiss attribution.
 - **ADR-0003** — no code shared with or imported from the radar
   integration; no radar features (map, frames, INCA) in this repo.
+- **ADR-0004** — quality gates: flag a diff that loosens, skips or
+  excludes a CI job, a ruff rule, CodeQL or the SonarCloud gate, adds an
+  `ignore:` to the HACS action, or renames a required CI job
+  (`hassfest (HA manifest validation)`, `HACS validation`,
+  `Python lint + tests`).
 
 From AGENTS.md:
 
 - **Version sync** — manifest.json and const.py `VERSION` must match.
   Flag a diff that changes one without the other.
+- **Changelog** — a user-visible change adds an entry under
+  `## [Unreleased]`.
+- **Domain data cites its source** — a new lookup table, code, threshold
+  or upstream field name points to `docs/ogd.md`, `docs/slf.md`, a URL or
+  a real fixture. Flag invented values and hand-written fixtures.
 - **English only** in code, comments, commit messages.
 - **Commit trailer** — an AI-authored commit carries an honest
   `Co-Authored-By:` trailer.
 - **No direct commit to `master`.**
+- **Explaining comments survive** — flag a diff that deletes a comment
+  citing an issue (`#123`) or an ADR: those record why odd-looking code is
+  the way it is.
+- **Generated artifacts in sync** — a change to the sources of a committed
+  output (the brand icons from `scripts/generate_brands_icon.py`, a
+  refreshed fixture) carries the regenerated output in the same commit.
+- **Accepted ADRs are amended, not rewritten** — flag a diff that edits
+  the decision text of an accepted ADR instead of appending a dated
+  amendment (`docs/adr/README.md`).
 
 Do not rely on this list being complete: new ADRs land over time, always
 re-read `docs/adr/`.
