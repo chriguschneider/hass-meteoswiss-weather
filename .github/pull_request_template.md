@@ -26,9 +26,9 @@ How was this tested?
 
 ## Checklist
 
-- [ ] My code follows the conventions in AGENTS.md
+- [ ] My code follows the conventions in AGENTS.md and the accepted ADRs
 - [ ] Stays on the official open data (ADR-0001) and within the traffic budget (ADR-0002)
 - [ ] I have performed a self-review of my own code
-- [ ] I have updated the documentation if applicable
+- [ ] I have updated the documentation and CHANGELOG.md if applicable
 - [ ] Tests pass (`ruff check custom_components tests scripts`, `pytest -q`)
 - [ ] No new warnings are generated

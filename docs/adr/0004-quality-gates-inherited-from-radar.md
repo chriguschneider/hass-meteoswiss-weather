@@ -54,3 +54,37 @@ normalises line endings.
   a tag.
 - Secrets (`CLAUDE_CODE_OAUTH_TOKEN`, `SONAR_TOKEN`) and the SonarCloud
   project are per-repository and have to be created by the owner.
+
+## Amendment 2026-10-19 (repo-standard adoption)
+
+The gates and agent workflows now follow
+[`repo-standard`](https://github.com/chriguschneider/repo-standard), the
+setup that was distilled from this repo and the radar repo, as the radar
+repo did on the same day:
+
+- **Release** additionally refuses a tag whose commit has no successful
+  `ci.yml` run (`gh run list --workflow ci.yml --commit <sha> --status
+  success`), and checks that the zip holds exactly the tracked files of
+  the integration. Practical effect: merge the release commit, wait for CI
+  on `master`, then tag.
+- **CI** also runs weekly; its concurrency group includes the event, so
+  the weekly run never cancels a push run. `ci-watch.yml` opens one issue
+  while `master` is red and closes it when CI is green again. The
+  required checks and their job names are unchanged.
+- **Smoke test**: the drift issue keeps its title and labels and is also
+  labelled `tracking`, which every agent flow skips; without the labels it
+  is opened bare rather than not at all.
+- **Agent workflows**: the sentence "the agent token cannot touch
+  `.github/workflows/`" above no longer describes the boundary. The Claude
+  app is installed with workflow write access; what blocks the agent is a
+  tool allowlist (no `--dangerously-skip-permissions`), deny rules in
+  `.claude/ci-settings.json` and a hook that refuses writes to `.github/`
+  and `.claude/`. The reviewer reads the CI result instead of running the
+  PR's checks, holds PRs that touch sensitive paths, and starts when the
+  author reports `Agent status: done`. Details in
+  `docs/agent-automation.md`.
+- Every action is pinned by commit SHA; Dependabot bumps them after a
+  7-day cooldown.
+
+Decided by: owner.
+

@@ -27,7 +27,23 @@ added test coverage, and prose/style tweaks.
 1. Copy [`template.md`](template.md) to `NNNN-short-slug.md` (next free
    number).
 2. Fill in Context, Decision, Consequences. Keep it to a screen.
-3. Land it in the same PR as the code it describes.
+3. Land it in the same PR as the code it describes, and add it to the
+   index below.
+
+## Changing an accepted ADR
+
+Do not rewrite it. Append a section and keep the original text:
+
+```
+## Amendment YYYY-MM-DD (#issue)
+
+What changed and why. Decided by: <owner | ADR-NNNN>.
+```
+
+A decision that reverses the ADR gets a new ADR, and the old one's status
+becomes `Superseded by ADR-NNNN`. (Older ADRs here use `## Revision N` or
+`## Decided by the owner` headings for the same thing; they stay as they
+are.)
 
 ## Index
 

@@ -5,6 +5,9 @@ name: Release
 # against the tree it points at, release notes must already exist in
 # CHANGELOG.md, and the integration ships as a zip asset so HACS counts
 # installs.
+#
+# CI must have passed on the tagged commit (ADR-0004 amendment 2026-10-19):
+# merge the release commit, wait for CI on master, then tag.
 
 on:
   push:
@@ -12,19 +15,31 @@ on:
 
 permissions:
   contents: write
+  actions: read # check the CI result of the tagged commit
 
 jobs:
   release:
     name: Verify tag and publish release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # The annotated tag object carries the release title (see below),
           # and it is not present in a shallow clone of the commit alone.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v7
+      - name: CI passed on the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ok="$(gh run list --workflow ci.yml --commit "$GITHUB_SHA" --status success --json databaseId --jq length)"
+          if [ "$ok" = "0" ]; then
+            echo "::error::No green CI run for $GITHUB_SHA. Tag a commit that passed CI on the default branch."
+            exit 1
+          fi
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.13"
 
@@ -58,10 +73,11 @@ jobs:
       - name: Refuse to overwrite an existing release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
-            echo "::error::A release for ${{ steps.version.outputs.tag }} already exists. Delete it first, or tag a new version."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::error::A release for $TAG already exists. Delete it first, or tag a new version."
             exit 1
           fi
 
@@ -104,14 +120,15 @@ jobs:
         id: title
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          tag="${{ steps.version.outputs.tag }}"
-          object_type="$(gh api "repos/${{ github.repository }}/git/ref/tags/$tag" --jq '.object.type')"
+          tag="$TAG"
+          object_type="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.type')"
           subject=""
           if [ "$object_type" = "tag" ]; then
-            object_sha="$(gh api "repos/${{ github.repository }}/git/ref/tags/$tag" --jq '.object.sha')"
-            subject="$(gh api "repos/${{ github.repository }}/git/tags/$object_sha" --jq '.message' | head -1)"
+            object_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" --jq '.object.sha')"
+            subject="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$object_sha" --jq '.message' | head -1)"
           fi
           # Tolerate a message that already repeats the tag.
           subject="${subject#"$tag"}"
@@ -154,13 +171,24 @@ jobs:
             echo "::error::__pycache__ leaked into the release asset."
             exit 1
           fi
+          # Exactly the tracked files of the integration, subfolders included
+          # (brand/, translations/, a bundled frontend/): a missing file breaks
+          # installs, an extra one is something nobody reviewed.
+          (cd custom_components/meteoswiss_weather && git ls-files | sort) > expected.txt
+          unzip -Z1 meteoswiss_weather.zip | sed 's|^\./||' | grep -v '/$' | sort > actual.txt
+          if ! diff -u expected.txt actual.txt; then
+            echo "::error::The zip does not hold exactly the tracked files of custom_components/meteoswiss_weather (diff above)."
+            exit 1
+          fi
 
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          TITLE: ${{ steps.title.outputs.title }}
         run: |
-          gh release create "${{ steps.version.outputs.tag }}" \
-            --title "${{ steps.title.outputs.title }}" \
+          gh release create "$TAG" \
+            --title "$TITLE" \
             --notes-file release-notes.md \
             --verify-tag \
             meteoswiss_weather.zip

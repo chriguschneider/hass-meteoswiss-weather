@@ -18,6 +18,6 @@ coverage.xml
 # lives in custom_components/meteoswiss_weather/brand/ and IS committed.
 /build/
 
-# Machine-local Claude notes (shared conventions live in AGENTS.md)
-/CLAUDE.md
+# Machine-local Claude notes (shared conventions: AGENTS.md, via CLAUDE.md)
+CLAUDE.local.md
 .claude/settings.local.json
