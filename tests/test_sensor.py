@@ -863,7 +863,7 @@ def _hour_with_zero_degree(when: datetime, level: float):
 # Zero-degree level in 48 h (issue #214)
 # ---------------------------------------------------------------------------
 
-_ZERO_DEGREE_48H_ID = "sensor.koniz_zero_degree_level_48h"
+_ZERO_DEGREE_48H_ID = "sensor.koniz_zero_degree_level_in_48_h"
 
 
 async def _setup_with_zero_degree_48h(
@@ -876,7 +876,7 @@ async def _setup_with_zero_degree_48h(
         DOMAIN,
         "2-309800_zero_degree_level_48h",
         config_entry=entry,
-        suggested_object_id="koniz_zero_degree_level_48h",
+        suggested_object_id="koniz_zero_degree_level_in_48_h",
         disabled_by=None,
     )
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -916,8 +916,8 @@ async def test_zero_degree_48h_value_and_change(
             now,
         )
         await hass.async_block_till_done()
-        assert _state(hass, "zero_degree_level_48h") == "2300.0"
-        assert _attr(hass, "zero_degree_level_48h", "change") == -200.0
+        assert _state(hass, "zero_degree_level_in_48_h") == "2300.0"
+        assert _attr(hass, "zero_degree_level_in_48_h", "change") == -200.0
 
 
 async def test_zero_degree_48h_unknown_without_attribute_when_not_covered(
@@ -935,7 +935,7 @@ async def test_zero_degree_48h_unknown_without_attribute_when_not_covered(
             coordinator, {hour: 2500.0, hour + timedelta(hours=47): 2400.0}, now
         )
         await hass.async_block_till_done()
-        assert _state(hass, "zero_degree_level_48h") == STATE_UNKNOWN
+        assert _state(hass, "zero_degree_level_in_48_h") == STATE_UNKNOWN
         assert "change" not in hass.states.get(_ZERO_DEGREE_48H_ID).attributes
 
 
@@ -951,7 +951,7 @@ async def test_zero_degree_48h_no_change_when_current_hour_missing(
         coordinator = config_entry.runtime_data.forecast_coordinator
         _file_series(coordinator, {hour + timedelta(hours=48): 2300.0}, now)
         await hass.async_block_till_done()
-        assert _state(hass, "zero_degree_level_48h") == "2300.0"
+        assert _state(hass, "zero_degree_level_in_48_h") == "2300.0"
         assert "change" not in hass.states.get(_ZERO_DEGREE_48H_ID).attributes
 
 
@@ -976,13 +976,13 @@ async def test_zero_degree_48h_advances_at_the_top_of_the_hour(
             start,
         )
         await hass.async_block_till_done()
-        assert _state(hass, "zero_degree_level_48h") == "2300.0"
+        assert _state(hass, "zero_degree_level_in_48_h") == "2300.0"
 
         frozen.move_to(start + timedelta(minutes=30))
         async_fire_time_changed(hass, start + timedelta(minutes=30))
         await hass.async_block_till_done()
-        assert _state(hass, "zero_degree_level_48h") == "2250.0"
-        assert _attr(hass, "zero_degree_level_48h", "change") == -260.0
+        assert _state(hass, "zero_degree_level_in_48_h") == "2250.0"
+        assert _attr(hass, "zero_degree_level_in_48_h", "change") == -260.0
 
 
 async def test_zero_degree_48h_disabled_by_default(
