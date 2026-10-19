@@ -198,7 +198,7 @@ async def test_snow_station_list_sorted_by_distance(hass: HomeAssistant) -> None
     # JAU1 (WIND) and BOG4 (SNOW_SLOPE) must not appear.
     assert "JAU1" not in codes
     assert "BOG4" not in codes
-    # All five SNOW_FLAT stations are within limit=10; all must be listed.
+    # All SNOW_FLAT stations must be listed (no distance cap, issue #205).
     for code in ("STH2", "JAU2", "SHE2", "SCH2", "CSL2", "DAV2"):
         assert code in codes
     # Options are sorted by distance; STH2 is closest to Bern so it's first.
@@ -207,6 +207,48 @@ async def test_snow_station_list_sorted_by_distance(hass: HomeAssistant) -> None
     sth2_label = next(o["label"] for o in options if o["value"] == "STH2")
     assert "1791 m" in sth2_label
     assert "km" in sth2_label
+
+
+async def test_snow_station_far_station_selectable(hass: HomeAssistant) -> None:
+    """A station far from the HA location is offered and can create an entry (#205).
+
+    DAV2 (Davos area, ~190 km from Bern) is the most distant SNOW_FLAT station
+    in the fixture.  Before the fix it would have been cut off by the 10-station
+    cap; with the fix it must appear in the dropdown and can be submitted.
+    """
+    hass.config.latitude = _BERN_LAT
+    hass.config.longitude = _BERN_LON
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    with _snow_entry_patch()[0], _snow_entry_patch()[1], _snow_entry_patch()[2]:
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={_CONF_MODE: _MODE_SNOW_STATION}
+        )
+    assert result["step_id"] == "snow_station"
+    codes = [
+        o["value"]
+        for o in result["data_schema"].schema[CONF_IMIS_STATION_CODE].config["options"]
+    ]
+    assert "DAV2" in codes, "far station DAV2 must be in the dropdown"
+
+    # Submitting DAV2 must create the entry, not raise StopIteration.
+    with (
+        patch(
+            "custom_components.meteoswiss_weather.async_setup_entry",
+            return_value=True,
+        ),
+        _snow_entry_patch()[0],
+        _snow_entry_patch()[1],
+        _snow_entry_patch()[2],
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={CONF_IMIS_STATION_CODE: "DAV2"}
+        )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_IMIS_STATION_CODE] == "DAV2"
 
 
 async def test_snow_station_no_data_label(hass: HomeAssistant) -> None:

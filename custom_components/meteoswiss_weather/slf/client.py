@@ -152,12 +152,15 @@ def nearest_snow_stations(
     stations: list[ImisStation],
     lat: float,
     lon: float,
-    limit: int = 3,
+    limit: int | None = None,
 ) -> list[ImisStation]:
-    """Return the ``limit`` nearest ``SNOW_FLAT`` stations, closest first."""
+    """Return all ``SNOW_FLAT`` stations sorted by distance, nearest first.
+
+    When ``limit`` is given, only the closest ``limit`` stations are returned.
+    """
     flat = [s for s in stations if s.type == SNOW_FLAT]
     flat.sort(key=lambda s: haversine_km(lat, lon, s.lat, s.lon))
-    return flat[:limit]
+    return flat if limit is None else flat[:limit]
 
 
 async def fetch_imis_latest(

@@ -476,7 +476,7 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_snow_station(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Snow-station entry (ADR-0011): 10 nearest SNOW_FLAT IMIS stations.
+        """Snow-station entry (ADR-0011): all SNOW_FLAT stations, sorted by distance.
 
         This step loads its own SLF data without calling ``_load_metadata``,
         so no MeteoSwiss OGD request is ever made on the snow-station path.
@@ -510,7 +510,6 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
             self._all_imis_stations,
             self.hass.config.latitude,
             self.hass.config.longitude,
-            limit=10,
         )
 
         if user_input is not None:
