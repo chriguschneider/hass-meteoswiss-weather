@@ -11,21 +11,22 @@ using the matching section below as release notes.
 
 ### Changed
 
-- **A snow station is now its own entry** (ADR-0011, #199, #200, #196). An SLF
-  IMIS snow station is the third choice in the setup, next to postal code and
-  mountain point, configured as a separate entry with its own device
-  (manufacturer SLF, named `"<station> (<elevation> m)"`) instead of being an
-  option on a postal-code or mountain entry — the optional snow pick in the
-  station step is gone. A snow-station entry polls only the SLF data service and
-  makes **no MeteoSwiss request at all**, and it now carries **all** its values
-  as sensors (all enabled by default): measured and modelled snow height, new
-  snow 24 h, air temperature, humidity, wind speed and gust (native m/s), wind
-  bearing and its standard deviation, snow surface and snow-pack temperatures
-  (0/25/50/100 cm), and reflected radiation. Point entries no longer offer or
-  read an IMIS station, and any snow sensors previously attached to a point
-  entry are removed on the next restart. There is no automatic migration — snow
-  picks existed only briefly in v0.5.0–v0.6.2; re-add the station as its own
-  entry by hand.
+- **A snow station is now its own entry** (ADR-0011, #199, #200, #196, #206).
+  An SLF IMIS snow station is the third choice in the setup, next to postal code
+  and mountain point, configured as a separate entry with its own device (name =
+  the station label, model = `"IMIS snow station, <elevation> m"`, manufacturer
+  SLF) instead of being an option on a postal-code or mountain entry — the
+  optional snow pick in the station step is gone. A snow-station entry polls only
+  the SLF data service and makes **no MeteoSwiss request at all**, and it carries
+  **all** its values as sensors (all enabled by default): a static `elevation`
+  sensor (always available even when the station is silent), measured and
+  modelled snow height, new snow 24 h, air temperature, humidity, wind speed and
+  gust (native m/s), wind bearing and its standard deviation, snow surface and
+  snow-pack temperatures (0/25/50/100 cm), and reflected radiation. Point entries
+  no longer offer or read an IMIS station, and any snow sensors previously
+  attached to a point entry are removed on the next restart. There is no
+  automatic migration — snow picks existed only briefly in v0.5.0–v0.6.2;
+  re-add the station as its own entry by hand.
 
 ## [v0.6.2] — 2026-10-19
 

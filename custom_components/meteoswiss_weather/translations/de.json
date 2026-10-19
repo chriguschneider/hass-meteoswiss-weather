@@ -66,6 +66,7 @@
       "snow_temperature_50cm": { "name": "Schneetemperatur (50 cm)" },
       "snow_temperature_100cm": { "name": "Schneetemperatur (100 cm)" },
       "reflected_radiation": { "name": "Reflektierte Strahlung" },
+      "elevation": { "name": "Höhe" },
       "pollen_grasses": { "name": "Graspollen" },
       "pollen_birch": { "name": "Birkenpollen" },
       "pollen_alder": { "name": "Erlenpollen" },

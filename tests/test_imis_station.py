@@ -576,17 +576,28 @@ async def test_snow_station_builds_imis_only_zero_ogd(
         s for s in hass.states.async_entity_ids() if s.startswith("weather.")
     ]
 
-    # The sensors live on the station's own device.
+    # The sensors live on the station's own device (name = label, model = elevation).
     dev_reg = dr.async_get(hass)
     device = dev_reg.async_get_device(identifiers={(DOMAIN, "imis-STH2")})
     assert device is not None
-    assert device.name == "Vorderstocken (1791 m)"
+    assert device.name == "Vorderstocken"
+    assert device.model == "IMIS snow station, 1791 m"
     assert device.manufacturer == "SLF"
     assert device.configuration_url == SLF_DATA_SERVICE_URL
+
+    # The elevation sensor is static and always shows 1791.
+    elev_id = _snow_entity_id(hass, "elevation")
+    assert elev_id is not None
+    assert elev_id == "sensor.vorderstocken_elevation"
+    elev_state = hass.states.get(elev_id)
+    assert elev_state is not None
+    assert float(elev_state.state) == 1791.0
+    assert elev_state.attributes["attribution"] == ATTRIBUTION_SLF
 
     # The snow-height sensor reads the measured HS (1.0 cm) with SLF attribution.
     snow_id = _snow_entity_id(hass, "snow_height")
     assert snow_id is not None
+    assert snow_id == "sensor.vorderstocken_snow_height"
     snow_state = hass.states.get(snow_id)
     assert snow_state is not None
     assert float(snow_state.state) == 1.0
@@ -729,8 +740,8 @@ def _imis_entry(
 # ---------------------------------------------------------------------------
 
 
-_SNOW_HEIGHT = "sensor.vorderstocken_1791_m_snow_height"
-_NEW_SNOW = "sensor.vorderstocken_1791_m_new_snow_24_h_modelled"
+_SNOW_HEIGHT = "sensor.vorderstocken_snow_height"
+_NEW_SNOW = "sensor.vorderstocken_new_snow_24_h_modelled"
 _NO_DATA_BODY = b'{"code": "NO_DATA"}'
 _COORD_LATEST = (
     "custom_components.meteoswiss_weather.coordinator.fetch_imis_latest"
@@ -1044,3 +1055,49 @@ async def test_non_snow_value_held_through_outage(
     assert float(held.state) == 5.118
     assert held.attributes["placeholder"] is False
     assert held.attributes["measured_at"] == _STH2_MEASURED_AT
+
+
+# ---------------------------------------------------------------------------
+# Elevation sensor (#206): static, always available, entity id without elevation
+# ---------------------------------------------------------------------------
+
+
+async def test_elevation_sensor_value_and_entity_id(
+    hass: HomeAssistant,
+    mock_slf: AiohttpClientMocker,
+) -> None:
+    """Elevation sensor shows 1791 for STH2; entity id has no elevation suffix."""
+    entry = _snow_station_entry("STH2")
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    elev_id = _snow_entity_id(hass, "elevation")
+    assert elev_id == "sensor.vorderstocken_elevation"
+    state = hass.states.get(elev_id)
+    assert state is not None
+    assert float(state.state) == 1791.0
+    assert state.attributes["attribution"] == ATTRIBUTION_SLF
+    # No placeholder/measured_at attributes on the static elevation sensor.
+    assert "placeholder" not in state.attributes
+    assert "measured_at" not in state.attributes
+
+
+async def test_elevation_sensor_stays_available_during_no_data(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """Elevation sensor stays at 1791 when the station delivers NO_DATA."""
+    aioclient_mock.get(measurements_url("STH2"), status=404, content=_NO_DATA_BODY)
+    aioclient_mock.get(DAILY_SNOW_URL, content=b"[]")
+
+    entry = _snow_station_entry("STH2")
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    elev_id = _snow_entity_id(hass, "elevation")
+    assert elev_id is not None
+    state = hass.states.get(elev_id)
+    assert state is not None
+    assert float(state.state) == 1791.0

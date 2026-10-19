@@ -791,6 +791,15 @@ async def async_setup_entry(
     ])
 
 
+_IMIS_ELEVATION_DESCRIPTION = SensorEntityDescription(
+    key="elevation",
+    translation_key="elevation",
+    native_unit_of_measurement=UnitOfLength.METERS,
+    device_class=SensorDeviceClass.DISTANCE,
+    suggested_display_precision=0,
+)
+
+
 def _async_setup_snow_station(
     runtime: SnowStationRuntimeData,
     async_add_entities: AddEntitiesCallback,
@@ -798,22 +807,36 @@ def _async_setup_snow_station(
     """Set up the SLF IMIS snow sensors for a snow-station entry (ADR-0011).
 
     The sensors live on a device of the station itself: identifiers
-    ``(DOMAIN, "imis-<code>")``, name ``"<name> (<elevation> m)"``, manufacturer
-    SLF, linking back to the SLF data service. Their unique ids are
-    ``"imis-<code>_<key>"``. No MeteoSwiss device or sensor is created.
+    ``(DOMAIN, "imis-<code>")``, name is the station label, model carries the
+    elevation, manufacturer SLF, linking back to the SLF data service. Their
+    unique ids are ``"imis-<code>_<key>"``. No MeteoSwiss device or sensor is
+    created.
     """
     code = runtime.imis_station_code
     device_unique_id = f"imis-{code}"
     elevation = runtime.imis_station_elevation
     name = runtime.imis_station_name
-    device_name = f"{name} ({int(elevation)} m)" if elevation is not None else name
+    model = (
+        f"IMIS snow station, {int(elevation)} m"
+        if elevation is not None
+        else "IMIS snow station"
+    )
     device_info = DeviceInfo(
         identifiers={(DOMAIN, device_unique_id)},
-        name=device_name,
+        name=name,
+        model=model,
         manufacturer="SLF",
         entry_type=DeviceEntryType.SERVICE,
         configuration_url=SLF_DATA_SERVICE_URL,
     )
+    if elevation is not None:
+        async_add_entities([
+            ImisElevationSensor(
+                device_unique_id,
+                device_info,
+                elevation,
+            )
+        ])
     async_add_entities(
         ImisSnowSensor(
             runtime.imis_coordinator,
@@ -1309,3 +1332,26 @@ class ImisSnowSensor(CoordinatorEntity[ImisCoordinator], RestoreSensor):
         attributes["placeholder"] = placeholder
         attributes["measured_at"] = None if placeholder else self._held_measured_at
         return attributes
+
+
+class ImisElevationSensor(SensorEntity):
+    """Static elevation of the SLF IMIS snow station (ADR-0011, #206).
+
+    The value is taken from the config entry data and never changes, so the
+    sensor is always available even when the station is silent.
+    """
+
+    _attr_has_entity_name = True
+    _attr_attribution = ATTRIBUTION_SLF
+    _attr_should_poll = False
+
+    def __init__(
+        self,
+        device_unique_id: str,
+        device_info: DeviceInfo,
+        elevation: float,
+    ) -> None:
+        self.entity_description = _IMIS_ELEVATION_DESCRIPTION
+        self._attr_unique_id = f"{device_unique_id}_elevation"
+        self._attr_device_info = device_info
+        self._attr_native_value = elevation
