@@ -389,7 +389,7 @@ exist.
 | `jww003i0` | **weather symbol** (MeteoSwiss icon code, day/night variants) |
 | `fu3010h0` | wind speed km/h; `fu3010h1` gust; `fu3q10h0` / `fu3q90h0` wind-speed 10 % / 90 % percentiles; `fu3q10h1` / `fu3q90h1` gust 10 % / 90 % percentiles |
 | `dkl010h0` | wind direction ° |
-| `sre000h0` | sunshine duration |
+| `sre000h0` | sunshine duration, minutes per hour (0–60); daily block since ADR-0010 |
 | `gre000h0`, `ods000h0` | global / diffuse radiation |
 | `nprohihs`, `npromths`, `nprolohs` | high / mid / low cloud cover (%; fraction 0–1 since 2026-08-31, scaled ×100 by the integration — issue #97) |
 | `zprfr0hs` | zero-degree level |
@@ -424,6 +424,33 @@ minimum / total 00:00 – 24:00 local time". They are the same quantity as the
 `d`/`0`-variants on the local-day boundary, and — unlike the `d`/`0` files —
 they cover every point type. The `d`/`0` daily files are **station-only**, so
 using them for the default postal-code point yields no temperatures at all.
+
+### Sunshine duration (`sre000h0`) — measured 2026-10-19 (ADR-0010)
+
+Run `202610190800`, full file downloaded once:
+
+- 30.0 MB, **point-major**: 5818 points × 219 rows, each point's rows
+  contiguous (~5 KB block), so it is fetched as a daily point block like the
+  wind files, not as a date-major prefix.
+- Header `point_id;point_type_id;Date;sre000h0`; integer **minutes of
+  sunshine per hour**, 0–60; no empty cells in the whole file.
+- First row 22:00 UTC of the previous day (local midnight), last row 219 h
+  later: the current local day is complete, the last local day of the run is
+  partial (1–2 rows) and gets no daily total.
+- **No daily sunshine parameter exists**; the daily value is the sum over the
+  local calendar day. Köniz (309800/2) totals from this run: 19.10. 203,
+  20.10. 71, 21.10. 4, 22.10. 452, 23.10. 81, 24.10. 145, 25.10. 43 (25-hour
+  DST day), 26.10. 318, 27.10. 528 min.
+- **Start or end of the hour is not settled.** Across all points on 27.10.
+  the latest non-zero hour is 17:00 UTC (35 min) and the earliest 06:00 UTC
+  (15 min); after sunset and before sunrise respectively under either reading,
+  so the values are model output, not astronomically clipped. Daily totals
+  are identical under both readings because the hours around midnight are 0.
+  The integration stamps the hourly entry with `Date`, like every other
+  hourly parameter.
+- Type-3 point ids in the live file start at 435; the fixture
+  `vnut12.lssw.202610190800.sre000h0.csv` keeps 48 real rows each of
+  1/1, 309800/2 and 435/3.
 
 The symbol codes must be mapped to Home Assistant conditions
 (`sunny`, `partlycloudy`, `rainy`, `snowy`, `lightning-rainy`, …). The
