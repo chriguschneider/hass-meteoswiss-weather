@@ -20,10 +20,12 @@ from aioresponses import aioresponses
 from custom_components.meteoswiss_weather.ogd.http import CachedResponse
 from custom_components.meteoswiss_weather.slf import (
     ImisDailySnow,
+    ImisNoDataError,
     ImisStation,
     SlfConnectionError,
     SlfParseError,
     fetch_imis_daily_snow,
+    fetch_imis_daily_snow_codes,
     fetch_imis_latest,
     fetch_imis_stations,
     nearest_snow_stations,
@@ -290,3 +292,105 @@ async def test_fetch_daily_snow_304_keeps_cached_body(session) -> None:
         result = await fetch_imis_daily_snow(session, "STH2", cache=cached)
     assert isinstance(result, ImisDailySnow)
     assert result.date == date(2026, 10, 18)
+
+
+# ---------------------------------------------------------------------------
+# ImisNoDataError: 404 + NO_DATA body (ADR-0009 amendment, issue #186)
+# ---------------------------------------------------------------------------
+
+_NO_DATA_BODY = b'{"code":"NO_DATA","title":"Not found","status":404}'
+
+
+@pytest.mark.asyncio
+async def test_fetch_latest_404_no_data_body_raises_imis_no_data_error(
+    session,
+) -> None:
+    """HTTP 404 with a NO_DATA body raises ImisNoDataError."""
+    url = measurements_url("SCH2")
+    with aioresponses() as mock:
+        mock.get(url, status=404, body=_NO_DATA_BODY)
+        with pytest.raises(ImisNoDataError):
+            await fetch_imis_latest(session, "SCH2")
+
+
+@pytest.mark.asyncio
+async def test_fetch_latest_404_no_data_is_subclass_of_connection_error(
+    session,
+) -> None:
+    """ImisNoDataError is caught by except SlfConnectionError (subclass)."""
+    url = measurements_url("SCH2")
+    with aioresponses() as mock:
+        mock.get(url, status=404, body=_NO_DATA_BODY)
+        with pytest.raises(SlfConnectionError):
+            await fetch_imis_latest(session, "SCH2")
+
+
+@pytest.mark.asyncio
+async def test_fetch_latest_404_without_no_data_body_raises_connection_error(
+    session,
+) -> None:
+    """HTTP 404 without NO_DATA body raises SlfConnectionError, not ImisNoDataError."""
+    url = measurements_url("SCH2")
+    with aioresponses() as mock:
+        mock.get(url, status=404, body=b'{"error": "not found"}')
+        exc = None
+        try:
+            await fetch_imis_latest(session, "SCH2")
+        except SlfConnectionError as e:
+            exc = e
+        assert exc is not None
+        assert not isinstance(exc, ImisNoDataError)
+
+
+@pytest.mark.asyncio
+async def test_fetch_latest_404_empty_body_raises_connection_error(
+    session,
+) -> None:
+    """HTTP 404 with a non-JSON body raises SlfConnectionError (not ImisNoDataError)."""
+    url = measurements_url("SCH2")
+    with aioresponses() as mock:
+        mock.get(url, status=404, body=b"Not Found")
+        exc = None
+        try:
+            await fetch_imis_latest(session, "SCH2")
+        except SlfConnectionError as e:
+            exc = e
+        assert exc is not None
+        assert not isinstance(exc, ImisNoDataError)
+
+
+# ---------------------------------------------------------------------------
+# fetch_imis_daily_snow_codes (ADR-0009 amendment, issue #186)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_daily_snow_codes_returns_present_codes(session) -> None:
+    """Returns the set of station codes with a row in the fixture."""
+    with aioresponses() as mock:
+        mock.get(DAILY_SNOW_URL, body=_fixture_bytes("slf-imis_daily-snow.json"))
+        codes = await fetch_imis_daily_snow_codes(session)
+    # BOG4, CSL2, DAV2, JAU2, SHE2, STH2 are in the fixture; SCH2 is absent.
+    assert "STH2" in codes
+    assert "CSL2" in codes
+    assert "SCH2" not in codes
+
+
+@pytest.mark.asyncio
+async def test_fetch_daily_snow_codes_excludes_absent_station(session) -> None:
+    """SCH2 has no row in the fixture so it is absent from the returned set."""
+    with aioresponses() as mock:
+        mock.get(DAILY_SNOW_URL, body=_fixture_bytes("slf-imis_daily-snow.json"))
+        codes = await fetch_imis_daily_snow_codes(session)
+    assert "SCH2" not in codes
+
+
+@pytest.mark.asyncio
+async def test_fetch_daily_snow_codes_connection_error(session) -> None:
+    """A network error raises SlfConnectionError."""
+    with aioresponses() as mock:
+        mock.get(
+            DAILY_SNOW_URL, exception=aiohttp.ClientConnectionError("down")
+        )
+        with pytest.raises(SlfConnectionError):
+            await fetch_imis_daily_snow_codes(session)

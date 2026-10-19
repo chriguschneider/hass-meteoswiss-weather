@@ -14,15 +14,63 @@ from datetime import UTC, datetime
 import aiohttp
 
 from ..ogd.geo import haversine_km
-from ..ogd.http import CachedResponse, get_text
+from ..ogd.http import DEFAULT_TIMEOUT, CachedResponse, get_text
 from .const import DAILY_SNOW_URL, SNOW_FLAT, STATIONS_URL, measurements_url
 from .models import (
     ImisDailySnow,
     ImisMeasurement,
+    ImisNoDataError,
     ImisStation,
     SlfConnectionError,
     SlfParseError,
 )
+
+
+async def _fetch_imis_text(
+    session: aiohttp.ClientSession,
+    url: str,
+    *,
+    cache: CachedResponse | None = None,
+) -> CachedResponse:
+    """Fetch one SLF IMIS URL, raising ImisNoDataError on 404+NO_DATA body.
+
+    Mirrors the behaviour of ``ogd.http.get_text`` but inspects the body of
+    a 404 response: if the JSON body carries ``"code": "NO_DATA"`` the
+    station is temporarily silent (ADR-0009 amendment); any other 404 and
+    all other non-200/304 statuses raise SlfConnectionError as before.
+    """
+    headers: dict[str, str] = {}
+    if cache is not None and cache.etag:
+        headers["If-None-Match"] = cache.etag
+    try:
+        async with session.get(url, headers=headers, timeout=DEFAULT_TIMEOUT) as resp:
+            if cache is not None and resp.status == 304:
+                return cache
+            if resp.status == 404:
+                raw = await resp.read()
+                try:
+                    body_json = json.loads(raw.decode("utf-8", errors="replace"))
+                except ValueError:
+                    body_json = {}
+                if isinstance(body_json, dict) and body_json.get("code") == "NO_DATA":
+                    raise ImisNoDataError(
+                        f"station at {url!r} has no data in the last 7 days"
+                    )
+                raise SlfConnectionError(f"GET {url} returned HTTP 404")
+            if resp.status != 200:
+                raise SlfConnectionError(f"GET {url} returned HTTP {resp.status}")
+            raw = await resp.read()
+            body = raw.decode("utf-8", errors="replace")
+            etag = resp.headers.get("ETag")
+    except (ImisNoDataError, SlfConnectionError):
+        raise
+    except aiohttp.ClientError as err:
+        raise SlfConnectionError(f"GET {url} failed: {err}") from err
+    if cache is not None:
+        cache.body = body
+        cache.etag = etag
+        return cache
+    return CachedResponse(body=body, etag=etag)
 
 
 def _opt_float(value: object) -> float | None:
@@ -115,11 +163,15 @@ async def fetch_imis_latest(
     ``cache`` carries the ``ETag`` from the previous call so an unchanged
     response costs only a 304. An empty measurement list raises
     :class:`SlfParseError`. An unknown station code raises
-    :class:`SlfConnectionError` (the API returns HTTP 400).
+    :class:`SlfConnectionError` (the API returns HTTP 400). A temporarily
+    silent station (HTTP 404 with ``NO_DATA`` body) raises
+    :class:`ImisNoDataError`.
     """
     url = measurements_url(code)
     try:
-        result = await get_text(session, url, cache=cache)
+        result = await _fetch_imis_text(session, url, cache=cache)
+    except (ImisNoDataError, SlfConnectionError):
+        raise
     except Exception as exc:
         raise SlfConnectionError(
             f"fetch IMIS measurements for {code!r} failed: {exc}"
@@ -162,3 +214,23 @@ async def fetch_imis_daily_snow(
         return None
     except (ValueError, KeyError, TypeError) as exc:
         raise SlfParseError(f"IMIS daily-snow parse failed: {exc}") from exc
+
+
+async def fetch_imis_daily_snow_codes(
+    session: aiohttp.ClientSession,
+) -> set[str]:
+    """Return the set of station codes that have a row in /daily-snow.
+
+    A ``SNOW_FLAT`` station absent from this set is currently without data
+    (ADR-0009 amendment, issue #186). One uncached ~10 KB request per call;
+    used only in the config-flow station picker, not polled.
+    """
+    try:
+        result = await get_text(session, DAILY_SNOW_URL)
+    except Exception as exc:
+        raise SlfConnectionError(f"fetch IMIS daily snow codes failed: {exc}") from exc
+    try:
+        rows = json.loads(result.body)
+        return {row["station_code"] for row in rows if row.get("station_code")}
+    except (ValueError, KeyError, TypeError) as exc:
+        raise SlfParseError(f"IMIS daily-snow codes parse failed: {exc}") from exc

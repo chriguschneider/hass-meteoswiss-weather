@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from .client import (
     fetch_imis_daily_snow,
+    fetch_imis_daily_snow_codes,
     fetch_imis_latest,
     fetch_imis_stations,
     nearest_snow_stations,
@@ -16,6 +17,7 @@ from .client import (
 from .models import (
     ImisDailySnow,
     ImisMeasurement,
+    ImisNoDataError,
     ImisStation,
     SlfConnectionError,
     SlfError,
@@ -25,11 +27,13 @@ from .models import (
 __all__ = [
     "ImisDailySnow",
     "ImisMeasurement",
+    "ImisNoDataError",
     "ImisStation",
     "SlfConnectionError",
     "SlfError",
     "SlfParseError",
     "fetch_imis_daily_snow",
+    "fetch_imis_daily_snow_codes",
     "fetch_imis_latest",
     "fetch_imis_stations",
     "nearest_snow_stations",
