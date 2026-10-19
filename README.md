@@ -56,6 +56,7 @@ what you get:
 | **Clouds and uncertainty** *(options)* | total cloud cover plus the high, mid and low layers; the 10–90 % band of the temperature forecast |
 | **Right now** | up to 21 sensors from the nearest SwissMetNet station, every 10 minutes: temperature, humidity, three pressures, wind, gusts, rain, sunshine, three kinds of radiation, snow depth, wind chill, ground and soil temperatures |
 | **Better rain readings** | optionally from the nearest station of the denser precipitation network |
+| **Snow at altitude** *(option)* | measured snow height and modelled new snow from the nearest SLF IMIS mountain study plot (off-piste, near 0 in summer) |
 | **Mountains** | 631 summits, passes and ski resorts as well as every postal code, and as many places as you like |
 | **Pollen** *(option)* | grass, birch, alder, hazel, beech, ash and oak from the nearest of the 15 automatic pollen stations |
 | **Your graphs reach back** | one service imports the station's official history into Home Assistant's statistics, back to 1980 |
@@ -274,6 +275,23 @@ station measures.
 | Oak pollen | off |
 
 All in grains/m³.
+
+</details>
+
+<details>
+<summary><b>Snow sensors (opt-in, SLF IMIS)</b></summary>
+
+Opt-in when you pick a snow station in the setup/reconfigure step. Fed by the
+SLF IMIS network (WSL Institute for Snow and Avalanche Research), a second
+official open-data upstream. Both carry the attribution
+`Source: WSL Institute for Snow and Avalanche Research SLF` and a `station`
+attribute (plus `elevation`). This is snow height at altitude on a flat study
+plot off-piste — **not** the lifts' piste snow depth — and near 0 in summer.
+
+| Sensor | Description | Unit | Default |
+|---|---|---|---|
+| Snow height | Measured snow height (`HS`) on the station's flat study plot | cm | on |
+| New snow 24 h (modelled) | SNOWPACK-modelled new snow over the last 24 h (`HN_1D`) | cm | on |
 
 </details>
 

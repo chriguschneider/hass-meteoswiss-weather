@@ -41,8 +41,13 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from . import MeteoSwissConfigEntry
-from .const import ATTRIBUTION, DOMAIN
-from .coordinator import ForecastCoordinator, PollenCoordinator, StationCoordinator
+from .const import ATTRIBUTION, ATTRIBUTION_SLF, DOMAIN
+from .coordinator import (
+    ForecastCoordinator,
+    ImisCoordinator,
+    PollenCoordinator,
+    StationCoordinator,
+)
 from .ogd import DailyForecast, Observation, PollenObservation
 from .ogd.const import HOURLY_ZERO_DEGREE
 
@@ -436,6 +441,51 @@ _POLLEN_SENSORS: tuple[PollenSensorDescription, ...] = (
 )
 
 
+# SLF IMIS snow sensors (ADR-0009, #174): only created when an IMIS station is
+# configured. Both read from the ImisCoordinator and carry the SLF attribution
+# (not the MeteoSwiss one) plus ``station`` and ``elevation`` attributes.
+@dataclass(frozen=True, slots=True)
+class ImisSensorDescription(SensorEntityDescription):
+    """SensorEntityDescription for an IMIS snow value.
+
+    ``data_attr`` is the attribute on :class:`~coordinator.ImisData` (either
+    ``measurement`` or ``daily_snow``); ``field`` is the value attribute on that
+    object.
+    """
+
+    data_attr: str = ""
+    field: str = ""
+
+
+_IMIS_SENSORS: tuple[ImisSensorDescription, ...] = (
+    # Measured snow height on the flat study plot (``HS``). Enabled by default.
+    ImisSensorDescription(
+        key="snow_height",
+        translation_key="snow_height",
+        data_attr="measurement",
+        field="snow_height_cm",
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement=UnitOfLength.CENTIMETERS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        icon="mdi:snowflake",
+    ),
+    # SNOWPACK-modelled new snow over the last 24 h (``HN_1D``). The name says it
+    # is modelled; enabled by default.
+    ImisSensorDescription(
+        key="new_snow_24h",
+        translation_key="new_snow_24h",
+        data_attr="daily_snow",
+        field="new_snow_24h_cm",
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement=UnitOfLength.CENTIMETERS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        icon="mdi:snowflake",
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: MeteoSwissConfigEntry,
@@ -492,6 +542,13 @@ async def async_setup_entry(
         # is excluded from ``supported``, so keep its id in the valid set.
         if precip_coordinator is not None:
             valid_unique_ids.add(f"{device_unique_id}_precipitation")
+        # The IMIS snow sensors (ADR-0009) are backed by their own coordinator,
+        # not the station inventory, so keep their ids in the valid set when an
+        # IMIS station is configured — otherwise the cleanup would remove them.
+        if runtime.imis_coordinator is not None:
+            valid_unique_ids |= {
+                f"{device_unique_id}_{desc.key}" for desc in _IMIS_SENSORS
+            }
         sensor_uid_prefix = f"{device_unique_id}_"
         entity_reg = er.async_get(hass)
         for entity_entry in er.async_entries_for_config_entry(
@@ -564,6 +621,19 @@ async def async_setup_entry(
             device_unique_id, device_info,
         ),
     ])
+    # SLF IMIS snow sensors (ADR-0009, #174): only when an IMIS station is set.
+    if runtime.imis_coordinator is not None:
+        async_add_entities(
+            ImisSnowSensor(
+                runtime.imis_coordinator,
+                description,
+                device_unique_id,
+                device_info,
+                station_name=runtime.imis_station_name,
+                elevation=runtime.imis_station_elevation,
+            )
+            for description in _IMIS_SENSORS
+        )
 
 
 class MeteoSwissSensor(CoordinatorEntity[StationCoordinator], SensorEntity):
@@ -925,3 +995,49 @@ class RequestsTodaySensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
         if traffic.reset_date != today:
             return 0
         return traffic.requests_today
+
+
+class ImisSnowSensor(CoordinatorEntity[ImisCoordinator], SensorEntity):
+    """One snow value from the configured SLF IMIS station (ADR-0009, #174).
+
+    Snow height is measured on a flat study plot; new snow is SNOWPACK-modelled.
+    Both carry the SLF attribution (not the MeteoSwiss one) and expose a
+    ``station`` attribute naming the IMIS station plus its ``elevation`` in m, so
+    a dashboard shows where the value comes from and at what altitude. ``None``
+    (the upstream field was null, or the row is absent) surfaces as ``unknown``.
+    """
+
+    _attr_has_entity_name = True
+    _attr_attribution = ATTRIBUTION_SLF
+
+    def __init__(
+        self,
+        coordinator: ImisCoordinator,
+        description: ImisSensorDescription,
+        device_unique_id: str,
+        device_info: DeviceInfo,
+        *,
+        station_name: str,
+        elevation: float | None,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._data_attr = description.data_attr
+        self._field = description.field
+        self._attr_unique_id = f"{device_unique_id}_{description.key}"
+        self._attr_device_info = device_info
+        attributes: dict[str, str | float] = {"station": station_name}
+        if elevation is not None:
+            attributes["elevation"] = elevation
+        self._attr_extra_state_attributes = attributes
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the snow value, or ``None`` (→ ``unknown``) when missing."""
+        data = self.coordinator.data
+        if data is None:
+            return None
+        source = getattr(data, self._data_attr, None)
+        if source is None:
+            return None
+        return getattr(source, self._field, None)

@@ -65,6 +65,7 @@ from .const import (
     HOURLY_NEAR_HORIZON_DAYS,
     HOURLY_NEAR_MAX_AGE,
     HOURLY_POINT_MAJOR_MAX_AGE,
+    IMIS_UPDATE_INTERVAL,
     POLLEN_UPDATE_INTERVAL,
     STATION_UPDATE_INTERVAL,
 )
@@ -94,6 +95,14 @@ from .ogd.const import (
     HOURLY_ZERO_DEGREE,
 )
 from .ogd.forecast import HOURLY_FIELD_BY_PARAM
+from .slf import (
+    ImisDailySnow,
+    ImisMeasurement,
+    SlfConnectionError,
+    SlfParseError,
+    fetch_imis_daily_snow,
+    fetch_imis_latest,
+)
 from .store import ForecastStore
 
 # Issue IDs used in the HA repair-issue registry.
@@ -101,6 +110,7 @@ _ISSUE_STATION_PARSE = "parse_error_station"
 _ISSUE_PRECIP_PARSE = "parse_error_precip"
 _ISSUE_FORECAST_PARSE = "parse_error_forecast"
 _ISSUE_POLLEN_PARSE = "parse_error_pollen"
+_ISSUE_IMIS_PARSE = "parse_error_imis"
 # Prefix for per-parameter escalated-fetch repair issues (ADR-0008 section 5).
 # Full ID: f"{_ISSUE_ESCALATED_PREFIX}{param}".
 _ISSUE_ESCALATED_PREFIX = "forecast_fetch_escalated_"
@@ -1144,3 +1154,126 @@ class PollenCoordinator(DataUpdateCoordinator[PollenObservation]):
         async_delete_issue(self.hass, DOMAIN, _ISSUE_POLLEN_PARSE)
         self.last_success = dt_util.utcnow()
         return obs
+
+
+@dataclass(frozen=True, slots=True)
+class ImisData:
+    """The IMIS coordinator's payload (ADR-0009).
+
+    ``measurement`` is the newest 30-minute row (measured ``HS`` snow height and
+    the other fields the client keeps); ``daily_snow`` is the SNOWPACK-modelled
+    daily row (``HN_1D`` new snow over 24 h). Either may be ``None``: the daily
+    row is absent for some stations, and the measurement's own fields may be
+    ``null`` — a WIND station reports no snow height. ``None`` surfaces as
+    ``unknown``; the client never invents a value.
+    """
+
+    measurement: ImisMeasurement | None
+    daily_snow: ImisDailySnow | None
+
+
+class ImisCoordinator(DataUpdateCoordinator[ImisData]):
+    """Poll one SLF IMIS snow station (ADR-0009, #174).
+
+    Only created when the user picks an IMIS station in the config flow; without
+    one, no SLF request is ever made. Follows the precipitation station of
+    ADR-0006 in shape: a second upstream polled in its own coordinator, its
+    first refresh non-fatal so an unavailable opt-in station never blocks the
+    entry from loading.
+
+    Two endpoints of the pure ``slf`` client are used per the ADR cadence:
+
+    - the station's latest measurement every 30 minutes, conditional (an
+      unchanged ETag costs only a 304), keeping just the newest row;
+    - the SNOWPACK daily-snow row at most once per local day (and on the first
+      refresh), conditional, keeping just the configured station's row.
+
+    A failed daily fetch keeps the last value and must never fail the
+    measurement update (ADR-0009). A structural :class:`SlfParseError` posts the
+    ``parse_error_imis`` repair issue, cleared as soon as parsing succeeds again;
+    a measurement parse error also fails the update so the sensors go
+    unavailable, while a daily parse error only keeps the last value.
+    """
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        session: aiohttp.ClientSession,
+        code: str,
+        station_name: str,
+    ) -> None:
+        super().__init__(
+            hass,
+            _LOGGER,
+            config_entry=entry,
+            name=f"{code} IMIS snow",
+            update_interval=IMIS_UPDATE_INTERVAL,
+        )
+        self._session = session
+        self._code = code
+        self.station_name = station_name or code
+        # Separate conditional-request caches: the two endpoints have their own
+        # ETags, so one must not clobber the other.
+        self._measurement_cache = CachedResponse(body="")
+        self._daily_cache = CachedResponse(body="")
+        # Local date the daily-snow row was last fetched; ``None`` forces a fetch
+        # on the first refresh. Only advanced on a successful fetch so a failed
+        # day is retried on the next tick (ADR-0009: at most once per day).
+        self._daily_date: date | None = None
+        self._daily_snow: ImisDailySnow | None = None
+        # Timestamp of the last successful update; exposed for diagnostics.
+        self.last_success: datetime | None = None
+
+    async def _async_update_data(self) -> ImisData:
+        try:
+            measurement = await fetch_imis_latest(
+                self._session, self._code, cache=self._measurement_cache
+            )
+        except SlfParseError as err:
+            async_create_issue(
+                self.hass,
+                DOMAIN,
+                _ISSUE_IMIS_PARSE,
+                is_fixable=False,
+                severity=IssueSeverity.WARNING,
+                translation_key="parse_error_imis",
+            )
+            raise UpdateFailed(
+                f"IMIS {self._code} measurement parse failed: {err}"
+            ) from err
+        except SlfConnectionError as err:
+            raise UpdateFailed(
+                f"IMIS {self._code} measurement update failed: {err}"
+            ) from err
+
+        # Daily snow: at most once per local day (and on the first refresh). A
+        # failure keeps the last value and never fails the measurement update.
+        daily_parse_error = False
+        today = dt_util.now().date()
+        if self._daily_date != today:
+            try:
+                self._daily_snow = await fetch_imis_daily_snow(
+                    self._session, self._code, cache=self._daily_cache
+                )
+                self._daily_date = today
+            except SlfParseError as err:
+                daily_parse_error = True
+                async_create_issue(
+                    self.hass,
+                    DOMAIN,
+                    _ISSUE_IMIS_PARSE,
+                    is_fixable=False,
+                    severity=IssueSeverity.WARNING,
+                    translation_key="parse_error_imis",
+                )
+                _LOGGER.warning("IMIS %s daily-snow parse failed: %s", self._code, err)
+            except SlfConnectionError as err:
+                _LOGGER.warning("IMIS %s daily-snow fetch failed: %s", self._code, err)
+
+        # Clear the repair issue only when nothing failed structurally this tick;
+        # a daily parse error keeps it posted without failing the measurement.
+        if not daily_parse_error:
+            async_delete_issue(self.hass, DOMAIN, _ISSUE_IMIS_PARSE)
+        self.last_success = dt_util.utcnow()
+        return ImisData(measurement=measurement, daily_snow=self._daily_snow)

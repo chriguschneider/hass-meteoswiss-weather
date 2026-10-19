@@ -16,6 +16,10 @@
       "title": "MeteoSwiss: formato del file della stazione di precipitazione modificato",
       "description": "Il file di osservazione della stazione di precipitazione non è stato possibile analizzare. Il formato a monte potrebbe essere cambiato. Consultare `docs/ogd.md` nel repository dell'integrazione per il formato attuale e aprire un issue di deriva se il layout non corrisponde più."
     },
+    "parse_error_imis": {
+      "title": "SLF IMIS: formato della risposta della stazione di neve modificato",
+      "description": "La risposta della stazione di neve SLF IMIS non è stato possibile analizzare. Il formato a monte potrebbe essere cambiato. Consultare `docs/slf.md` nel repository dell'integrazione per il formato attuale e aprire un issue di deriva se non corrisponde più."
+    },
     "forecast_fetch_escalated": {
       "title": "Il file di previsione MeteoSwiss ha richiesto un download completo",
       "description": "Il file di previsione `{param}` ha richiesto un download completo o un grande prefisso (livello 3 o 4 della scala di recupero) in ognuno degli ultimi tre aggiornamenti. Ciò indica solitamente che MeteoSwiss ha riordinato le righe del file. L'ultimo recupero escalato è costato {bytes} byte. Aprire il dump diagnostico dell'integrazione per vedere il livello e il layout per parametro e consultare `docs/ogd.md` (\"How to read the fetch diagnostics\"). Il problema si cancellerà automaticamente non appena la scala di recupero troverà di nuovo una strategia economica."
@@ -48,6 +52,8 @@
       "precipitation_today": { "name": "Precipitazioni oggi" },
       "zero_degree_level": { "name": "Limite dello zero gradi" },
       "measurement_time": { "name": "Orario di misurazione" },
+      "snow_height": { "name": "Altezza neve" },
+      "new_snow_24h": { "name": "Neve fresca 24 h (modellata)" },
       "pollen_grasses": { "name": "Pollini di graminacee" },
       "pollen_birch": { "name": "Pollini di betulla" },
       "pollen_alder": { "name": "Pollini di ontano" },
@@ -100,10 +106,12 @@
         "description": "Scegli la stazione SwissMetNet per le condizioni attuali. La stazione più vicina è preselezionata.{radar_hint}",
         "data": {
           "station_abbr": "Stazione meteorologica",
-          "precip_station_abbr": "Stazione di precipitazione (facoltativa)"
+          "precip_station_abbr": "Stazione di precipitazione (facoltativa)",
+          "imis_station_code": "Stazione di neve (facoltativa)"
         },
         "data_description": {
-          "precip_station_abbr": "Le precipitazioni sono molto locali e SwissMetNet è rada. Scegli facoltativamente una stazione più vicina dalla rete automatica di misurazione delle precipitazioni; se impostata, ne viene letta solo la precipitazione attuale. Lascia \"None\" per usare la stazione principale."
+          "precip_station_abbr": "Le precipitazioni sono molto locali e SwissMetNet è rada. Scegli facoltativamente una stazione più vicina dalla rete automatica di misurazione delle precipitazioni; se impostata, ne viene letta solo la precipitazione attuale. Lascia \"None\" per usare la stazione principale.",
+          "imis_station_code": "Altezza della neve in quota dalla rete SLF IMIS (Istituto WSL per lo studio della neve e delle valanghe). È l'altezza della neve su un campo di misura pianeggiante fuori pista, non l'altezza della neve sulle piste degli impianti; vicina a 0 in estate. Vengono proposte le tre stazioni più vicine con quota e distanza; lascia \"None\" per non aggiungere alcuna stazione di neve."
         }
       },
       "reconfigure": {

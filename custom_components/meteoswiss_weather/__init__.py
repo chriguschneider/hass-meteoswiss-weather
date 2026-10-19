@@ -29,6 +29,9 @@ from .const import (
     CONF_HOURLY_FORECAST,
     CONF_HOURLY_HORIZON_DAYS,
     CONF_HOURLY_TEMP_PERCENTILES,
+    CONF_IMIS_STATION_CODE,
+    CONF_IMIS_STATION_ELEVATION,
+    CONF_IMIS_STATION_NAME,
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
@@ -47,6 +50,7 @@ from .const import (
 )
 from .coordinator import (
     ForecastCoordinator,
+    ImisCoordinator,
     PollenCoordinator,
     PrecipStationCoordinator,
     StationCoordinator,
@@ -112,6 +116,13 @@ class MeteoSwissRuntimeData:
     # entity's current precipitation read from it instead of the main station.
     precip_coordinator: PrecipStationCoordinator | None
     precip_station_name: str
+    # Optional SLF IMIS snow station (ADR-0009, #174): ``None`` unless the user
+    # picked one. When set, the snow-height and new-snow sensors read from it and
+    # a second upstream (``measurement-api.slf.ch``) is polled. ``elevation`` is
+    # the station's height in m, exposed as a sensor attribute.
+    imis_coordinator: ImisCoordinator | None
+    imis_station_name: str
+    imis_station_elevation: float | None
 
 
 type MeteoSwissConfigEntry = ConfigEntry[MeteoSwissRuntimeData]
@@ -243,6 +254,23 @@ async def async_setup_entry(
         )
         await precip_coordinator.async_refresh()
 
+    # Optional SLF IMIS snow station (ADR-0009, #174): a second upstream polled
+    # in its own coordinator, only when the user picked a station. No SLF request
+    # is made at all when unset. Non-fatal first refresh like pollen/precip — an
+    # unavailable opt-in station must not block the whole entry from loading.
+    imis_coordinator: ImisCoordinator | None = None
+    imis_code = str(entry.data.get(CONF_IMIS_STATION_CODE, ""))
+    imis_name = str(entry.data.get(CONF_IMIS_STATION_NAME, ""))
+    imis_elevation_raw = entry.data.get(CONF_IMIS_STATION_ELEVATION)
+    imis_elevation = (
+        float(imis_elevation_raw) if imis_elevation_raw is not None else None
+    )
+    if imis_code:
+        imis_coordinator = ImisCoordinator(
+            hass, entry, session, imis_code, imis_name or imis_code
+        )
+        await imis_coordinator.async_refresh()
+
     entry.runtime_data = MeteoSwissRuntimeData(
         station_coordinator=station_coordinator,
         forecast_coordinator=forecast_coordinator,
@@ -254,6 +282,9 @@ async def async_setup_entry(
         pollen_inventory=pollen_inventory,
         precip_coordinator=precip_coordinator,
         precip_station_name=precip_name or precip_abbr,
+        imis_coordinator=imis_coordinator,
+        imis_station_name=imis_name or imis_code,
+        imis_station_elevation=imis_elevation,
     )
 
     # An options change (the hourly-forecast toggle) reloads the entry so the

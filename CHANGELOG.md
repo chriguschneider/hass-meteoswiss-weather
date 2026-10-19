@@ -16,6 +16,17 @@ using the matching section below as release notes.
   picker, latest 30-minute measurement, and SNOWPACK-modelled daily snow.
   No Home Assistant wiring yet (coordinator/entities follow in a later issue);
   `SLF_API_BASE` added to `const.py`.
+- **Optional snow station (SLF IMIS)** (ADR-0009, #174). The setup and
+  reconfigure station step now offers an optional snow station — the three
+  nearest SLF IMIS flat-field stations, labelled with elevation and distance,
+  **none selected by default**. When picked, two sensors appear on the entry's
+  device: **Snow height** (measured `HS`) and **New snow 24 h (modelled)**
+  (`HN_1D`, SNOWPACK-modelled), both attributed to the WSL Institute for Snow
+  and Avalanche Research SLF with a `station`/`elevation` attribute. A dedicated
+  coordinator polls the station's latest measurement every 30 minutes and the
+  modelled daily snow at most once a day, conditionally; **no SLF request is
+  made when no snow station is configured**. A failing SLF fetch leaves the snow
+  sensors unavailable and never affects the MeteoSwiss entities.
 
 ## [v0.4.2] — 2026-10-14
 

@@ -16,6 +16,10 @@
       "title": "Le format du fichier de la station de précipitations MeteoSwiss a changé",
       "description": "Le fichier d'observation de la station de précipitations n'a pas pu être analysé. Le format des données source a peut-être changé. Consultez `docs/ogd.md` dans le dépôt de l'intégration pour le format actuel et ouvrez un ticket de dérive si la structure ne correspond plus."
     },
+    "parse_error_imis": {
+      "title": "Le format de la réponse de la station de neige SLF IMIS a changé",
+      "description": "La réponse de la station de neige SLF IMIS n'a pas pu être analysée. Le format des données source a peut-être changé. Consultez `docs/slf.md` dans le dépôt de l'intégration pour le format actuel et ouvrez un ticket de dérive s'il ne correspond plus."
+    },
     "forecast_fetch_escalated": {
       "title": "Le fichier de prévisions MeteoSwiss a nécessité un téléchargement complet",
       "description": "Le fichier de prévisions `{param}` a nécessité un téléchargement complet ou un grand préfixe (niveau 3 ou 4 de l'échelle de récupération) lors de chacune des trois dernières actualisations. Cela indique généralement que MeteoSwiss a réorganisé l'ordre des lignes du fichier. Le dernier téléchargement escaladé a coûté {bytes} octets. Ouvrez le dump de diagnostic de l'intégration pour voir le niveau et la structure par paramètre, et consultez `docs/ogd.md` (\"How to read the fetch diagnostics\"). L'issue sera effacée automatiquement dès que l'échelle trouvera à nouveau une stratégie économique."
@@ -48,6 +52,8 @@
       "precipitation_today": { "name": "Précipitations aujourd'hui" },
       "zero_degree_level": { "name": "Limite du zéro degré" },
       "measurement_time": { "name": "Heure de mesure" },
+      "snow_height": { "name": "Hauteur de neige" },
+      "new_snow_24h": { "name": "Neige fraîche 24 h (modélisée)" },
       "pollen_grasses": { "name": "Pollen de graminées" },
       "pollen_birch": { "name": "Pollen de bouleau" },
       "pollen_alder": { "name": "Pollen d'aulne" },
@@ -100,10 +106,12 @@
         "description": "Choisissez la station SwissMetNet pour les conditions actuelles. La station la plus proche est présélectionnée.{radar_hint}",
         "data": {
           "station_abbr": "Station météorologique",
-          "precip_station_abbr": "Station de précipitations (facultatif)"
+          "precip_station_abbr": "Station de précipitations (facultatif)",
+          "imis_station_code": "Station de neige (facultatif)"
         },
         "data_description": {
-          "precip_station_abbr": "Les précipitations sont très locales et SwissMetNet est clairsemé. Choisissez éventuellement une station plus proche dans le réseau automatique de mesure des précipitations ; si elle est définie, seules les précipitations actuelles en sont lues. Laissez « None » pour utiliser la station principale."
+          "precip_station_abbr": "Les précipitations sont très locales et SwissMetNet est clairsemé. Choisissez éventuellement une station plus proche dans le réseau automatique de mesure des précipitations ; si elle est définie, seules les précipitations actuelles en sont lues. Laissez « None » pour utiliser la station principale.",
+          "imis_station_code": "Hauteur de neige en altitude depuis le réseau SLF IMIS (Institut WSL pour l'étude de la neige et des avalanches). Il s'agit de la hauteur de neige sur un champ de mesure plat hors-piste, et non de la hauteur de neige des pistes de ski ; proche de 0 en été. Les trois stations les plus proches sont proposées avec altitude et distance ; laissez « None » pour n'ajouter aucune station de neige."
         }
       },
       "reconfigure": {

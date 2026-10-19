@@ -10,6 +10,10 @@ VERSION = "0.4.2"
 # Required by the CC BY 4.0 terms of the MeteoSwiss open data.
 ATTRIBUTION = "Source: MeteoSwiss"
 
+# Attribution required by the CC BY 4.0 terms of the SLF IMIS open data
+# (ADR-0009). Used by the optional snow sensors fed from the SLF upstream.
+ATTRIBUTION_SLF = "Source: WSL Institute for Snow and Avalanche Research SLF"
+
 # Config-entry data keys stored by the config flow.
 CONF_POSTAL_CODE = "postal_code"
 CONF_POINT_ID = "point_id"
@@ -24,6 +28,15 @@ CONF_STATION_NAME = "station_name"
 # precipitation sensor reads from this station instead.
 CONF_PRECIP_STATION_ABBR = "precip_station_abbr"
 CONF_PRECIP_STATION_NAME = "precip_station_name"
+
+# Optional SLF IMIS snow station (ADR-0009, #174). Empty/absent means the
+# feature is off — no SLF request is made at all. When set, a second upstream
+# (``measurement-api.slf.ch``) is polled for snow height and modelled new snow.
+# The elevation is stored alongside so the snow sensors can expose it without a
+# further station-list fetch (the list is only read during the config flow).
+CONF_IMIS_STATION_CODE = "imis_station_code"
+CONF_IMIS_STATION_NAME = "imis_station_name"
+CONF_IMIS_STATION_ELEVATION = "imis_station_elevation"
 
 # Reconfigure flow (A9, #52): what to do with the recorded station history when
 # the station changes. ``keep`` leaves values and statistics untouched and logs
@@ -86,6 +99,12 @@ STATION_UPDATE_INTERVAL = timedelta(minutes=10)
 # The local forecast is republished hourly; the coordinator checks the run
 # stamp each hour and only downloads when it changed.
 FORECAST_CHECK_INTERVAL = timedelta(hours=1)
+
+# SLF IMIS snow station (ADR-0009). The measurement endpoint carries 30-minute
+# values, so polling faster buys nothing; the request is conditional (304 on an
+# unchanged ETag). The SNOWPACK daily-snow row is fetched at most once per local
+# day. Only polled when an IMIS station is configured.
+IMIS_UPDATE_INTERVAL = timedelta(minutes=30)
 
 # Tiered hourly refresh (ADR-0002 revision 2, issue #68). Measuring all 24 runs
 # of 2026-08-27 for two points (docs/ogd.md, "Change rhythm across runs") showed
