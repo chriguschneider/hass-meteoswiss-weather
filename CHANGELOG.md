@@ -11,11 +11,15 @@ using the matching section below as release notes.
 
 ### Fixed
 
-- **IMIS silent stations in the picker** (#186). The setup/reconfigure station
-  picker now labels temporarily silent SNOW_FLAT stations (those absent from
-  `/daily-snow`) as "currently no data" so the user knows before picking.
-  The client also distinguishes a temporary outage (HTTP 404 with `NO_DATA`
-  body) from an unknown code (HTTP 400) via a new `ImisNoDataError` exception.
+- **IMIS silent snow stations** (#186, #187). Temporarily silent SNOW_FLAT
+  stations stay selectable and are marked "currently no data" in the
+  setup/reconfigure picker. The two snow sensors now hold their last real
+  value during an outage or any SLF fetch failure — kept across restarts and
+  marked with a `measured_at` time and `placeholder: false` — and show a
+  marked `0` (`measured_at: null`, `placeholder: true`) before the first real
+  value instead of going unavailable. A silent station is reported once a day
+  in the log and as a repair issue (Settings → Repairs) that clears itself
+  when data returns, instead of logging an error every 30 minutes.
 
 ## [v0.6.0] — 2026-10-19
 

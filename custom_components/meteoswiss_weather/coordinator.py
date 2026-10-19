@@ -99,6 +99,7 @@ from .ogd.forecast import HOURLY_FIELD_BY_PARAM
 from .slf import (
     ImisDailySnow,
     ImisMeasurement,
+    ImisNoDataError,
     SlfConnectionError,
     SlfParseError,
     fetch_imis_daily_snow,
@@ -112,6 +113,10 @@ _ISSUE_PRECIP_PARSE = "parse_error_precip"
 _ISSUE_FORECAST_PARSE = "parse_error_forecast"
 _ISSUE_POLLEN_PARSE = "parse_error_pollen"
 _ISSUE_IMIS_PARSE = "parse_error_imis"
+# Prefix for the per-entry "station silent" repair issue (ADR-0009 amendment,
+# #187). Full ID: f"{_ISSUE_IMIS_NO_DATA_PREFIX}{entry_id}" so two entries on
+# different silent stations each get their own issue.
+_ISSUE_IMIS_NO_DATA_PREFIX = "imis_no_data_"
 # Prefix for per-parameter escalated-fetch repair issues (ADR-0008 section 5).
 # Full ID: f"{_ISSUE_ESCALATED_PREFIX}{param}".
 _ISSUE_ESCALATED_PREFIX = "forecast_fetch_escalated_"
@@ -1233,12 +1238,28 @@ class ImisCoordinator(DataUpdateCoordinator[ImisData]):
         self._daily_snow: ImisDailySnow | None = None
         # Timestamp of the last successful update; exposed for diagnostics.
         self.last_success: datetime | None = None
+        # Station-outage tracking (ADR-0009 amendment, #187). ``_last_real_time``
+        # is the measurement time of the last real measurement seen (``None`` =
+        # none since setup); ``_no_data_warned_date`` is the local day the
+        # once-a-day silent-station warning was last logged, so a silent station
+        # is warned about once per day, not every poll.
+        self._no_data_issue_id = f"{_ISSUE_IMIS_NO_DATA_PREFIX}{entry.entry_id}"
+        self._last_real_time: datetime | None = None
+        self._no_data_warned_date: date | None = None
 
     async def _async_update_data(self) -> ImisData:
+        no_data = False
         try:
             measurement = await fetch_imis_latest(
                 self._session, self._code, cache=self._measurement_cache
             )
+        except ImisNoDataError:
+            # The station is temporarily silent (HTTP 404 NO_DATA): never an
+            # ERROR and never fatal (ADR-0009 amendment, #187). The sensors hold
+            # their last value; we warn once a day and raise a repair issue.
+            measurement = None
+            no_data = True
+            self._handle_no_data()
         except SlfParseError as err:
             async_create_issue(
                 self.hass,
@@ -1255,6 +1276,13 @@ class ImisCoordinator(DataUpdateCoordinator[ImisData]):
             raise UpdateFailed(
                 f"IMIS {self._code} measurement update failed: {err}"
             ) from err
+
+        # A real measurement arrived: record its time and clear any outage state
+        # (repair issue and the once-a-day warning gate) so a station that came
+        # back is reported as recovered (ADR-0009 amendment, #187).
+        if not no_data:
+            self._last_real_time = measurement.time
+            self._clear_no_data()
 
         # Daily snow: at most once per local day (and on the first refresh). A
         # failure keeps the last value and never fails the measurement update.
@@ -1286,3 +1314,49 @@ class ImisCoordinator(DataUpdateCoordinator[ImisData]):
             async_delete_issue(self.hass, DOMAIN, _ISSUE_IMIS_PARSE)
         self.last_success = dt_util.utcnow()
         return ImisData(measurement=measurement, daily_snow=self._daily_snow)
+
+    def _handle_no_data(self) -> None:
+        """React to a silent station (HTTP 404 NO_DATA) (ADR-0009 amendment).
+
+        Logs a warning at most once per local day while the station stays silent
+        (never every poll, never at ERROR) and posts the ``imis_no_data`` repair
+        issue as soon as ``NO_DATA`` is seen. Only the configured station is ever
+        reported: this runs solely for this entry's own station.
+        """
+        last = (
+            self._last_real_time.isoformat()
+            if self._last_real_time is not None
+            else None
+        )
+        today = dt_util.now().date()
+        if self._no_data_warned_date != today:
+            self._no_data_warned_date = today
+            _LOGGER.warning(
+                "SLF IMIS snow station %s (%s) has delivered no data; "
+                "holding the last value (last real value: %s)",
+                self.station_name,
+                self._code,
+                last if last is not None else "none since setup",
+            )
+        async_create_issue(
+            self.hass,
+            DOMAIN,
+            self._no_data_issue_id,
+            is_fixable=False,
+            severity=IssueSeverity.WARNING,
+            translation_key="imis_no_data",
+            translation_placeholders={
+                "name": self.station_name,
+                "code": self._code,
+                "last": last if last is not None else "never",
+            },
+        )
+
+    def _clear_no_data(self) -> None:
+        """Clear the silent-station state once a real value returns.
+
+        Deletes the repair issue and resets the once-a-day warning gate so a
+        later outage is reported afresh. Idempotent: safe to call every tick.
+        """
+        self._no_data_warned_date = None
+        async_delete_issue(self.hass, DOMAIN, self._no_data_issue_id)

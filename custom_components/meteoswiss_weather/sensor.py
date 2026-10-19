@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
@@ -450,11 +451,14 @@ class ImisSensorDescription(SensorEntityDescription):
 
     ``data_attr`` is the attribute on :class:`~coordinator.ImisData` (either
     ``measurement`` or ``daily_snow``); ``field`` is the value attribute on that
-    object.
+    object. ``time_field`` is the attribute on that object carrying the time of
+    the value, surfaced as the ``measured_at`` attribute: ``time`` (a datetime)
+    for the 30-minute measurement, ``date`` (a date) for the daily-snow row.
     """
 
     data_attr: str = ""
     field: str = ""
+    time_field: str = ""
 
 
 _IMIS_SENSORS: tuple[ImisSensorDescription, ...] = (
@@ -464,6 +468,7 @@ _IMIS_SENSORS: tuple[ImisSensorDescription, ...] = (
         translation_key="snow_height",
         data_attr="measurement",
         field="snow_height_cm",
+        time_field="time",
         device_class=SensorDeviceClass.DISTANCE,
         native_unit_of_measurement=UnitOfLength.CENTIMETERS,
         state_class=SensorStateClass.MEASUREMENT,
@@ -477,6 +482,7 @@ _IMIS_SENSORS: tuple[ImisSensorDescription, ...] = (
         translation_key="new_snow_24h",
         data_attr="daily_snow",
         field="new_snow_24h_cm",
+        time_field="date",
         device_class=SensorDeviceClass.DISTANCE,
         native_unit_of_measurement=UnitOfLength.CENTIMETERS,
         state_class=SensorStateClass.MEASUREMENT,
@@ -997,14 +1003,20 @@ class RequestsTodaySensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
         return traffic.requests_today
 
 
-class ImisSnowSensor(CoordinatorEntity[ImisCoordinator], SensorEntity):
+class ImisSnowSensor(CoordinatorEntity[ImisCoordinator], RestoreSensor):
     """One snow value from the configured SLF IMIS station (ADR-0009, #174).
 
     Snow height is measured on a flat study plot; new snow is SNOWPACK-modelled.
     Both carry the SLF attribution (not the MeteoSwiss one) and expose a
     ``station`` attribute naming the IMIS station plus its ``elevation`` in m, so
-    a dashboard shows where the value comes from and at what altitude. ``None``
-    (the upstream field was null, or the row is absent) surfaces as ``unknown``.
+    a dashboard shows where the value comes from and at what altitude.
+
+    These sensors are **never** ``unavailable``/``unknown`` because of the SLF
+    (ADR-0009 amendment, #187). They hold the last real value — across restarts
+    via :class:`RestoreSensor` — through an outage or any SLF fetch failure, with
+    its original ``measured_at`` time and ``placeholder: false``. Before the very
+    first real value has ever arrived they show ``0`` with ``measured_at: null``
+    and ``placeholder: true``. A new real value replaces the held one.
     """
 
     _attr_has_entity_name = True
@@ -1024,20 +1036,80 @@ class ImisSnowSensor(CoordinatorEntity[ImisCoordinator], SensorEntity):
         self.entity_description = description
         self._data_attr = description.data_attr
         self._field = description.field
+        self._time_field = description.time_field
         self._attr_unique_id = f"{device_unique_id}_{description.key}"
         self._attr_device_info = device_info
-        attributes: dict[str, str | float] = {"station": station_name}
+        self._base_attributes: dict[str, str | float] = {"station": station_name}
         if elevation is not None:
-            attributes["elevation"] = elevation
-        self._attr_extra_state_attributes = attributes
+            self._base_attributes["elevation"] = elevation
+        # Held last real value (``None`` → no real value ever, show the
+        # placeholder) and the ISO ``measured_at`` string of that value.
+        self._held_value: float | None = None
+        self._held_measured_at: str | None = None
 
     @property
-    def native_value(self) -> float | None:
-        """Return the snow value, or ``None`` (→ ``unknown``) when missing."""
+    def available(self) -> bool:
+        """Always available: a held or placeholder value is always shown."""
+        return True
+
+    def _current_reading(self) -> tuple[float | None, str | None]:
+        """Return ``(value, measured_at_iso)`` for this tick, or ``(None, None)``.
+
+        A reading is real only when the source object is present and its value
+        field is not ``null``; otherwise the sensor holds its previous value.
+        """
         data = self.coordinator.data
         if data is None:
-            return None
+            return None, None
         source = getattr(data, self._data_attr, None)
         if source is None:
-            return None
-        return getattr(source, self._field, None)
+            return None, None
+        value = getattr(source, self._field, None)
+        if value is None:
+            return None, None
+        measured_at = getattr(source, self._time_field, None)
+        return value, measured_at.isoformat() if measured_at is not None else None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the held value, then let a fresh real reading override it."""
+        last_sensor = await self.async_get_last_sensor_data()
+        last_state = await self.async_get_last_state()
+        # Restore only a real (non-placeholder) value: a restored placeholder
+        # leaves the sensor in the "no value yet" state so it shows 0 again.
+        if (
+            last_state is not None
+            and last_state.attributes.get("placeholder") is False
+            and last_sensor is not None
+            and isinstance(last_sensor.native_value, (int, float))
+        ):
+            self._held_value = float(last_sensor.native_value)
+            self._held_measured_at = last_state.attributes.get("measured_at")
+        await super().async_added_to_hass()
+        # Seed from the current poll: a real reading overrides the restored one.
+        value, measured_at = self._current_reading()
+        if value is not None:
+            self._held_value = value
+            self._held_measured_at = measured_at
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Adopt a fresh real reading; otherwise keep the held value."""
+        value, measured_at = self._current_reading()
+        if value is not None:
+            self._held_value = value
+            self._held_measured_at = measured_at
+        super()._handle_coordinator_update()
+
+    @property
+    def native_value(self) -> float:
+        """The held real value, or ``0`` before the first real value arrives."""
+        return self._held_value if self._held_value is not None else 0
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str | float | bool | None]:
+        """Station/elevation plus the ``measured_at``/``placeholder`` markers."""
+        attributes: dict[str, str | float | bool | None] = dict(self._base_attributes)
+        placeholder = self._held_value is None
+        attributes["placeholder"] = placeholder
+        attributes["measured_at"] = None if placeholder else self._held_measured_at
+        return attributes
