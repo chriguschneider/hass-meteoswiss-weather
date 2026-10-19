@@ -25,6 +25,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_ENTRY_TYPE,
     CONF_HOURLY_CLOUD_LAYERS,
     CONF_HOURLY_FORECAST,
     CONF_HOURLY_HORIZON_DAYS,
@@ -43,6 +44,7 @@ from .const import (
     CONF_STATION_ABBR,
     DEFAULT_HOURLY_HORIZON_DAYS,
     DOMAIN,
+    ENTRY_TYPE_SNOW_STATION,
     HINTS_STORAGE_KEY,
     HINTS_STORAGE_VERSION,
     TRAFFIC_STORAGE_KEY,
@@ -89,12 +91,16 @@ _IMPORT_HISTORY_SCHEMA = vol.Schema(
 # land here as well, keeping the swap out of the coordinator and entities.
 _backend_factory: Callable[[aiohttp.ClientSession], ForecastBackend] = BulkCsvBackend
 
+# A point entry (postal code / mountain) carries the weather entity and the
+# station sensors; a snow-station entry (ADR-0011) carries only sensors. The
+# platform list is chosen per entry type at setup, unload and remove.
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.WEATHER]
+SNOW_STATION_PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 
 @dataclass
 class MeteoSwissRuntimeData:
-    """Everything a platform needs, hung off ``entry.runtime_data``."""
+    """Everything a point entry's platforms need, hung off ``entry.runtime_data``."""
 
     station_coordinator: StationCoordinator
     forecast_coordinator: ForecastCoordinator
@@ -116,16 +122,34 @@ class MeteoSwissRuntimeData:
     # entity's current precipitation read from it instead of the main station.
     precip_coordinator: PrecipStationCoordinator | None
     precip_station_name: str
-    # Optional SLF IMIS snow station (ADR-0009, #174): ``None`` unless the user
-    # picked one. When set, the snow-height and new-snow sensors read from it and
-    # a second upstream (``measurement-api.slf.ch``) is polled. ``elevation`` is
-    # the station's height in m, exposed as a sensor attribute.
-    imis_coordinator: ImisCoordinator | None
+
+
+@dataclass
+class SnowStationRuntimeData:
+    """Runtime handle for a snow-station entry (ADR-0011).
+
+    A snow-station entry sets up only the IMIS coordinator and the sensor
+    platform: no weather entity and no MeteoSwiss request of any kind. The
+    sensors live on a device of the station itself (``imis-<code>``), carrying
+    its name and elevation.
+    """
+
+    imis_coordinator: ImisCoordinator
+    imis_station_code: str
     imis_station_name: str
     imis_station_elevation: float | None
 
 
-type MeteoSwissConfigEntry = ConfigEntry[MeteoSwissRuntimeData]
+type MeteoSwissConfigEntry = ConfigEntry[
+    MeteoSwissRuntimeData | SnowStationRuntimeData
+]
+
+
+def _platforms_for(entry: ConfigEntry) -> list[Platform]:
+    """The platform list for an entry, by its type (ADR-0011)."""
+    if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_SNOW_STATION:
+        return SNOW_STATION_PLATFORMS
+    return PLATFORMS
 
 
 def _hints_store(hass: HomeAssistant, entry: ConfigEntry) -> Store:
@@ -172,7 +196,16 @@ def _point_from_entry(entry: ConfigEntry) -> ForecastPoint:
 async def async_setup_entry(
     hass: HomeAssistant, entry: MeteoSwissConfigEntry
 ) -> bool:
-    """Set up a config entry: build the coordinators and do the first refresh."""
+    """Set up a config entry: build the coordinators and do the first refresh.
+
+    A snow-station entry (ADR-0011) takes a separate, SLF-only path: no
+    MeteoSwiss coordinator is built and no ``data.geo.admin.ch`` request is
+    made. A point entry (postal code / mountain) is set up as before, and
+    ignores any ``imis_station_*`` keys left in its data by v0.5.0–v0.6.2.
+    """
+    if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_SNOW_STATION:
+        return await _async_setup_snow_station_entry(hass, entry)
+
     session = async_get_clientsession(hass)
     point = _point_from_entry(entry)
     station_abbr = str(entry.data[CONF_STATION_ABBR])
@@ -254,23 +287,6 @@ async def async_setup_entry(
         )
         await precip_coordinator.async_refresh()
 
-    # Optional SLF IMIS snow station (ADR-0009, #174): a second upstream polled
-    # in its own coordinator, only when the user picked a station. No SLF request
-    # is made at all when unset. Non-fatal first refresh like pollen/precip — an
-    # unavailable opt-in station must not block the whole entry from loading.
-    imis_coordinator: ImisCoordinator | None = None
-    imis_code = str(entry.data.get(CONF_IMIS_STATION_CODE, ""))
-    imis_name = str(entry.data.get(CONF_IMIS_STATION_NAME, ""))
-    imis_elevation_raw = entry.data.get(CONF_IMIS_STATION_ELEVATION)
-    imis_elevation = (
-        float(imis_elevation_raw) if imis_elevation_raw is not None else None
-    )
-    if imis_code:
-        imis_coordinator = ImisCoordinator(
-            hass, entry, session, imis_code, imis_name or imis_code
-        )
-        await imis_coordinator.async_refresh()
-
     entry.runtime_data = MeteoSwissRuntimeData(
         station_coordinator=station_coordinator,
         forecast_coordinator=forecast_coordinator,
@@ -282,9 +298,6 @@ async def async_setup_entry(
         pollen_inventory=pollen_inventory,
         precip_coordinator=precip_coordinator,
         precip_station_name=precip_name or precip_abbr,
-        imis_coordinator=imis_coordinator,
-        imis_station_name=imis_name or imis_code,
-        imis_station_elevation=imis_elevation,
     )
 
     # An options change (the hourly-forecast toggle) reloads the entry so the
@@ -294,6 +307,41 @@ async def async_setup_entry(
     _async_register_services(hass)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    return True
+
+
+async def _async_setup_snow_station_entry(
+    hass: HomeAssistant, entry: MeteoSwissConfigEntry
+) -> bool:
+    """Set up a snow-station entry (ADR-0011): IMIS coordinator and sensors only.
+
+    No MeteoSwiss coordinator is created and no ``data.geo.admin.ch`` request is
+    made — the only upstream is ``measurement-api.slf.ch`` (ADR-0009). The first
+    refresh is non-fatal, as for the point entry's optional IMIS station: an
+    unavailable station must not block the entry from loading, and the snow
+    sensors hold a placeholder until a real value arrives (ADR-0009 amendment).
+    """
+    session = async_get_clientsession(hass)
+    imis_code = str(entry.data[CONF_IMIS_STATION_CODE])
+    imis_name = str(entry.data.get(CONF_IMIS_STATION_NAME, "")) or imis_code
+    imis_elevation_raw = entry.data.get(CONF_IMIS_STATION_ELEVATION)
+    imis_elevation = (
+        float(imis_elevation_raw) if imis_elevation_raw is not None else None
+    )
+
+    imis_coordinator = ImisCoordinator(hass, entry, session, imis_code, imis_name)
+    await imis_coordinator.async_refresh()
+
+    entry.runtime_data = SnowStationRuntimeData(
+        imis_coordinator=imis_coordinator,
+        imis_station_code=imis_code,
+        imis_station_name=imis_name,
+        imis_station_elevation=imis_elevation,
+    )
+
+    await hass.config_entries.async_forward_entry_setups(
+        entry, SNOW_STATION_PLATFORMS
+    )
     return True
 
 
@@ -381,7 +429,9 @@ async def async_unload_entry(
     hass: HomeAssistant, entry: MeteoSwissConfigEntry
 ) -> bool:
     """Unload a config entry, dropping the service once the last entry goes."""
-    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(
+        entry, _platforms_for(entry)
+    )
     if unloaded:
         remaining = [
             other
