@@ -6,10 +6,11 @@ The integration uses a simple setup flow, with no YAML required. Go to **Setting
 
 ### Step 1: Location Type
 
-Choose the type of forecast point:
+Choose the type of entry:
 
 - **Postal code** (default) — forecast for a Swiss town or city, identified by its 4-digit PLZ.
 - **Mountain point** — forecast for a summit, mountain pass, or ski resort from the MeteoSwiss alpine point list (631 points).
+- **Snow station** — an SLF IMIS snow station as its own entry, with snow and weather sensors only (no MeteoSwiss forecast). See the [Snow-Station Path](#snow-station-path) below.
 
 ### Postal-Code Path
 
@@ -46,18 +47,23 @@ When set:
 
 The pick can be changed (or cleared) later with **Reconfigure**.
 
-#### Optional: snow station (SLF IMIS)
+### Snow-Station Path
 
-The same step also offers an optional **snow station** from the SLF IMIS network (the WSL Institute for Snow and Avalanche Research, `measurement-api.slf.ch`, ~128 flat-field snow stations, most between 2000 and 3000 m). This is **snow height at altitude**: the snow depth on a flat study plot off-piste, **not** the piste snow depth of the lifts — and it is near 0 in summer. It is a second official open-data upstream under CC BY 4.0 ([ADR-0009](adr/0009-slf-imis-second-upstream.md)). The three nearest flat-field stations are offered with elevation and distance and **none is selected by default** — the feature is opt-in.
+A **snow station** is its own config entry ([ADR-0011](adr/0011-snow-station-own-entry.md)), chosen in Step 1 next to postal code and mountain point. An IMIS station is a weather station at its own place, so it gets its own entry and its own device — not a value hung off a postal-code or mountain entry.
 
-When set:
+#### Step 2c: Snow Station
 
-- two sensors appear on the entry's device: **Snow height** (measured `HS`) and **New snow 24 h (modelled)** (`HN_1D`, SNOWPACK-modelled);
-- both carry the attribution `Source: WSL Institute for Snow and Avalanche Research SLF` and a `station` attribute (plus `elevation`) naming the IMIS station;
-- the station's latest measurement (~16 KB) is polled every 30 minutes, conditionally, and the modelled daily snow (~10 KB) at most once per day — only while the option is set;
-- **no SLF request is made at all** when no snow station is picked.
+Choose an SLF IMIS snow station from the dropdown. The ten nearest `SNOW_FLAT` stations to your Home Assistant location are listed with elevation and distance; a station that currently has no data is labelled "currently no data" but can still be picked. The nearest is pre-selected.
 
-The pick can be changed (or cleared) later with **Reconfigure**.
+The SLF IMIS network (the WSL Institute for Snow and Avalanche Research, `measurement-api.slf.ch`, ~128 flat-field snow stations, most between 2000 and 3000 m) is a second official open-data upstream under CC BY 4.0 ([ADR-0009](adr/0009-slf-imis-second-upstream.md)). A snow station is a **flat study plot off-piste**, so its snow height is **not** the piste snow depth of the lifts, and the snow values are near 0 in summer.
+
+A snow-station entry:
+
+- makes **no MeteoSwiss request of any kind** — no weather entity, no forecast; only the SLF upstream is used;
+- puts every value on the station's own device (named `"<station> (<elevation> m)"`, manufacturer SLF), all sensors enabled by default, each with the attribution `Source: WSL Institute for Snow and Avalanche Research SLF` and `station`, `elevation`, `measured_at` and `placeholder` attributes (see the [snow-station sensor table](#snow-sensors-slf-imis));
+- polls the station's latest measurement (~16 KB) every 30 minutes, conditionally, and the modelled daily snow (~10 KB) at most once per day.
+
+The station can be changed later with **Reconfigure**.
 
 ## Entities
 
@@ -132,14 +138,26 @@ One sensor entity per measured field from the SwissMetNet station. All are disab
 | **Sunshine Duration** | min | No | 10-minute total |
 | **Global Radiation** | W/m² | No | Solar radiation |
 
-### Snow Sensors (optional, SLF IMIS)
+### Snow Sensors (SLF IMIS)
 
-Present only when a snow station is configured (see Step 3). Fed by the SLF IMIS upstream, not SwissMetNet; both carry the `Source: WSL Institute for Snow and Avalanche Research SLF` attribution and a `station`/`elevation` attribute.
+Present on a **snow-station entry** (see the [Snow-Station Path](#snow-station-path)), never on a postal-code or mountain entry. Fed by the SLF IMIS upstream, not SwissMetNet; every sensor sits on the station's own device, is enabled by default, and carries the `Source: WSL Institute for Snow and Avalanche Research SLF` attribution plus `station`, `elevation`, `measured_at` and `placeholder` attributes.
 
 | Sensor | Unit | Enabled by Default | Notes |
 |--------|------|-------|-------|
 | **Snow height** | cm | Yes | Measured `HS` on a flat study plot off-piste (not piste snow depth); near 0 in summer |
 | **New snow 24 h (modelled)** | cm | Yes | `HN_1D`, SNOWPACK-modelled new snow over the last 24 h |
+| **Snow height (modelled)** | cm | Yes | SNOWPACK-modelled snow height from the daily-snow row |
+| **Temperature** | °C | Yes | Air temperature (30-min mean) |
+| **Humidity** | % | Yes | Relative humidity |
+| **Wind speed** | m/s | Yes | 30-min mean, kept in native m/s |
+| **Wind gust speed** | m/s | Yes | 5 s maximum, kept in native m/s |
+| **Wind bearing** | ° | Yes | Wind direction |
+| **Wind bearing standard deviation** | ° | Yes | Spread of the wind direction |
+| **Snow surface temperature** | °C | Yes | Temperature of the snow surface |
+| **Snow temperature (0 / 25 / 50 / 100 cm)** | °C | Yes | Snow-pack temperatures at four depths |
+| **Reflected radiation** | W/m² | Yes | Reflected short-wave radiation |
+
+The snow values (snow height, new snow, modelled snow height) show `0` before the station's first reading; every other sensor stays unknown until the first real value, because a placeholder 0 would read as a real temperature or wind measurement. During an outage every sensor holds its last real value (restored across restarts), with `placeholder: false` and the original `measured_at` ([ADR-0009](adr/0009-slf-imis-second-upstream.md) amendments).
 
 ## Options
 
@@ -267,7 +285,7 @@ for the full grouped list and the one-step path to enable them.
 |---|---|---|---|---|
 | Setup / Reconfigure | **Weather station** | Station sensors (enabled by default): `temperature`, `humidity`, `pressure_qff`, `wind_speed`, `wind_bearing`, `gust_speed`, `precipitation`. Disabled by default: `dew_point`, `pressure_qfe`, `pressure_qnh`, `sunshine_duration`, `global_radiation`, `diffuse_radiation`, `longwave_radiation`, `snow_depth`, `wind_chill`, `air_temp_5cm`, `soil_temp_5cm`, `soil_temp_10cm`, `soil_temp_20cm`, `measurement_time`. Weather entity current conditions (`temperature`, `humidity`, `pressure`, `wind_speed`, `wind_bearing`, `wind_gust_speed`, `condition`). | ~17.6 KB / 10 min (conditional 304) | Daily forecast, zero-degree level, forecast sensors, pollen |
 | Setup / Reconfigure | **Precipitation station** (optional) | `precipitation` sourced from the rain-only network instead of the main station | ~1.2 KB / 10 min (conditional 304) | Everything else |
-| Setup / Reconfigure | **Snow station** (optional, SLF IMIS) | `snow_height` (measured) and `new_snow_24h` (modelled) on the entry's device | ~16 KB / 30 min + ~10 KB / day (conditional 304); nothing when unset | Everything else |
+| Setup (own entry) | **Snow station** (SLF IMIS) | Its own entry and device with every IMIS value as a sensor (all enabled): `snow_height`, `new_snow_24h`, `snow_height_modelled`, `temperature`, `humidity`, `wind_speed`, `gust_speed`, `wind_bearing`, `wind_bearing_sd`, `snow_surface_temperature`, `snow_temperature_0cm`/`25cm`/`50cm`/`100cm`, `reflected_radiation`. No MeteoSwiss request, no weather entity. | ~16 KB / 30 min + ~10 KB / day (conditional 304) | A separate entry — does not affect any point entry |
 | Options → Hourly | **Hourly forecast toggle** (`hourly_forecast`) | Hourly forecast entries: `condition`, `temperature`, `precipitation`, `precipitation_probability`, `wind_speed`, `wind_gust_speed`, `wind_bearing`, `radiation`, `zero_degree_level`. Weather entity current `condition` follows the hourly symbol. | ~0.3 MB / refresh (~1×/h) | Daily forecast, station sensors, `zero_degree_level` sensor, forecast sensors |
 | Options → Hourly | **Horizon** (`hourly_horizon_days`) | Depth of the hourly window (default: rest of today + 2 full days) | Grows with horizon; full run reads ~30 MB / file | All other sensors and options |
 | Options → Hourly | **Cloud layers** (`hourly_cloud_layers`) | `cloud_coverage`, `cloud_coverage_high`, `cloud_coverage_mid`, `cloud_coverage_low` on every hourly entry | +~0.05 MB / refresh | All other hourly fields |

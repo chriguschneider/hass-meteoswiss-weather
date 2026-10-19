@@ -884,3 +884,121 @@ async def test_no_data_creates_repair_issue_cleared_by_real_value(
     state = hass.states.get(_SNOW_HEIGHT)
     assert float(state.state) == 3.0
     assert state.attributes["placeholder"] is False
+
+
+# ---------------------------------------------------------------------------
+# Every measured IMIS value as a sensor (ADR-0009 amendment, #196)
+# ---------------------------------------------------------------------------
+
+# Newest-row values of ``slf-imis_sth2_measurements.json`` (2026-10-19 06:00 UTC)
+# and of STH2's ``slf-imis_daily-snow.json`` row, keyed by sensor ``key``.
+_STH2_NEWEST: dict[str, float] = {
+    "snow_height": 1.0,
+    "temperature": 5.118,
+    "humidity": 80.2,
+    "wind_speed": 0.221,
+    "gust_speed": 1.232,
+    "wind_bearing": 265.5,
+    "wind_bearing_sd": 35.79,
+    "snow_surface_temperature": -0.621,
+    "snow_temperature_0cm": 6.659,
+    "snow_temperature_25cm": 0.294,
+    "snow_temperature_50cm": 2.808,
+    "snow_temperature_100cm": 3.86,
+    "reflected_radiation": 0.0,
+    # Daily snow row: HN_1D and modelled HS are both 0.0 in the fixture.
+    "new_snow_24h": 0.0,
+    "snow_height_modelled": 0.0,
+}
+
+# The three snow values that fall back to the 0 placeholder before any real
+# value; every other sensor stays ``unknown`` (ADR-0009 amendment).
+_PLACEHOLDER_ZERO_KEYS = {"snow_height", "new_snow_24h", "snow_height_modelled"}
+
+
+async def test_every_imis_value_is_a_sensor(
+    hass: HomeAssistant,
+    mock_slf: AiohttpClientMocker,
+) -> None:
+    """Every IMIS value is an enabled sensor with the newest row's value."""
+    entry = _snow_station_entry("STH2")
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    registry = er.async_get(hass)
+    for key, expected in _STH2_NEWEST.items():
+        entity_id = _snow_entity_id(hass, key)
+        assert entity_id is not None, key
+        # Enabled by default: a state exists and the registry entry is enabled.
+        reg_entry = registry.async_get(entity_id)
+        assert reg_entry is not None and reg_entry.disabled_by is None, key
+        state = hass.states.get(entity_id)
+        assert state is not None, key
+        assert float(state.state) == expected, key
+        # Every IMIS sensor carries the SLF attribution and the station markers.
+        assert state.attributes["attribution"] == ATTRIBUTION_SLF, key
+        assert state.attributes.get("station") == "Vorderstocken", key
+        assert state.attributes.get("elevation") == 1791.0, key
+        assert state.attributes["placeholder"] is False, key
+
+    # Wind keeps the SLF's native m/s (no km/h conversion, #196).
+    for wind_key in ("wind_speed", "gust_speed"):
+        state = hass.states.get(_snow_entity_id(hass, wind_key))
+        assert state.attributes["unit_of_measurement"] == "m/s", wind_key
+
+
+async def test_non_snow_values_unknown_before_first_value(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """Before the first value: snow sensors show 0, the rest show unknown."""
+    aioclient_mock.get(measurements_url("STH2"), status=404, content=_NO_DATA_BODY)
+    aioclient_mock.get(DAILY_SNOW_URL, content=b"[]")
+
+    entry = _snow_station_entry("STH2")
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    for key in _STH2_NEWEST:
+        state = hass.states.get(_snow_entity_id(hass, key))
+        assert state is not None, key
+        if key in _PLACEHOLDER_ZERO_KEYS:
+            assert float(state.state) == 0.0, key
+            assert state.attributes["placeholder"] is True, key
+            assert state.attributes["measured_at"] is None, key
+        else:
+            # A placeholder 0 would read as a real measurement, so stay unknown.
+            assert state.state == "unknown", key
+            assert state.attributes["placeholder"] is True, key
+            assert state.attributes["measured_at"] is None, key
+
+
+async def test_non_snow_value_held_through_outage(
+    hass: HomeAssistant,
+    mock_slf: AiohttpClientMocker,
+) -> None:
+    """A real temperature, then NO_DATA: the last real value is held."""
+    entry = _snow_station_entry("STH2")
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    temp_id = _snow_entity_id(hass, "temperature")
+    first = hass.states.get(temp_id)
+    assert float(first.state) == 5.118
+    assert first.attributes["placeholder"] is False
+    assert first.attributes["measured_at"] == _STH2_MEASURED_AT
+
+    runtime = entry.runtime_data
+    assert isinstance(runtime, SnowStationRuntimeData)
+    with patch(_COORD_LATEST, side_effect=ImisNoDataError("no data")):
+        await runtime.imis_coordinator.async_refresh()
+        await hass.async_block_till_done()
+
+    # The temperature holds its last real value, never dropping to unknown/0.
+    held = hass.states.get(temp_id)
+    assert float(held.state) == 5.118
+    assert held.attributes["placeholder"] is False
+    assert held.attributes["measured_at"] == _STH2_MEASURED_AT
