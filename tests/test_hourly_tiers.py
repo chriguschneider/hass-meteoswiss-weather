@@ -42,6 +42,7 @@ from custom_components.meteoswiss_weather.ogd.const import (
     HOURLY_DATE_MAJOR_PARAMS,
     HOURLY_POINT_MAJOR_PARAMS,
     HOURLY_PRECIPITATION,
+    HOURLY_SUNSHINE,
     HOURLY_SYMBOL,
     HOURLY_TEMP_P10,
     HOURLY_TEMP_P90,
@@ -887,6 +888,31 @@ def test_from_store_keeps_hour_missing_only_optional_fields() -> None:
     assert result[0].time == h0
     assert result[0].temperature == 20.0
     assert result[0].precipitation_probability is None
+
+
+def test_from_store_surfaces_sunshine_but_does_not_gate() -> None:
+    """``sunshine_duration`` passes through when present and never gates (#178).
+
+    The sunshine block is filed in the store by the daily path; when its param is
+    among those requested, ``hourly_from_store`` carries ``sunshine_duration`` on
+    the hour. An hour that has only sunshine (none of the four required fields) is
+    still dropped — sunshine must not keep a blank hour alive (ADR-0010).
+    """
+    h0 = datetime(2026, 8, 28, 20, 0, tzinfo=UTC)
+    h1 = h0 + timedelta(hours=1)
+    store = _store_with(
+        {
+            _TEMPERATURE: {h0: 20.0},
+            HOURLY_PRECIPITATION: {h0: 0.0},
+            HOURLY_SYMBOL: {h0: 1},
+            HOURLY_WIND_SPEED: {h0: 10.0},
+            # h1 has only sunshine — none of the four required fields.
+            HOURLY_SUNSHINE: {h0: 42, h1: 15},
+        }
+    )
+    result = hourly_from_store(store, (*_DEMAND, HOURLY_SUNSHINE))
+    assert [h.time for h in result] == [h0]  # h1 dropped despite its sunshine
+    assert result[0].sunshine_duration == 42
 
 
 def test_from_store_complete_hours_pass_through() -> None:

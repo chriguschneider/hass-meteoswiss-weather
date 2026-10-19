@@ -12,6 +12,7 @@ from .const import POINT_TYPE_MOUNTAIN, hourly_date_major_params
 from .forecast import (
     HOURLY_FIELD_BY_PARAM,
     aggregate_daily_precip_probability,
+    aggregate_daily_sunshine,
     aggregate_daily_wind,
     fetch_points,
     mountain_points,
@@ -74,6 +75,7 @@ __all__ = [
     "DailyBundle",
     "DailyForecast",
     "aggregate_daily_precip_probability",
+    "aggregate_daily_sunshine",
     "aggregate_daily_wind",
     "FileLayout",
     "ForecastBackend",

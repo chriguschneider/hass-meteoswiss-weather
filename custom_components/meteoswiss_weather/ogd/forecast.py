@@ -30,6 +30,7 @@ from .const import (
     HOURLY_PRECIP_PROBABILITY,
     HOURLY_PRECIPITATION,
     HOURLY_RADIATION,
+    HOURLY_SUNSHINE,
     HOURLY_SYMBOL,
     HOURLY_TEMP_P10,
     HOURLY_TEMP_P90,
@@ -86,6 +87,9 @@ _HOURLY_FIELDS: dict[str, str] = {
     HOURLY_PRECIP_PROBABILITY: "precipitation_probability",
     HOURLY_ZERO_DEGREE: "zero_degree_level",
     HOURLY_RADIATION: "radiation",
+    # Sunshine minutes per hour, filed in the store from the daily block
+    # (issue #178, ADR-0010). Integer, like ``symbol`` (see _HOURLY_INT_FIELDS).
+    HOURLY_SUNSHINE: "sunshine_duration",
     # B9 cloud cover (three date-major layers) and B11 temperature percentiles
     # (two date-major files), fetched only behind their opt-in (issue #69).
     HOURLY_CLOUD_HIGH: "cloud_high",
@@ -97,6 +101,10 @@ _HOURLY_FIELDS: dict[str, str] = {
 # Public view of the table: the forecast store files an hourly forecast's
 # fields under their upstream parameter codes (ADR-0008).
 HOURLY_FIELD_BY_PARAM = _HOURLY_FIELDS
+
+# Hourly fields whose cells are integers: the weather-symbol code and sunshine
+# minutes per hour (issue #178). Everything else is parsed as a float.
+_HOURLY_INT_FIELDS: frozenset[str] = frozenset({"symbol", "sunshine_duration"})
 
 
 def _reader(body: str) -> csv.DictReader:
@@ -309,7 +317,7 @@ def parse_hourly(
         field = _HOURLY_FIELDS.get(param)
         if field is None:
             continue  # a parameter this forecast does not model
-        cast = _to_int if field == "symbol" else _to_float
+        cast = _to_int if field in _HOURLY_INT_FIELDS else _to_float
         for row in _reader(text):
             if _to_int(row.get(_DATA_POINT_ID)) != point.point_id:
                 continue
@@ -448,3 +456,56 @@ def aggregate_daily_precip_probability(
             max_by_day[local_day] = value
 
     return max_by_day
+
+
+# A complete local calendar day has 24 hourly rows; DST days have 23 (spring
+# forward) or 25 (autumn back). A day with fewer rows than this is partial — the
+# first and last day of a run usually are — and gets no daily sunshine total.
+_COMPLETE_DAY_MIN_ROWS = 23
+
+
+def aggregate_daily_sunshine(
+    text: str,
+    point: ForecastPoint,
+) -> dict[date, int]:
+    """Aggregate the hourly ``sre000h0`` block into per-day sunshine minutes.
+
+    A **plain function** so the backend can run it in an executor (ADR-0002).
+    MeteoSwiss publishes no daily sunshine parameter, so the daily figure is the
+    **sum** over the local calendar day of the hourly minutes-of-sunshine block
+    ``sre000h0`` (integer 0-60, docs/ogd.md §E4, "Sunshine duration"). The hourly
+    ``Date`` stamps are UTC; grouping uses Europe/Zurich local calendar days —
+    the same boundary as the daily ``p``-variants, :func:`aggregate_daily_wind`
+    and :func:`aggregate_daily_precip_probability` (issue #178, ADR-0010).
+
+    Only **complete** days get a total: a day with at least
+    :data:`_COMPLETE_DAY_MIN_ROWS` rows (24 normally, 23/25 across DST). A run's
+    first and last local day are usually partial — the block starts near local
+    midnight and ends a couple of hours into the last day — and are left out, so
+    the caller keeps ``sunshine_duration`` at ``None`` for them rather than
+    reporting an understated total. A day with no rows is likewise absent.
+    """
+    tz = ZoneInfo(FORECAST_TIMEZONE)
+    minutes_by_day: dict[date, int] = {}
+    rows_by_day: dict[date, int] = {}
+
+    for row in _reader(text):
+        if _to_int(row.get(_DATA_POINT_ID)) != point.point_id:
+            continue
+        if _to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
+            continue
+        when = _parse_datetime(row.get(_DATA_DATE))
+        if when is None:
+            continue
+        value = _to_int(row.get(HOURLY_SUNSHINE))
+        if value is None:
+            continue
+        local_day = when.astimezone(tz).date()
+        minutes_by_day[local_day] = minutes_by_day.get(local_day, 0) + value
+        rows_by_day[local_day] = rows_by_day.get(local_day, 0) + 1
+
+    return {
+        day: total
+        for day, total in minutes_by_day.items()
+        if rows_by_day[day] >= _COMPLETE_DAY_MIN_ROWS
+    }
