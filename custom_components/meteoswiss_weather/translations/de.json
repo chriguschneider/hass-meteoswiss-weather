@@ -20,6 +20,10 @@
       "title": "SLF-IMIS-Schneestations-Antwortformat geändert",
       "description": "Die Antwort der SLF-IMIS-Schneestation konnte nicht eingelesen werden. Das Upstream-Format hat sich möglicherweise geändert. Prüfen Sie `docs/slf.md` im Integration-Repository für das aktuelle Format und eröffnen Sie ein Drift-Issue, wenn es nicht mehr übereinstimmt."
     },
+    "imis_no_data": {
+      "title": "SLF-Schneestation {name} liefert keine Daten",
+      "description": "Die SLF-Schneestation {name} ({code}) hat seit {last} keine Daten geliefert. Die Schnee-Sensoren zeigen weiterhin den letzten Wert an. Das SLF bringt Stationen normalerweise zurück; bleibt sie stumm, konfigurieren Sie den Eintrag neu und wählen Sie eine andere Schneestation."
+    },
     "forecast_fetch_escalated": {
       "title": "MeteoSwiss-Prognosedatei benötigte vollständigen Download",
       "description": "Die Prognosedatei `{param}` hat bei den letzten drei Aktualisierungen einen vollständigen oder großen Präfix-Download benötigt (Fetch-Ladder-Stufe 3 oder 4). Dies deutet meist darauf hin, dass MeteoSwiss die Zeilensortierung der Datei geändert hat. Der letzte eskalierte Abruf kostete {bytes} Bytes. Öffnen Sie den Diagnosedump der Integration, um Stufe und Layout je Parameter zu sehen, und prüfen Sie `docs/ogd.md` (\"How to read the fetch diagnostics\"). Das Issue wird automatisch gelöscht, sobald die Fetch-Ladder wieder eine günstige Strategie findet."
