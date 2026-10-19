@@ -55,6 +55,7 @@
       "temp_min_today": { "name": "Low temperature today" },
       "precipitation_today": { "name": "Precipitation today" },
       "zero_degree_level": { "name": "Zero-degree level" },
+      "zero_degree_level_48h": { "name": "Zero-degree level in 48 h" },
       "measurement_time": { "name": "Measurement time" },
       "snow_height": { "name": "Snow height" },
       "new_snow_24h": { "name": "New snow 24 h (modelled)" },

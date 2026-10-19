@@ -242,6 +242,7 @@ toggle *Enable*.
 | Sensor key | Description |
 |---|---|
 | `zero_degree_level` | Altitude of the 0 °C isotherm for the current hour; works without the hourly option |
+| `zero_degree_level_48h` | Altitude of the 0 °C isotherm 48 h from now (disabled by default), with a `change` attribute (m) against the current hour. Needs the hourly option with a horizon of 3 days or more (or the full run): the daily path files only 48 h from the model run, so without it the sensor reads `unknown` for most of the day |
 
 #### Pollen sensors (disabled by default, requires pollen option on)
 

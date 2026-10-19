@@ -255,6 +255,7 @@ Derived from the local forecast for the configured point.
 | Low temperature today | Today's forecast minimum | °C | on |
 | Precipitation today | Today's forecast precipitation sum | mm | on |
 | Zero-degree level | Forecast altitude of the 0 °C isotherm for the current hour — snow-line material; advances every hour. Works without the hourly forecast option | m | off |
+| Zero-degree level in 48 h | Forecast altitude of the 0 °C isotherm 48 h from now, with a `change` attribute against the current hour — will the snow line rise or fall? Needs the hourly forecast option with a horizon of 3 days or more (or the full run); otherwise it reads `unknown` for most of the day | m | off |
 
 </details>
 

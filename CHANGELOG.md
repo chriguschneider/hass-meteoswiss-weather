@@ -9,6 +9,14 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Added
+
+- New sensor "Zero-degree level in 48 h" (disabled by default) with a
+  `change` attribute against the current hour, to see whether the snow line
+  will rise or fall. It needs the hourly forecast option with a horizon of
+  3 days or more; without it the sensor reads unknown for most of the day
+  (#214).
+
 ## [v0.7.1] — 2026-10-19
 
 ### Fixed

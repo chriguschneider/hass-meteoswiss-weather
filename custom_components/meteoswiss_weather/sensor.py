@@ -11,7 +11,7 @@ keyed on the forecast point, not the station abbreviation).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from homeassistant.components.sensor import (
     RestoreSensor,
@@ -336,6 +336,21 @@ _FORECAST_SENSORS: tuple[ForecastSensorDescription, ...] = (
 _ZERO_DEGREE_DESCRIPTION = SensorEntityDescription(
     key="zero_degree_level",
     translation_key="zero_degree_level",
+    native_unit_of_measurement=UnitOfLength.METERS,
+    state_class=SensorStateClass.MEASUREMENT,
+    suggested_display_precision=0,
+    icon="mdi:snowflake-thermometer",
+    entity_registry_enabled_default=False,
+)
+
+# Issue #214: the zero-degree level 48 h from now. The daily path files only
+# 48 h of ``zprfr0hs`` from the model run, so without the hourly option this
+# reads ``unknown`` for most of the day; the hourly option with a horizon of
+# 3 days or more (or the full run) keeps it filled.
+_ZERO_DEGREE_48H_HOURS = 48
+_ZERO_DEGREE_48H_DESCRIPTION = SensorEntityDescription(
+    key="zero_degree_level_48h",
+    translation_key="zero_degree_level_48h",
     native_unit_of_measurement=UnitOfLength.METERS,
     state_class=SensorStateClass.MEASUREMENT,
     suggested_display_precision=0,
@@ -704,6 +719,7 @@ async def async_setup_entry(
             {f"{device_unique_id}_{desc.key}" for desc in supported}
             | {f"{device_unique_id}_{desc.key}" for desc in _FORECAST_SENSORS}
             | {f"{device_unique_id}_{_ZERO_DEGREE_DESCRIPTION.key}"}
+            | {f"{device_unique_id}_{_ZERO_DEGREE_48H_DESCRIPTION.key}"}
             | {f"{device_unique_id}_{_MEASUREMENT_TIME_DESCRIPTION.key}"}
             | {f"{device_unique_id}_{desc.key}" for desc in _POLLEN_SENSORS}
             | {f"{device_unique_id}_{_DATA_FETCHED_DESCRIPTION.key}"}
@@ -760,6 +776,12 @@ async def async_setup_entry(
     async_add_entities([
         ZeroDegreeSensor(
             runtime.forecast_coordinator, _ZERO_DEGREE_DESCRIPTION,
+            device_unique_id, device_info,
+        )
+    ])
+    async_add_entities([
+        ZeroDegree48hSensor(
+            runtime.forecast_coordinator, _ZERO_DEGREE_48H_DESCRIPTION,
             device_unique_id, device_info,
         )
     ])
@@ -1037,6 +1059,35 @@ class ZeroDegreeSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
         """Return the current hour's zero-degree level, or ``None`` when absent."""
         this_hour = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
         return self.coordinator.store.value_at(HOURLY_ZERO_DEGREE, this_hour)
+
+
+class ZeroDegree48hSensor(ZeroDegreeSensor):
+    """Zero-degree level 48 h from now (issue #214).
+
+    Same store, refresh and top-of-hour mechanism as the current-hour sensor.
+    ``unknown`` while the store does not cover that hour (the daily path files
+    only 48 h from the model run); it never extrapolates. The ``change``
+    attribute is the value minus the current hour's, omitted when either is
+    missing.
+    """
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the level for now + 48 h, or ``None`` when not covered."""
+        this_hour = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
+        return self.coordinator.store.value_at(
+            HOURLY_ZERO_DEGREE, this_hour + timedelta(hours=_ZERO_DEGREE_48H_HOURS)
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, float] | None:
+        """Return the change against the current hour (m), when both exist."""
+        later = self.native_value
+        this_hour = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
+        now = self.coordinator.store.value_at(HOURLY_ZERO_DEGREE, this_hour)
+        if later is None or now is None:
+            return None
+        return {"change": later - now}
 
 
 class MeasurementTimeSensor(CoordinatorEntity[StationCoordinator], SensorEntity):

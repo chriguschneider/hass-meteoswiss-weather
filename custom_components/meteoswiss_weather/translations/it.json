@@ -55,6 +55,7 @@
       "temp_min_today": { "name": "Temperatura minima oggi" },
       "precipitation_today": { "name": "Precipitazioni oggi" },
       "zero_degree_level": { "name": "Limite dello zero gradi" },
+      "zero_degree_level_48h": { "name": "Limite dello zero gradi tra 48 h" },
       "measurement_time": { "name": "Orario di misurazione" },
       "snow_height": { "name": "Altezza neve" },
       "new_snow_24h": { "name": "Neve fresca 24 h (modellata)" },
