@@ -150,13 +150,15 @@ async def test_station_step_offers_three_nearest_snow_flat_none_default(
     result = await _advance_to_station_step(hass)
 
     container = result["data_schema"].schema[CONF_IMIS_STATION_CODE].container
-    # The three nearest SNOW_FLAT stations to Köniz plus the "none" sentinel ("").
-    assert set(container) == {"", "STH2", "JAU2", "SHE2"}
+    # The three nearest SNOW_FLAT stations to Köniz plus the "none" sentinel.
+    assert set(container) == {"none", "STH2", "JAU2", "SHE2"}
     # The label carries the station name, elevation and distance.
     assert container["STH2"].startswith("Vorderstocken (1791 m, ")
     assert container["STH2"].endswith(" km)")
-    # Nothing is pre-selected — the feature is opt-in (ADR-0009).
-    assert result["data_schema"]({})[CONF_IMIS_STATION_CODE] == ""
+    # The default is the non-empty sentinel so the HA frontend can submit (#192).
+    default = result["data_schema"]({})[CONF_IMIS_STATION_CODE]
+    assert default == "none"
+    assert default != ""
 
 
 async def test_setup_stores_selected_imis_station(
@@ -177,20 +179,33 @@ async def test_setup_stores_selected_imis_station(
     assert data[CONF_IMIS_STATION_ELEVATION] == 1791.0
 
 
-async def test_setup_without_imis_leaves_it_empty(
+async def test_setup_sentinel_stores_empty_imis(
     hass: HomeAssistant, mock_flow_with_imis
 ) -> None:
-    """Leaving the pick on "none" stores empty IMIS keys (feature stays off)."""
+    """Submitting the 'none' sentinel stores empty IMIS keys (feature stays off)."""
     result = await _advance_to_station_step(hass)
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        user_input={CONF_STATION_ABBR: "BER", CONF_IMIS_STATION_CODE: ""},
+        user_input={CONF_STATION_ABBR: "BER", CONF_IMIS_STATION_CODE: "none"},
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_IMIS_STATION_CODE] == ""
     assert result["data"][CONF_IMIS_STATION_NAME] == ""
     assert result["data"][CONF_IMIS_STATION_ELEVATION] is None
+
+
+def test_resolve_imis_empty_string_maps_to_empty() -> None:
+    """_resolve_imis maps '' (old clients/direct API) to empty stored values."""
+    from custom_components.meteoswiss_weather.config_flow import (
+        MeteoSwissWeatherConfigFlow,
+    )
+
+    flow = MeteoSwissWeatherConfigFlow.__new__(MeteoSwissWeatherConfigFlow)
+    result = flow._resolve_imis({CONF_IMIS_STATION_CODE: ""}, _IMIS_STATIONS)
+    assert result[CONF_IMIS_STATION_CODE] == ""
+    assert result[CONF_IMIS_STATION_NAME] == ""
+    assert result[CONF_IMIS_STATION_ELEVATION] is None
 
 
 def _imis_entry(
@@ -252,7 +267,7 @@ async def test_reconfigure_roundtrip_keeps_imis_pick(
 async def test_reconfigure_can_clear_imis_pick(
     hass: HomeAssistant, mock_flow_with_imis
 ) -> None:
-    """Choosing "none" on reconfigure clears the IMIS pick."""
+    """Choosing the 'none' sentinel on reconfigure clears the IMIS pick."""
     entry = _imis_entry()
     entry.add_to_hass(hass)
 
@@ -266,12 +281,32 @@ async def test_reconfigure_can_clear_imis_pick(
     with patch.object(hass.config_entries, "async_schedule_reload"):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            user_input={CONF_STATION_ABBR: "BER", CONF_IMIS_STATION_CODE: ""},
+            user_input={CONF_STATION_ABBR: "BER", CONF_IMIS_STATION_CODE: "none"},
         )
 
     assert result["reason"] == "reconfigure_successful"
     assert entry.data[CONF_IMIS_STATION_CODE] == ""
     assert entry.data[CONF_IMIS_STATION_ELEVATION] is None
+
+
+async def test_reconfigure_no_imis_preselects_sentinel(
+    hass: HomeAssistant, mock_flow_with_imis
+) -> None:
+    """Reconfigure with no IMIS configured pre-selects the non-empty sentinel."""
+    entry = _imis_entry(code="", name="", elevation=None)
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_POSTAL_CODE: 3098}
+    )
+    assert result["step_id"] == "station"
+    default = result["data_schema"]({})[CONF_IMIS_STATION_CODE]
+    assert default == "none"
+    assert default != ""
 
 
 async def test_station_step_hides_imis_when_list_unavailable(
@@ -360,7 +395,7 @@ async def test_sch2_offered_with_no_data_note(
     assert container["SCH2"].endswith(", currently no data")
     # A station that has data should not carry the note.
     for code, label in container.items():
-        if code and code != "SCH2":
+        if code and code not in ("SCH2", "none"):
             assert ", currently no data" not in label
             assert code in _DAILY_SNOW_CODES_FIXTURE
 
@@ -391,7 +426,7 @@ async def test_daily_snow_failure_shows_plain_labels(
     # The flow still completes successfully.
     result2 = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        user_input={CONF_STATION_ABBR: "BER", CONF_IMIS_STATION_CODE: ""},
+        user_input={CONF_STATION_ABBR: "BER", CONF_IMIS_STATION_CODE: "none"},
     )
     assert result2["type"] == FlowResultType.CREATE_ENTRY
 

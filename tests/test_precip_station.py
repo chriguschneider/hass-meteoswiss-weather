@@ -113,10 +113,12 @@ async def test_station_step_offers_three_nearest_precip_none_default(
     result = await _advance_to_station_step(hass)
 
     container = result["data_schema"].schema[CONF_PRECIP_STATION_ABBR].container
-    # The three nearest precip stations to Köniz plus the "none" sentinel ("").
-    assert set(container) == {"", "BEL", "LAU", "KIE"}
-    # Nothing is pre-selected — the feature is opt-in (ADR-0006).
-    assert result["data_schema"]({})[CONF_PRECIP_STATION_ABBR] == ""
+    # The three nearest precip stations to Köniz plus the "none" sentinel.
+    assert set(container) == {"none", "BEL", "LAU", "KIE"}
+    # The default is the non-empty sentinel so the HA frontend can submit (#192).
+    default = result["data_schema"]({})[CONF_PRECIP_STATION_ABBR]
+    assert default == "none"
+    assert default != ""
 
 
 async def test_setup_stores_selected_precip_station(
@@ -136,19 +138,32 @@ async def test_setup_stores_selected_precip_station(
     assert data[CONF_PRECIP_STATION_NAME] == "Belp"
 
 
-async def test_setup_without_precip_leaves_it_empty(
+async def test_setup_sentinel_stores_empty_precip(
     hass: HomeAssistant, mock_flow_with_precip
 ) -> None:
-    """Leaving the pick on "none" stores empty precip keys (feature stays off)."""
+    """Submitting the 'none' sentinel stores empty precip keys (feature stays off)."""
     result = await _advance_to_station_step(hass)
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        user_input={CONF_STATION_ABBR: "BER", CONF_PRECIP_STATION_ABBR: ""},
+        user_input={CONF_STATION_ABBR: "BER", CONF_PRECIP_STATION_ABBR: "none"},
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_PRECIP_STATION_ABBR] == ""
     assert result["data"][CONF_PRECIP_STATION_NAME] == ""
+
+
+def test_resolve_precip_empty_string_maps_to_empty() -> None:
+    """_resolve_precip maps '' (old clients/direct API) to empty stored values."""
+    from custom_components.meteoswiss_weather.config_flow import (
+        MeteoSwissWeatherConfigFlow,
+    )
+
+    result = MeteoSwissWeatherConfigFlow._resolve_precip(
+        {CONF_PRECIP_STATION_ABBR: ""}, _PRECIP_STATIONS
+    )
+    assert result[CONF_PRECIP_STATION_ABBR] == ""
+    assert result[CONF_PRECIP_STATION_NAME] == ""
 
 
 def _precip_entry(
@@ -206,7 +221,7 @@ async def test_reconfigure_roundtrip_keeps_precip_pick(
 async def test_reconfigure_can_clear_precip_pick(
     hass: HomeAssistant, mock_flow_with_precip
 ) -> None:
-    """Choosing "none" on reconfigure clears the precipitation pick."""
+    """Choosing the 'none' sentinel on reconfigure clears the precipitation pick."""
     entry = _precip_entry()
     entry.add_to_hass(hass)
 
@@ -220,11 +235,31 @@ async def test_reconfigure_can_clear_precip_pick(
     with patch.object(hass.config_entries, "async_schedule_reload"):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
-            user_input={CONF_STATION_ABBR: "BER", CONF_PRECIP_STATION_ABBR: ""},
+            user_input={CONF_STATION_ABBR: "BER", CONF_PRECIP_STATION_ABBR: "none"},
         )
 
     assert result["reason"] == "reconfigure_successful"
     assert entry.data[CONF_PRECIP_STATION_ABBR] == ""
+
+
+async def test_reconfigure_no_precip_preselects_sentinel(
+    hass: HomeAssistant, mock_flow_with_precip
+) -> None:
+    """Reconfigure with no precip configured pre-selects the non-empty sentinel."""
+    entry = _precip_entry(precip_abbr="", precip_name="")
+    entry.add_to_hass(hass)
+
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_POSTAL_CODE: 3098}
+    )
+    assert result["step_id"] == "station"
+    default = result["data_schema"]({})[CONF_PRECIP_STATION_ABBR]
+    assert default == "none"
+    assert default != ""
 
 
 async def test_station_step_hides_precip_when_metadata_unavailable(
