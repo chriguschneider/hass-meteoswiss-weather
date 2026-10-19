@@ -30,6 +30,7 @@ async def async_get_config_entry_diagnostics(
     sc = runtime.station_coordinator
     fc = runtime.forecast_coordinator
     pc = runtime.precip_coordinator
+    ic = runtime.imis_coordinator
 
     return async_redact_data(
         {
@@ -100,6 +101,25 @@ async def async_get_config_entry_diagnostics(
                     "cache_last_modified": pc._cache.last_modified,
                 }
                 if pc is not None
+                else None
+            ),
+            # Optional SLF IMIS snow station (ADR-0009): only present when set.
+            "imis_coordinator": (
+                {
+                    "station_code": ic._code,
+                    "station_name": runtime.imis_station_name,
+                    "elevation": runtime.imis_station_elevation,
+                    "last_update_success": ic.last_update_success,
+                    "last_success": (
+                        ic.last_success.isoformat() if ic.last_success else None
+                    ),
+                    "last_exception": (
+                        str(ic.last_exception) if ic.last_exception else None
+                    ),
+                    "measurement_etag": ic._measurement_cache.etag,
+                    "daily_etag": ic._daily_cache.etag,
+                }
+                if ic is not None
                 else None
             ),
         },

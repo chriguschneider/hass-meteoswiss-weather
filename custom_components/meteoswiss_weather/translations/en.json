@@ -16,6 +16,10 @@
       "title": "MeteoSwiss precipitation-station file format changed",
       "description": "The precipitation-station observation file could not be parsed. The upstream format may have changed. Check `docs/ogd.md` in the integration repository for the current format and open a drift issue if the layout no longer matches."
     },
+    "parse_error_imis": {
+      "title": "SLF IMIS snow-station response format changed",
+      "description": "The SLF IMIS snow-station response could not be parsed. The upstream format may have changed. Check `docs/slf.md` in the integration repository for the current format and open a drift issue if it no longer matches."
+    },
     "forecast_fetch_escalated": {
       "title": "MeteoSwiss forecast file needed a full download",
       "description": "The forecast file `{param}` has required a full or large-prefix download (fetch ladder level 3 or 4) on each of the last three refreshes. This usually means MeteoSwiss re-sorted the file's row order. The last escalated fetch cost {bytes} bytes. Open the integration's diagnostics dump to see the level and layout per parameter, and check `docs/ogd.md` (\"How to read the fetch diagnostics\") to understand the impact. If the layout has permanently changed, open a drift issue so the integration can adapt. The issue clears automatically once the fetch ladder finds a cheap strategy again."
@@ -48,6 +52,8 @@
       "precipitation_today": { "name": "Precipitation today" },
       "zero_degree_level": { "name": "Zero-degree level" },
       "measurement_time": { "name": "Measurement time" },
+      "snow_height": { "name": "Snow height" },
+      "new_snow_24h": { "name": "New snow 24 h (modelled)" },
       "pollen_grasses": { "name": "Grass pollen" },
       "pollen_birch": { "name": "Birch pollen" },
       "pollen_alder": { "name": "Alder pollen" },
@@ -100,10 +106,12 @@
         "description": "Choose the SwissMetNet station to use for current conditions. The nearest station is pre-selected.{radar_hint}",
         "data": {
           "station_abbr": "Weather station",
-          "precip_station_abbr": "Precipitation station (optional)"
+          "precip_station_abbr": "Precipitation station (optional)",
+          "imis_station_code": "Snow station (optional)"
         },
         "data_description": {
-          "precip_station_abbr": "Rain is hyper-local and SwissMetNet is sparse. Optionally pick a nearer station from the automatic precipitation network; when set, only the current precipitation is read from it. Leave as \"None\" to use the main station."
+          "precip_station_abbr": "Rain is hyper-local and SwissMetNet is sparse. Optionally pick a nearer station from the automatic precipitation network; when set, only the current precipitation is read from it. Leave as \"None\" to use the main station.",
+          "imis_station_code": "Snow height at altitude from the SLF IMIS network (WSL Institute for Snow and Avalanche Research). This is the snow depth on a flat study plot off-piste, not the lifts' piste snow depth; values are near 0 in summer. The three nearest stations are offered with elevation and distance; leave as \"None\" to add no snow station."
         }
       },
       "reconfigure": {

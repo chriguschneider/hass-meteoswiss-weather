@@ -38,6 +38,10 @@ from custom_components.meteoswiss_weather.ogd.const import (
     stac_items_url,
     station_now_url,
 )
+from custom_components.meteoswiss_weather.slf.const import (
+    DAILY_SNOW_URL,
+    measurements_url,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -72,6 +76,7 @@ def _register_mock_ogd(
     pollen_station: str | None = None,
     pollen_now_content: bytes | None = None,
     precip_station: str | None = None,
+    imis_station: str | None = None,
 ) -> None:
     """Register upstream URL mocks on ``aioclient_mock``.
 
@@ -182,6 +187,22 @@ def _register_mock_ogd(
             content=_fixture_bytes(f"ogd-smn-precip_{precip_station}_t_now.csv"),
         )
 
+    # SLF IMIS mocks (opt-in, ADR-0009): only registered when a station code is
+    # given. The runtime coordinator polls the station's latest measurement and
+    # the whole-network daily-snow row; the station list is a config-flow concern
+    # (patched there), so it is not registered here.
+    if imis_station is not None:
+        aioclient_mock.get(
+            measurements_url(imis_station),
+            content=_fixture_bytes(
+                f"slf-imis_{imis_station.lower()}_measurements.json"
+            ),
+        )
+        aioclient_mock.get(
+            DAILY_SNOW_URL,
+            content=_fixture_bytes("slf-imis_daily-snow.json"),
+        )
+
     # Pollen mocks (opt-in): only registered when a pollen station is given.
     if pollen_station is not None:
         aioclient_mock.get(
@@ -242,6 +263,18 @@ def mock_ogd_precip(aioclient_mock):
     nearest precipitation station to the Köniz forecast point.
     """
     _register_mock_ogd(aioclient_mock, precip_station="bel")
+    return aioclient_mock
+
+
+@pytest.fixture
+def mock_ogd_imis(aioclient_mock):
+    """Like ``mock_ogd`` but also mocks the STH2 IMIS snow station (ADR-0009).
+
+    Registers the STH2 measurement endpoint and the whole-network daily-snow
+    response in addition to the full weather station + forecast mocks. STH2
+    (Vorderstocken) is one of the three nearest SNOW_FLAT stations to Köniz.
+    """
+    _register_mock_ogd(aioclient_mock, imis_station="STH2")
     return aioclient_mock
 
 
