@@ -91,6 +91,7 @@ from .ogd import (
 from .ogd.const import (
     COLLECTION_FORECAST,
     DAILY_REQUIRED_PARAMS,
+    HOURLY_SUNSHINE,
     HOURLY_WIND_SPEED,
     HOURLY_ZERO_DEGREE,
 )
@@ -904,31 +905,37 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
             except OgdConnectionError as err:
                 raise UpdateFailed(f"daily forecast fetch failed: {err}") from err
             daily = bundle.daily
-            # Pass escalation-ladder metadata when the backend freshly fetched
-            # zprfr0hs; use confirm() when the daily canary said nothing changed
-            # (fetch_meta is empty) so the store keeps the last good provenance
-            # (ADR-0008 section 5).
-            zmeta = bundle.fetch_meta.get(HOURLY_ZERO_DEGREE)
             now = dt_util.utcnow()
-            if zmeta is not None:
-                self.store.put(
-                    HOURLY_ZERO_DEGREE,
-                    bundle.zero_degree_level,
-                    run=run.timestamp,
-                    fetched_at=now,
-                    source="daily",
-                    level=zmeta[0],
-                    requests=zmeta[1],
-                    bytes_fetched=zmeta[2],
-                    layout=zmeta[3],
-                )
-            else:
-                # Canary confirmed: keep the stored series, re-stamp to new run.
-                self.store.confirm(
-                    HOURLY_ZERO_DEGREE,
-                    run=run.timestamp,
-                    fetched_at=now,
-                )
+
+            def _file_block(param: str, values: dict[datetime, float | int]) -> None:
+                """File a daily-path block series, mirroring zprfr0hs handling.
+
+                A fresh fetch passes its escalation metadata to ``put``; an empty
+                ``fetch_meta`` means the daily canary confirmed the run, so the
+                stored series is re-stamped with ``confirm`` instead of re-put
+                (ADR-0008 section 5, issue #178 for sunshine).
+                """
+                meta = bundle.fetch_meta.get(param)
+                if meta is not None:
+                    self.store.put(
+                        param,
+                        values,
+                        run=run.timestamp,
+                        fetched_at=now,
+                        source="daily",
+                        level=meta[0],
+                        requests=meta[1],
+                        bytes_fetched=meta[2],
+                        layout=meta[3],
+                    )
+                else:
+                    self.store.confirm(param, run=run.timestamp, fetched_at=now)
+
+            # Pass escalation-ladder metadata when the backend freshly fetched
+            # the block; use confirm() when the daily canary said nothing changed
+            # (fetch_meta is empty) so the store keeps the last good provenance.
+            _file_block(HOURLY_ZERO_DEGREE, bundle.zero_degree_level)
+            _file_block(HOURLY_SUNSHINE, bundle.sunshine_duration)
             self.last_run = run.timestamp
 
         async_delete_issue(self.hass, DOMAIN, _ISSUE_FORECAST_PARSE)

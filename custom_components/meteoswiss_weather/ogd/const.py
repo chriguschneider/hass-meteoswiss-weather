@@ -112,6 +112,11 @@ HOURLY_WIND_DIRECTION = "dkl010h0"
 HOURLY_PRECIP_PROBABILITY = "rp0003i0"
 HOURLY_ZERO_DEGREE = "zprfr0hs"
 HOURLY_RADIATION = "gre000h0"
+# Sunshine duration, minutes per hour (0-60). Point-major (~5 KB block,
+# measured 2026-10-19), so it rides the daily point blocks like the wind files
+# (ADR-0010). It has no hourly opt-in of its own and is not part of
+# HOURLY_REQUIRED_PARAMS; the daily refresh always fetches it.
+HOURLY_SUNSHINE = "sre000h0"
 HOURLY_REQUIRED_PARAMS: tuple[str, ...] = (
     HOURLY_TEMPERATURE,
     HOURLY_PRECIPITATION,
@@ -213,10 +218,18 @@ DAILY_WIND_PARAMS: tuple[str, ...] = (
 # guardrail is per file: a block that is missing from the run or not
 # point-major degrades its own fields to None and never triggers a full
 # download, and never takes the other blocks down with it.
+#
+# ``sre000h0`` joins the blocks for the daily sunshine total and the hourly
+# sunshine series (issue #178, ADR-0010): MeteoSwiss publishes no daily
+# sunshine parameter either, so the daily figure is the sum over the local
+# calendar day of this point-major hourly block, fetched with every daily
+# refresh regardless of the hourly opt-in. Unlike the other blocks it is not
+# part of HOURLY_REQUIRED_PARAMS — it has no hourly option of its own.
 DAILY_BLOCK_PARAMS: tuple[str, ...] = (
     *DAILY_WIND_PARAMS,
     HOURLY_PRECIP_PROBABILITY,
     HOURLY_ZERO_DEGREE,
+    HOURLY_SUNSHINE,
 )
 
 # Per-file HTTP-Range strategy for the hourly bulk files (issue #50, ADR-0002

@@ -26,6 +26,7 @@ from custom_components.meteoswiss_weather.ogd import (
     OgdParseError,
     Run,
     aggregate_daily_precip_probability,
+    aggregate_daily_sunshine,
     aggregate_daily_wind,
     fetch_points,
     latest_run,
@@ -48,6 +49,7 @@ from custom_components.meteoswiss_weather.ogd.const import (
     HOURLY_PRECIP_PROBABILITY,
     HOURLY_RADIATION,
     HOURLY_REQUIRED_PARAMS,
+    HOURLY_SUNSHINE,
     HOURLY_TEMP_P10,
     HOURLY_TEMP_P90,
     HOURLY_TEMP_PERCENTILE_PARAMS,
@@ -68,7 +70,40 @@ ASSET_BASE = (
 KONIZ_LAT, KONIZ_LON = 46.9245, 7.4147
 
 
+# The only sunshine fixture on disk is the real run 202610190800 (ADR-0010);
+# these pure-Python tests replay the fixture run 202608270200. There is no
+# hand-written sunshine fixture for that run — its rows are derived from the real
+# one by shifting every Date back a whole number of days (the hour-of-day and
+# point-major order are preserved), so the block reads like any other. 53 days is
+# the gap between the two run dates (2026-10-19 → 2026-08-27).
+_SUNSHINE_REAL_FIXTURE = "vnut12.lssw.202610190800.sre000h0.csv"
+_SUNSHINE_RUN_FIXTURE = f"vnut12.lssw.{RUN_TS}.sre000h0.csv"
+_SUNSHINE_REDATE_DAYS = 53
+
+
+def _redated_sunshine_bytes() -> bytes:
+    shift = timedelta(days=_SUNSHINE_REDATE_DAYS)
+    text = (FIXTURES / _SUNSHINE_REAL_FIXTURE).read_text(encoding="iso-8859-1")
+    lines = text.splitlines()
+    out = [lines[0]]
+    for line in lines[1:]:
+        if not line:
+            continue
+        point_id, point_type_id, stamp, value = line.split(";")
+        when = datetime(
+            int(stamp[:4]), int(stamp[4:6]), int(stamp[6:8]),
+            int(stamp[8:10]), int(stamp[10:12]), tzinfo=UTC,
+        ) - shift
+        out.append(
+            f"{point_id};{point_type_id};{when.strftime('%Y%m%d%H%M')};{value}"
+        )
+    return ("\n".join(out) + "\n").encode("iso-8859-1")
+
+
 def _fixture_bytes(name: str) -> bytes:
+    # The fixture-run sunshine file is derived, not stored (see above).
+    if name == _SUNSHINE_RUN_FIXTURE:
+        return _redated_sunshine_bytes()
     return (FIXTURES / name).read_bytes()
 
 
@@ -542,6 +577,14 @@ async def test_bulk_backend_fetch_daily(session) -> None:
     # aggregation tests below derive from these fixtures.
     assert daily[0].native_wind_speed == pytest.approx(15.5)
     assert daily[0].precipitation_probability == pytest.approx(30.0)
+    # Sunshine totals come from the re-dated sre000h0 block (ADR-0010): the two
+    # complete local days it covers get a sum, the rest stay None.
+    assert daily[0].sunshine_duration == 203  # 2026-08-27
+    assert daily[1].sunshine_duration == 71  # 2026-08-28
+    assert all(d.sunshine_duration is None for d in daily[2:])
+    # The hourly sunshine series is carried for the store (issue #178).
+    assert bundle.sunshine_duration
+    assert all(isinstance(v, int) for v in bundle.sunshine_duration.values())
 
 
 # --- hourly parser ----------------------------------------------------------
@@ -1036,6 +1079,63 @@ def test_aggregate_daily_precip_probability_empty_input() -> None:
     assert aggregate_daily_precip_probability(text, _koeniz_point()) == {}
 
 
+# --- daily sunshine aggregation (ADR-0010, issue #178) -----------------------
+
+
+def test_aggregate_daily_sunshine_sums_the_real_fixture() -> None:
+    """Köniz's 2026-10-19 local day totals 203 minutes (docs/ogd.md §Sunshine).
+
+    Against the real run 202610190800 fixture: the sum over the local calendar
+    day of the hourly ``sre000h0`` minutes, the boundary the daily p-variants use.
+    """
+    text = _fixture_text(_SUNSHINE_REAL_FIXTURE)
+    result = aggregate_daily_sunshine(text, _koeniz_point())
+    assert result[date(2026, 10, 19)] == 203
+    assert result[date(2026, 10, 20)] == 71
+    assert all(isinstance(v, int) for v in result.values())
+
+
+def test_aggregate_daily_sunshine_skips_partial_days() -> None:
+    """A day with fewer than 23 rows gets no total (derived from real rows).
+
+    The real fixture's two Köniz days are complete; trimming one to 12 rows
+    leaves that local day short of the 23-row completeness bar, so it is absent
+    while the complete day survives.
+    """
+    lines = _fixture_text(_SUNSHINE_REAL_FIXTURE).splitlines()
+    header = lines[0]
+    koeniz = [ln for ln in lines[1:] if ln.startswith("309800;2;")]
+    # Keep the first complete local day (24 rows) plus 12 rows of the next one.
+    trimmed = "\n".join([header, *koeniz[:36]]) + "\n"
+    result = aggregate_daily_sunshine(trimmed, _koeniz_point())
+    assert result == {date(2026, 10, 19): 203}
+
+
+def test_aggregate_daily_sunshine_discriminates_on_point_type() -> None:
+    """A row with the right id but wrong point type is ignored.
+
+    A full local day for the postal-code point (24 rows from local midnight,
+    which is 22:00 UTC the previous day in CEST) sums its minutes; a same-id
+    station-type row placed inside that day is excluded from the total.
+    """
+    # 2026-08-26 22:00 UTC .. 2026-08-27 21:00 UTC = local day 2026-08-27.
+    start = datetime(2026, 8, 26, 22, 0, tzinfo=UTC)
+    rows = ["309800;1;202608271200;99"]  # station type → ignored
+    rows += [
+        f"309800;2;{(start + timedelta(hours=h)).strftime('%Y%m%d%H%M')};5"
+        for h in range(24)
+    ]
+    text = f"point_id;point_type_id;Date;{HOURLY_SUNSHINE}\n" + "\n".join(rows) + "\n"
+    result = aggregate_daily_sunshine(text, _koeniz_point())
+    assert result == {date(2026, 8, 27): 24 * 5}  # the 99 station row never counts
+
+
+def test_aggregate_daily_sunshine_empty_input() -> None:
+    """A header-only block yields an empty result, not an error."""
+    text = f"point_id;point_type_id;Date;{HOURLY_SUNSHINE}\n"
+    assert aggregate_daily_sunshine(text, _koeniz_point()) == {}
+
+
 # --- backend daily wind (point-major fixture) ----------------------------------
 
 
@@ -1069,6 +1169,36 @@ async def test_bulk_backend_fetch_daily_with_point_major_wind(session) -> None:
     # Probability comes from the point-major rp0003i0 block; the synthetic block
     # is h for 309800;2, so the CEST 2026-08-27 max (UTC hours 0–21) is 21.
     assert daily[0].precipitation_probability == pytest.approx(21.0)
+
+
+async def test_bulk_backend_missing_sunshine_keeps_the_rest(session) -> None:
+    """An unreadable sunshine block leaves ``sunshine_duration`` None and the rest
+    of the daily forecast intact (ADR-0010, issue #178).
+
+    Sunshine is a best-effort addition on the default daily refresh, like the
+    wind and probability blocks: a hiccup on ``sre000h0`` degrades only its own
+    fields, never the temperatures or the other blocks.
+    """
+    with aioresponses() as mock:
+        mock.get(ITEMS_URL, status=200,
+                 body=_fixture_bytes("ogd-local-forecasting_items.json"))
+        for param in DAILY_REQUIRED_PARAMS:
+            mock.get(_asset_url(param), status=200,
+                     body=_fixture_bytes(f"vnut12.lssw.{RUN_TS}.{param}.csv"))
+        for param in (*DAILY_WIND_PARAMS, HOURLY_PRECIP_PROBABILITY,
+                      HOURLY_ZERO_DEGREE):
+            mock.get(_asset_url(param), status=200,
+                     body=_point_major_wind_text(param).encode("iso-8859-1"))
+        mock.get(_asset_url(HOURLY_SUNSHINE), status=503, repeat=True)
+        bundle = await BulkCsvBackend(session).fetch_daily(_koeniz_point())
+
+    daily = bundle.daily
+    assert daily[0].temp_max == 29.3
+    assert daily[0].native_wind_speed == pytest.approx(15.5)
+    assert daily[0].precipitation_probability == pytest.approx(21.0)
+    # Sunshine degraded cleanly: no per-day totals and no hourly series.
+    assert all(d.sunshine_duration is None for d in daily)
+    assert bundle.sunshine_duration == {}
 
 
 @freeze_time(datetime(2026, 8, 27, 1, 30, tzinfo=UTC))
@@ -1247,7 +1377,9 @@ async def test_bulk_backend_fetch_daily_wind_fetch_error_degrades_to_none(
     assert all(d.native_wind_gust_speed is None for d in daily)
     assert all(d.wind_bearing is None for d in daily)
     assert all(d.precipitation_probability is None for d in daily)
+    assert all(d.sunshine_duration is None for d in daily)
     assert bundle.zero_degree_level == {}
+    assert bundle.sunshine_duration == {}
     # The daily-required files are cached for the run; the failed blocks are not,
     # so a later refresh retries only them (ADR-0008, issue #123).
     assert backend._series_run is not None

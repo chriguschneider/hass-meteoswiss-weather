@@ -29,12 +29,14 @@ from .const import (
     HOURLY_HORIZON_FULL_RUN,
     HOURLY_PRECIP_PROBABILITY,
     HOURLY_REQUIRED_PARAMS,
+    HOURLY_SUNSHINE,
     HOURLY_ZERO_DEGREE,
     OGD_MAX_CONCURRENT_REQUESTS,
 )
 from .forecast import (
     HOURLY_FIELD_BY_PARAM,
     aggregate_daily_precip_probability,
+    aggregate_daily_sunshine,
     aggregate_daily_wind,
     parse_daily,
     parse_hourly,
@@ -633,6 +635,20 @@ class BulkCsvBackend:
                 for d in daily
             ]
 
+        # The daily sunshine total is the sum of the sre000h0 block over each
+        # complete local calendar day (issue #178, ADR-0010); no daily sunshine
+        # parameter exists upstream. Partial days stay None.
+        if HOURLY_SUNSHINE in block_texts:
+            sun_by_day = await loop.run_in_executor(
+                None,
+                aggregate_daily_sunshine,
+                block_texts[HOURLY_SUNSHINE],
+                point,
+            )
+            daily = [
+                replace(d, sunshine_duration=sun_by_day.get(d.date)) for d in daily
+            ]
+
         # The zero-degree block is the hourly parser's job (it is an hourly
         # file); keep only the hours that carry a value (issue #107).
         zero_degree: dict[datetime, float] = {}
@@ -649,6 +665,23 @@ class BulkCsvBackend:
                 if h.zero_degree_level is not None
             }
 
+        # The sunshine block is likewise an hourly file; keep the per-hour
+        # minutes so the coordinator can file them in the store for the hourly
+        # forecast (issue #178, ADR-0010).
+        sunshine: dict[datetime, int] = {}
+        if HOURLY_SUNSHINE in block_texts:
+            hours = await loop.run_in_executor(
+                None,
+                parse_hourly,
+                {HOURLY_SUNSHINE: block_texts[HOURLY_SUNSHINE]},
+                point,
+            )
+            sunshine = {
+                h.time: h.sunshine_duration
+                for h in hours
+                if h.sunshine_duration is not None
+            }
+
         # Collect fetch metadata for every parameter actually fetched in this
         # call (not served from cache). The coordinator uses it to pass
         # provenance to the store and to decide put vs confirm (ADR-0008 §5).
@@ -658,7 +691,10 @@ class BulkCsvBackend:
             if (meta := self._last_meta.get(p)) is not None
         }
         bundle = DailyBundle(
-            daily=daily, zero_degree_level=zero_degree, fetch_meta=fetch_meta
+            daily=daily,
+            zero_degree_level=zero_degree,
+            sunshine_duration=sunshine,
+            fetch_meta=fetch_meta,
         )
         # Remember it so the next run's canary can prove it still holds (#125).
         self._last_daily = bundle

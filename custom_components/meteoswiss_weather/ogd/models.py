@@ -136,6 +136,12 @@ class DailyForecast:
     native_wind_speed: float | None = None
     native_wind_gust_speed: float | None = None
     wind_bearing: float | None = None
+    # Sunshine duration (minutes): the sum of the hourly ``sre000h0`` block over
+    # the local calendar day, set only for complete days (23-25 rows across DST)
+    # and ``None`` otherwise or when the block is missing (issue #178, ADR-0010).
+    # MeteoSwiss publishes no daily sunshine parameter, so this is derived like
+    # ``precipitation_probability`` from the point-major hourly block.
+    sunshine_duration: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +166,13 @@ class DailyBundle:
 
     daily: list[DailyForecast]
     zero_degree_level: dict[datetime, float] = field(default_factory=dict)
+    # Hourly sunshine series read from the ``sre000h0`` point block of this run
+    # (issue #178, ADR-0010): each forecast hour (aware UTC datetime, top of the
+    # hour) mapped to its minutes of sunshine. Filed in the forecast store by the
+    # coordinator exactly like ``zero_degree_level`` so a later hourly forecast
+    # can carry ``sunshine_duration``. Empty when the block could not be fetched
+    # without a full download or is not published for the point.
+    sunshine_duration: dict[datetime, int] = field(default_factory=dict)
     fetch_meta: dict[str, tuple[int, int, int, str | None]] = field(
         default_factory=dict
     )
@@ -191,6 +204,10 @@ class HourlyForecast:
     zero_degree_level: float | None = None
     # B10: global radiation (W/m²).
     radiation: float | None = None
+    # Sunshine duration in this hour (minutes, 0-60). Filed in the forecast
+    # store from the daily point block (issue #178, ADR-0010); it never gates
+    # whether an hour renders.
+    sunshine_duration: int | None = None
     # B9: cloud cover by layer (%), high/mid/low. Off unless the cloud-layer
     # option is on — the three files are date-major and expensive (issue #69).
     cloud_high: float | None = None

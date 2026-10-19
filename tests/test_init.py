@@ -32,6 +32,7 @@ from custom_components.meteoswiss_weather.ogd.const import (
     DAILY_REQUIRED_PARAMS,
     HOURLY_PRECIP_PROBABILITY,
     HOURLY_REQUIRED_PARAMS,
+    HOURLY_SUNSHINE,
     HOURLY_SYMBOL,
     HOURLY_ZERO_DEGREE,
     station_now_url,
@@ -452,6 +453,41 @@ async def test_zero_degree_block_fetched_with_daily_refresh_hourly_off(
     assert not coordinator.store.is_stale(HOURLY_ZERO_DEGREE, coordinator.last_run)
     assert _block_calls(mock_ogd, HOURLY_ZERO_DEGREE) == 1
     assert _hourly_calls(mock_ogd) == 0
+
+
+async def test_sunshine_block_fetched_with_daily_refresh_hourly_off(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """The sunshine block rides along with the daily refresh (ADR-0010, #178).
+
+    With the hourly option off the first refresh block-fetches ``sre000h0``, the
+    daily forecast carries the per-day sunshine totals for the complete days, and
+    the hourly series is filed in the store — all without any hourly-only file.
+    """
+    config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    coordinator = config_entry.runtime_data.forecast_coordinator
+    # The block is fetched exactly once; no hourly-only file is touched.
+    assert _block_calls(mock_ogd, HOURLY_SUNSHINE) == 1
+    assert _hourly_calls(mock_ogd) == 0
+
+    # The daily forecast carries the local-day sums for the two complete days of
+    # the re-dated fixture (203 min on 2026-08-27, 71 on 2026-08-28); the partial
+    # tail days stay None.
+    daily = coordinator.data.daily
+    assert daily[0].sunshine_duration == 203
+    assert daily[1].sunshine_duration == 71
+    assert all(d.sunshine_duration is None for d in daily[2:])
+
+    # The hourly series is in the store, filed by the daily path.
+    series = coordinator.store.get(HOURLY_SUNSHINE)
+    assert series is not None
+    assert series.provenance.source == "daily"
+    assert all(isinstance(v, int) for v in series.values.values())
 
 
 async def test_zero_degree_block_not_fetched_twice_with_hourly_on(

@@ -26,6 +26,7 @@ from custom_components.meteoswiss_weather.ogd.const import (
     DAILY_REQUIRED_PARAMS,
     HOURLY_CLOUD_PARAMS,
     HOURLY_REQUIRED_PARAMS,
+    HOURLY_SUNSHINE,
     HOURLY_TEMP_PERCENTILE_PARAMS,
     META_DATAINVENTORY_URL,
     META_POINT_URL,
@@ -54,6 +55,49 @@ _ASSET_BASE = (
 
 def _fixture_bytes(name: str) -> bytes:
     return (FIXTURES / name).read_bytes()
+
+
+# The real sunshine fixture is from run 202610190800 (docs/ogd.md, "Sunshine
+# duration"); the daily-path tests all use the fixture run 202608270200. There
+# is no hand-written sunshine fixture for that run — its rows are derived from
+# the real one by shifting every Date back a whole number of days so they land
+# in the fixture week. Whole days preserve the hour-of-day pattern (local
+# midnight alignment, the sunshine day/night shape), so the derived file is a
+# faithful point-major block: 53 days is the gap between the two run dates
+# (2026-10-19 → 2026-08-27).
+_SUNSHINE_REAL_FIXTURE = "vnut12.lssw.202610190800.sre000h0.csv"
+_SUNSHINE_REDATE_DAYS = 53
+
+
+def _redated_sunshine_bytes() -> bytes:
+    """The real sunshine fixture re-dated into the fixture run's week.
+
+    Every ``Date`` cell (``YYYYMMDDHHMM`` UTC) is shifted back
+    :data:`_SUNSHINE_REDATE_DAYS` whole days; nothing else changes, so the
+    point-major row order and the integer sunshine values are the real ones.
+    """
+    from datetime import timedelta
+
+    shift = timedelta(days=_SUNSHINE_REDATE_DAYS)
+    text = (FIXTURES / _SUNSHINE_REAL_FIXTURE).read_text(encoding="iso-8859-1")
+    lines = text.splitlines()
+    out = [lines[0]]  # header
+    for line in lines[1:]:
+        if not line:
+            continue
+        point_id, point_type_id, stamp, value = line.split(";")
+        when = datetime(
+            int(stamp[:4]),
+            int(stamp[4:6]),
+            int(stamp[6:8]),
+            int(stamp[8:10]),
+            int(stamp[10:12]),
+            tzinfo=UTC,
+        ) - shift
+        out.append(
+            f"{point_id};{point_type_id};{when.strftime('%Y%m%d%H%M')};{value}"
+        )
+    return ("\n".join(out) + "\n").encode("iso-8859-1")
 
 
 @pytest.fixture(autouse=True)
@@ -152,10 +196,16 @@ def _register_mock_ogd(
     # unconditionally. The wind fixtures are date-major, so their guardrail
     # fires and the daily wind fields are None; the zero-degree fixture keeps
     # the measured point-major order, so the sensor gets a value.
+    # ``sre000h0`` (sunshine, ADR-0010) has no fixture for this run, so its rows
+    # are derived from the real 202610190800 fixture (see _redated_sunshine_bytes).
     for param in DAILY_BLOCK_PARAMS:
         aioclient_mock.get(
             f"{_ASSET_BASE}/vnut12.lssw.{_RUN_TS}.{param}.csv",
-            content=_fixture_bytes(f"vnut12.lssw.{_RUN_TS}.{param}.csv"),
+            content=(
+                _redated_sunshine_bytes()
+                if param == HOURLY_SUNSHINE
+                else _fixture_bytes(f"vnut12.lssw.{_RUN_TS}.{param}.csv")
+            ),
         )
 
     # Hourly parameter CSV files (opt-in). Registered unconditionally so tests

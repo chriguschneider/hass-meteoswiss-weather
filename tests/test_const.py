@@ -27,6 +27,7 @@ from custom_components.meteoswiss_weather.ogd.const import (
     HOURLY_POINT_MAJOR_PARAMS,
     HOURLY_PRECIP_PROBABILITY,
     HOURLY_REQUIRED_PARAMS,
+    HOURLY_SUNSHINE,
     HOURLY_TEMP_PERCENTILE_PARAMS,
     HOURLY_ZERO_DEGREE,
     SERIES_REQUEST_CAP,
@@ -137,17 +138,26 @@ def test_gated_files_are_disjoint_from_the_point_major_group() -> None:
 
 
 def test_daily_block_params_are_point_major_files() -> None:
-    """The blocks fetched with every daily refresh: wind, probability, zero-degree.
+    """The blocks fetched with every daily refresh: wind, probability, zero-degree,
+    sunshine.
 
-    Every one of them must be in the point-major group: the daily refresh
-    fetches them as ~5 KB point blocks, and a date-major file there would cost
-    a horizon prefix on the default path (issue #60, issue #107).
+    Every one of them is a point-major ~5 KB block, so the daily refresh fetches
+    them cheaply and a date-major file there would cost a horizon prefix on the
+    default path (issue #60, issue #107, issue #178). ``sre000h0`` (sunshine,
+    ADR-0010) is the one block with no hourly opt-in of its own, so it is the only
+    one not also in ``HOURLY_POINT_MAJOR_PARAMS``.
     """
     assert set(DAILY_BLOCK_PARAMS) == set(DAILY_WIND_PARAMS) | {
         HOURLY_PRECIP_PROBABILITY,
         HOURLY_ZERO_DEGREE,
+        HOURLY_SUNSHINE,
     }
-    assert set(DAILY_BLOCK_PARAMS) <= set(HOURLY_POINT_MAJOR_PARAMS)
+    assert set(DAILY_BLOCK_PARAMS) <= set(HOURLY_POINT_MAJOR_PARAMS) | {
+        HOURLY_SUNSHINE
+    }
+    # Sunshine rides the daily blocks but is not part of the hourly opt-in set.
+    assert HOURLY_SUNSHINE not in HOURLY_REQUIRED_PARAMS
+    assert HOURLY_SUNSHINE not in HOURLY_POINT_MAJOR_PARAMS
 
 
 def test_series_request_cap_is_the_owner_decision() -> None:
