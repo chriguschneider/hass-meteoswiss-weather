@@ -33,8 +33,11 @@ different places. It therefore gets its own entry and its own device.
   no migration is needed.
 - A snow-station entry sets up **only** the IMIS coordinator and the sensor
   platform: no weather entity, no MeteoSwiss request of any kind. Its
-  device is the station ("{name} ({elevation} m)", manufacturer SLF). It
-  carries every IMIS value as a sensor (ADR-0009 amendment).
+  device is the station (name = the station label, model = `"IMIS snow
+  station, <elevation> m"`, manufacturer SLF). It carries a static
+  `elevation` sensor (device class DISTANCE, unit m, unique id
+  `imis-<code>_elevation`, always available, SLF attribution) plus every
+  IMIS value as a sensor (ADR-0009 amendment).
 - Point entries no longer offer or read an IMIS station: the snow field
   leaves the station step of setup and reconfigure, and keys left in
   `entry.data` by v0.5.0–v0.6.2 are ignored.
