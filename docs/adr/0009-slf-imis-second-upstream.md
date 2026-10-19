@@ -1,6 +1,6 @@
 # ADR-0009: SLF IMIS snow stations as a second official upstream
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by ADR-0011 (snow station as its own entry)
 - **Date:** 2026-10-19
 
 ## Context
