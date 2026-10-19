@@ -47,12 +47,18 @@ From the ADRs:
 - **ADR-0001** — the only upstream is the official open data under
   `data.geo.admin.ch`. Flag any URL on `meteoswiss-app.ch`,
   `meteoschweiz.admin.ch/product`, `meteosuisse.admin.ch` or any other
-  host, and any HTML scraping. Flag HA imports inside
+  host, and any HTML scraping. Exception (ADR-0009): the three IMIS
+  endpoints on `measurement-api.slf.ch`, requested only from `slf/`. Flag HA imports inside
   `custom_components/meteoswiss_weather/ogd/` (the client stays pure).
 - **ADR-0002** — traffic budget. Flag an hourly local-forecast fetch
   interval below 3 h, hourly parameters fetched when the option is off,
   more hourly parameter files than the documented minimum set, a download
   without conditional headers, or CSV parsing on the event loop.
+- **ADR-0009** — SLF IMIS. Flag any SLF endpoint beyond
+  `/public/api/imis/stations`, `/public/api/imis/station/{code}/measurements`
+  and `/public/api/imis/daily-snow` (never the bulk `/imis/measurements`),
+  HA imports inside `slf/`, an SLF request when no IMIS station is
+  configured, or an SLF-fed entity carrying the MeteoSwiss attribution.
 - **ADR-0003** — no code shared with or imported from the radar
   integration; no radar features (map, frames, INCA) in this repo.
 
