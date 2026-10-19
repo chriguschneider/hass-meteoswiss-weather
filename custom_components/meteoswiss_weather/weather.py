@@ -294,6 +294,9 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
             forecast["native_wind_gust_speed"] = day.native_wind_gust_speed
         if day.wind_bearing is not None:
             forecast["wind_bearing"] = day.wind_bearing
+        # ADR-0010: daily total sunshine (minutes), absent for partial days.
+        if day.sunshine_duration is not None:
+            forecast["sunshine_duration"] = day.sunshine_duration
         return forecast
 
     # -- hourly forecast (opt-in, ADR-0002) ---------------------------------
@@ -362,6 +365,9 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
             forecast["radiation"] = hour.radiation
         if hour.zero_degree_level is not None:
             forecast["zero_degree_level"] = hour.zero_degree_level
+        # ADR-0010: sunshine minutes this hour, from the daily point block.
+        if hour.sunshine_duration is not None:
+            forecast["sunshine_duration"] = hour.sunshine_duration
         return forecast
 
     @callback

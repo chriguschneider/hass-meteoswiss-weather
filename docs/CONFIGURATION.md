@@ -81,7 +81,7 @@ One `weather` entity per config entry.
 
 **Forecast:**
 
-- **Daily forecast**: 9 days, always available. Temperature high/low, precipitation, precipitation probability, wind (speed, gust, bearing), and weather condition for each day.
+- **Daily forecast**: 9 days, always available. Temperature high/low, precipitation, precipitation probability, wind (speed, gust, bearing), weather condition, and `sunshine_duration` (total minutes of sunshine for the day, fetched without the hourly option; absent for incomplete days at the tail of the run) for each day.
 - **Hourly forecast**: When enabled in options (see below). Per hour:
 
   | Key | Description | Unit |
@@ -93,6 +93,7 @@ One `weather` entity per config entry.
   | `wind_speed` / `wind_gust_speed` / `wind_bearing` | Hourly mean wind, gust and direction | km/h, km/h, ° |
   | `radiation` | Global (incoming short-wave) solar radiation | W/m² |
   | `zero_degree_level` | Altitude of the 0 °C isotherm (snow-line material) | m |
+  | `sunshine_duration` | Minutes of sunshine in this hour (0–60), from the daily point block | min |
   | `cloud_coverage` | Total cloud cover, maximum of the three layers — **only with the cloud-layers option** | % |
   | `cloud_coverage_high` / `_mid` / `_low` | The three cloud layers — **only with the cloud-layers option** | % |
   | `temperature_p10` / `temperature_p90` | 10th/90th percentile of the temperature forecast — **only with the temperature-percentiles option** | °C |

@@ -1103,9 +1103,11 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         if not self.hourly_refresher.enabled:
             return None
         this_hour = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
-        hourly = hourly_from_store(
-            self.store, self.hourly_refresher.demanded_params, start=this_hour
-        )
+        # HOURLY_SUNSHINE is always filed by the daily refresh (ADR-0010) and
+        # never gates whether an hour renders; add it to the lookup so sunshine
+        # minutes flow through to _as_hourly_forecast.
+        params = (*self.hourly_refresher.demanded_params, HOURLY_SUNSHINE)
+        hourly = hourly_from_store(self.store, params, start=this_hour)
         return hourly or None
 
 

@@ -583,6 +583,163 @@ async def test_forecast_refresh_reaches_subscribers(
     assert pushes[0]
 
 
+# --- sunshine duration in forecast entries (ADR-0010, #181) ----------------
+
+
+async def test_daily_forecast_sunshine_duration(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Daily entries carry ``sunshine_duration`` for complete days, absent otherwise.
+
+    The fixture covers exactly two complete local days (203 min on 2026-08-27
+    and 71 min on 2026-08-28); the remaining seven days have no sunshine rows
+    and must not carry the key at all.
+    """
+    await _setup(hass, config_entry)
+
+    response = await hass.services.async_call(
+        "weather",
+        "get_forecasts",
+        {"entity_id": _ENTITY_ID, "type": "daily"},
+        blocking=True,
+        return_response=True,
+    )
+
+    forecasts = response[_ENTITY_ID]["forecast"]
+    assert len(forecasts) == 9
+
+    assert forecasts[0]["datetime"] == "2026-08-27"
+    assert forecasts[0]["sunshine_duration"] == 203
+    assert forecasts[1]["datetime"] == "2026-08-28"
+    assert forecasts[1]["sunshine_duration"] == 71
+
+    # Remaining days have no rows in the sunshine fixture: key must be absent.
+    for entry in forecasts[2:]:
+        assert "sunshine_duration" not in entry, (
+            f"unexpected sunshine_duration on {entry['datetime']}"
+        )
+
+
+async def test_daily_sunshine_without_hourly_option(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Sunshine in the daily forecast does not require the hourly opt-in."""
+    await _setup(hass, config_entry)
+
+    response = await hass.services.async_call(
+        "weather",
+        "get_forecasts",
+        {"entity_id": _ENTITY_ID, "type": "daily"},
+        blocking=True,
+        return_response=True,
+    )
+
+    forecasts = response[_ENTITY_ID]["forecast"]
+    # Verify the hourly feature is NOT advertised (option is off).
+    features = hass.states.get(_ENTITY_ID).attributes["supported_features"]
+    assert not features & WeatherEntityFeature.FORECAST_HOURLY
+
+    # Sunshine still appears in the daily forecast.
+    assert forecasts[0]["sunshine_duration"] == 203
+
+
+async def test_hourly_forecast_sunshine_duration(
+    hass: HomeAssistant,
+    hourly_config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Hourly entries carry ``sunshine_duration`` from the daily point block.
+
+    The sunshine block is fetched with every daily refresh (ADR-0010), filed in
+    the store, and surfaced in the hourly forecast without a separate opt-in.
+    At midnight the value is 0; the fixture's first non-zero hour is 07:00 UTC
+    with 30 minutes.
+    """
+    with freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC)):
+        await _setup(hass, hourly_config_entry)
+
+        response = await hass.services.async_call(
+            "weather",
+            "get_forecasts",
+            {"entity_id": _ENTITY_ID, "type": "hourly"},
+            blocking=True,
+            return_response=True,
+        )
+
+    forecasts = response[_ENTITY_ID]["forecast"]
+    assert len(forecasts) == 24
+
+    # The first hour (midnight) has sunshine_duration == 0 (darkness, still present).
+    first = forecasts[0]
+    assert first["datetime"] == "2026-08-27T00:00:00+00:00"
+    assert "sunshine_duration" in first
+    assert first["sunshine_duration"] == 0
+
+    # Hour 07:00 UTC is the first non-zero hour in the fixture.
+    hour_07 = next(
+        f for f in forecasts if f["datetime"] == "2026-08-27T07:00:00+00:00"
+    )
+    assert hour_07["sunshine_duration"] == 30
+
+
+def test_hourly_sunshine_absent_when_none() -> None:
+    """``sunshine_duration`` is absent rather than ``None`` when not available.
+
+    Follows the same optional-key convention as ``radiation`` and
+    ``zero_degree_level`` (ADR-0010).
+    """
+    from custom_components.meteoswiss_weather.ogd import HourlyForecast
+    from custom_components.meteoswiss_weather.weather import MeteoSwissWeather
+
+    hour = HourlyForecast(
+        time=datetime(2026, 8, 27, 0, 0, tzinfo=UTC),
+        temperature=10.0,
+        precipitation=0.0,
+        symbol=1,
+        wind_speed_kmh=5.0,
+        gust_kmh=8.0,
+        wind_bearing=180.0,
+        sunshine_duration=None,
+    )
+    result = MeteoSwissWeather._as_hourly_forecast(hour)
+    assert "sunshine_duration" not in result
+    # But the entry itself is complete and contains the core fields.
+    assert result["native_temperature"] == 10.0
+
+
+async def test_hourly_sunshine_renders_when_present(
+    hass: HomeAssistant,
+    hourly_config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """An hour with ``sunshine_duration == 0`` still renders (0 is valid, not None).
+
+    A zero-sunshine hour (e.g. midnight) must not be dropped from the forecast;
+    sunshine never gates whether an hour is emitted (ADR-0010).
+    """
+    with freeze_time(datetime(2026, 8, 27, 0, 0, tzinfo=UTC)):
+        await _setup(hass, hourly_config_entry)
+
+        response = await hass.services.async_call(
+            "weather",
+            "get_forecasts",
+            {"entity_id": _ENTITY_ID, "type": "hourly"},
+            blocking=True,
+            return_response=True,
+        )
+
+    forecasts = response[_ENTITY_ID]["forecast"]
+    # All 24 hours must be present, even those with sunshine_duration == 0.
+    assert len(forecasts) == 24
+    midnight_hour = forecasts[0]
+    assert midnight_hour["datetime"] == "2026-08-27T00:00:00+00:00"
+    assert midnight_hour["sunshine_duration"] == 0
+
+
 async def test_hourly_subscribers_drop_the_past_hour(
     hass: HomeAssistant,
     hourly_config_entry: MockConfigEntry,
