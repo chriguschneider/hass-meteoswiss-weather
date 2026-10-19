@@ -169,10 +169,12 @@ def test_nearest_snow_stations_order_and_codes() -> None:
 
 
 def test_nearest_snow_stations_limit() -> None:
-    """``limit`` caps the result list."""
+    """``limit`` caps the result list; None (default) returns all SNOW_FLAT."""
     stations = _load_stations()
     assert len(nearest_snow_stations(stations, KONIZ_LAT, KONIZ_LON, limit=1)) == 1
     assert len(nearest_snow_stations(stations, KONIZ_LAT, KONIZ_LON, limit=2)) == 2
+    snow_flat_count = sum(1 for s in stations if s.type == SNOW_FLAT)
+    assert len(nearest_snow_stations(stations, KONIZ_LAT, KONIZ_LON)) == snow_flat_count
 
 
 def test_nearest_snow_stations_excludes_wind() -> None:
