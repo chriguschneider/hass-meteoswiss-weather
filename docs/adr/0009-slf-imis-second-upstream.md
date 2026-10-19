@@ -97,8 +97,11 @@ Decided by the owner:
   restarts. Before the first real value has ever arrived they show **0**
   as a placeholder. Both cases are marked: `measured_at` (time of the
   value shown, `null` for the placeholder) and `placeholder: true|false`.
-- `NO_DATA` is logged at warning once per outage, not every poll; a repair
-  issue appears only after 30 days without data.
+- A silent station is reported, not hidden: a warning in the log **once a
+  day** while it stays silent (never every poll), and a repair issue
+  (Settings → Repairs) as soon as the API answers `NO_DATA`, i.e. after 7
+  days without data. The repair issue names the station and the time of
+  its last real value, and clears itself when data returns.
 - Accepted risk: an entry set up in winter on a silent station shows 0 cm
   until the station reports.
 
