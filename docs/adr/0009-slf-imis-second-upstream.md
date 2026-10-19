@@ -102,6 +102,9 @@ Decided by the owner:
   (Settings → Repairs) as soon as the API answers `NO_DATA`, i.e. after 7
   days without data. The repair issue names the station and the time of
   its last real value, and clears itself when data returns.
+- Only stations **configured on an entry** are reported. A silent station
+  that is merely listed in the pick gets its label and nothing else: no
+  request, no log line, no repair issue.
 - Accepted risk: an entry set up in winter on a silent station shows 0 cm
   until the station reports.
 
