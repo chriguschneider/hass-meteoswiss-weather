@@ -61,9 +61,17 @@ class ImisMeasurement:
     time: datetime
     snow_height_cm: float | None = None
     air_temperature: float | None = None
+    humidity: float | None = None
     wind_speed_ms: float | None = None
     gust_ms: float | None = None
     wind_bearing: float | None = None
+    wind_bearing_sd: float | None = None
+    snow_surface_temperature: float | None = None
+    snow_temperature_0cm: float | None = None
+    snow_temperature_25cm: float | None = None
+    snow_temperature_50cm: float | None = None
+    snow_temperature_100cm: float | None = None
+    reflected_shortwave_radiation: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

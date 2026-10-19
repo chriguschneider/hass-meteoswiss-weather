@@ -203,6 +203,24 @@ async def test_fetch_latest_returns_newest_row(session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_fetch_latest_new_fields_sth2(session) -> None:
+    """All new ImisMeasurement fields are parsed from the newest STH2 row."""
+    url = measurements_url("STH2")
+    with aioresponses() as mock:
+        mock.get(url, body=_fixture_bytes("slf-imis_sth2_measurements.json"))
+        measurement = await fetch_imis_latest(session, "STH2")
+    # Newest row: 2026-10-19T06:00:00Z
+    assert measurement.humidity == pytest.approx(80.2)
+    assert measurement.wind_bearing_sd == pytest.approx(35.79)
+    assert measurement.snow_surface_temperature == pytest.approx(-0.621)
+    assert measurement.snow_temperature_0cm == pytest.approx(6.659)
+    assert measurement.snow_temperature_25cm == pytest.approx(0.294)
+    assert measurement.snow_temperature_50cm == pytest.approx(2.808)
+    assert measurement.snow_temperature_100cm == pytest.approx(3.86)
+    assert measurement.reflected_shortwave_radiation == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
 async def test_fetch_latest_wind_station_hs_none(session) -> None:
     """A WIND station returns HS=null → snow_height_cm is None."""
     url = measurements_url("JAU1")
@@ -211,6 +229,21 @@ async def test_fetch_latest_wind_station_hs_none(session) -> None:
         measurement = await fetch_imis_latest(session, "JAU1")
     assert measurement.snow_height_cm is None
     assert measurement.air_temperature == pytest.approx(6.614)
+
+
+@pytest.mark.asyncio
+async def test_fetch_latest_wind_station_snow_fields_none(session) -> None:
+    """A WIND station returns null snow fields → snow temperature fields are None."""
+    url = measurements_url("JAU1")
+    with aioresponses() as mock:
+        mock.get(url, body=_fixture_bytes("slf-imis_jau1_measurements.json"))
+        measurement = await fetch_imis_latest(session, "JAU1")
+    assert measurement.snow_surface_temperature is None
+    assert measurement.snow_temperature_0cm is None
+    assert measurement.snow_temperature_25cm is None
+    assert measurement.snow_temperature_50cm is None
+    assert measurement.snow_temperature_100cm is None
+    assert measurement.reflected_shortwave_radiation is None
 
 
 @pytest.mark.asyncio

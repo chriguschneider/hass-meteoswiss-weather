@@ -105,9 +105,17 @@ def _parse_measurement(obj: dict) -> ImisMeasurement:
         time=ts,
         snow_height_cm=_opt_float(obj.get("HS")),
         air_temperature=_opt_float(obj.get("TA_30MIN_MEAN")),
+        humidity=_opt_float(obj.get("RH_30MIN_MEAN")),
         wind_speed_ms=_opt_float(obj.get("VW_30MIN_MEAN")),
         gust_ms=_opt_float(obj.get("VW_30MIN_MAX")),
         wind_bearing=_opt_float(obj.get("DW_30MIN_MEAN")),
+        wind_bearing_sd=_opt_float(obj.get("DW_30MIN_SD")),
+        snow_surface_temperature=_opt_float(obj.get("TSS_30MIN_MEAN")),
+        snow_temperature_0cm=_opt_float(obj.get("TS0_30MIN_MEAN")),
+        snow_temperature_25cm=_opt_float(obj.get("TS25_30MIN_MEAN")),
+        snow_temperature_50cm=_opt_float(obj.get("TS50_30MIN_MEAN")),
+        snow_temperature_100cm=_opt_float(obj.get("TS100_30MIN_MEAN")),
+        reflected_shortwave_radiation=_opt_float(obj.get("RSWR_30MIN_MEAN")),
     )
 
 
