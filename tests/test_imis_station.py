@@ -1,27 +1,24 @@
-"""Tests for the optional SLF IMIS snow station (IMIS-b, ADR-0009, issue #174).
+"""Tests for the SLF IMIS snow station (ADR-0009 / ADR-0011).
 
-Three concerns are covered, following ``test_precip_station.py`` (ADR-0006):
+Three concerns are covered:
 
-- the config/reconfigure flow offers the optional snow-station pick in the
-  station step (the three nearest ``SNOW_FLAT`` stations, none by default),
-  stores it, keeps it on a reconfigure round-trip, clears it on "none", and
-  drops the field when the SLF station list is unavailable;
-- with no IMIS station configured, **zero** requests reach
-  ``measurement-api.slf.ch`` (call counts);
-- with one configured, the snow sensors read from the SLF upstream (measured
-  snow height and modelled new snow), carry the SLF attribution, and the
-  MeteoSwiss entities are unaffected — including when the SLF fetch fails.
+- the setup flow creates a snow-station entry (its own entry type, ADR-0011),
+  stores the correct data shape, aborts on duplicates, and never calls
+  ``_load_metadata`` (no MeteoSwiss request on the snow-station path);
+- the station step of a point entry no longer offers an IMIS field;
+- with an IMIS station configured, the snow sensors read from the SLF upstream
+  (measured snow height and modelled new snow), carry the SLF attribution, and
+  the MeteoSwiss entities are unaffected — including when the SLF fetch fails.
 
 Upstream responses are replayed from ``tests/fixtures`` via the ``mock_ogd``
-and ``mock_ogd_imis`` fixtures (conftest.py); no test hits the network. The
-config-flow tests patch ``_load_metadata`` so no aiohttp session is created.
+and ``mock_ogd_imis`` fixtures (conftest.py); no test hits the network.
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from freezegun import freeze_time
@@ -38,6 +35,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClien
 
 from custom_components.meteoswiss_weather.const import (
     ATTRIBUTION_SLF,
+    CONF_ENTRY_TYPE,
     CONF_IMIS_STATION_CODE,
     CONF_IMIS_STATION_ELEVATION,
     CONF_IMIS_STATION_NAME,
@@ -48,6 +46,7 @@ from custom_components.meteoswiss_weather.const import (
     CONF_STATION_ABBR,
     CONF_STATION_NAME,
     DOMAIN,
+    ENTRY_TYPE_SNOW_STATION,
 )
 from custom_components.meteoswiss_weather.ogd import ForecastPoint, Station
 from custom_components.meteoswiss_weather.slf import (
@@ -68,6 +67,7 @@ _FLOW = "custom_components.meteoswiss_weather.config_flow"
 
 _CONF_MODE = "forecast_mode"
 _MODE_POSTAL_CODE = "postal_code"
+_MODE_SNOW_STATION = "snow_station"
 
 # Reference data mirroring the trimmed fixture CSVs / JSON.
 _POINTS: list[ForecastPoint] = [
@@ -79,8 +79,9 @@ _STATIONS: list[Station] = [
     Station("ABO", "Adelboden", "BE", 46.491703, 7.560703, 1321.0),
     Station("PAY", "Payerne", "VD", 46.811798, 6.942381, 490.0),
 ]
-# IMIS stations mirroring ``slf-imis_stations.json``. The three nearest
-# SNOW_FLAT to Köniz are STH2, JAU2, SHE2; JAU1 is a WIND station (excluded).
+# IMIS stations used in config-flow tests. The nearest SNOW_FLAT to Bern
+# (46.948, 7.447) in distance order: STH2, JAU2, SHE2, SCH2, CSL2, DAV2.
+# JAU1 is WIND (excluded); BOG4 is SNOW_SLOPE (excluded).
 _IMIS_STATIONS: list[ImisStation] = [
     ImisStation("DAV2", "Bärentälli", 46.6988884749, 9.8194108372, 2558.0, "GR",
                 "SNOW_FLAT"),
@@ -100,112 +101,367 @@ _IMIS_STATIONS: list[ImisStation] = [
                 "BE", "SNOW_FLAT"),
 ]
 
+# Daily-snow codes matching the fixture (SCH2 is absent — currently no data).
+_DAILY_SNOW_CODES = {"BOG4", "CSL2", "DAV2", "JAU2", "SHE2", "STH2"}
+
 _BERN_LAT = 46.948
 _BERN_LON = 7.447
 
 
-async def _mock_load_ok_imis(self) -> bool:
-    """Inject fixture data including the IMIS station list (no aiohttp session)."""
-    self._all_points = _POINTS
-    self._all_stations = _STATIONS
-    self._all_imis_stations = _IMIS_STATIONS
-    return True
-
-
-@pytest.fixture
-def mock_flow_with_imis():
-    """Patch ``_load_metadata`` so the flow has the IMIS station list loaded."""
-    with patch(
-        f"{_FLOW}.MeteoSwissWeatherConfigFlow._load_metadata", _mock_load_ok_imis
-    ):
-        yield
+def _snow_entry_patch():
+    """Context managers that stub the SLF data fetch for the snow_station step."""
+    return (
+        patch(f"{_FLOW}.async_get_clientsession", return_value=MagicMock()),
+        patch(
+            f"{_FLOW}.fetch_imis_stations",
+            new=AsyncMock(return_value=_IMIS_STATIONS),
+        ),
+        patch(
+            f"{_FLOW}.fetch_imis_daily_snow_codes",
+            new=AsyncMock(return_value=_DAILY_SNOW_CODES),
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
-# Config flow: the station step offers and stores the IMIS pick
+# Snow-station entry type: setup flow (ADR-0011)
 # ---------------------------------------------------------------------------
 
 
-async def _advance_to_station_step(hass: HomeAssistant) -> dict:
-    """Drive the setup flow (Köniz) up to the station step."""
+async def test_snow_station_setup_happy_path(hass: HomeAssistant) -> None:
+    """Full snow-station setup: mode → snow_station step → CREATE_ENTRY."""
     hass.config.latitude = _BERN_LAT
     hass.config.longitude = _BERN_LON
+
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
     )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={CONF_POSTAL_CODE: 3098}
-    )
-    assert result["step_id"] == "station"
-    return result
+    assert result["step_id"] == "user"
 
+    # slice 2 handles snow entries; patch setup here to isolate the flow test.
+    with (
+        patch(
+            "custom_components.meteoswiss_weather.async_setup_entry",
+            return_value=True,
+        ),
+        _snow_entry_patch()[0],
+        _snow_entry_patch()[1],
+        _snow_entry_patch()[2],
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={_CONF_MODE: _MODE_SNOW_STATION}
+        )
+        assert result["type"] == FlowResultType.FORM
+        assert result["step_id"] == "snow_station"
 
-async def test_station_step_offers_three_nearest_snow_flat_none_default(
-    hass: HomeAssistant, mock_flow_with_imis
-) -> None:
-    """The station step offers the three nearest SNOW_FLAT stations, none default."""
-    result = await _advance_to_station_step(hass)
+        # The nearest station (STH2) is pre-selected; submit it.
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={CONF_IMIS_STATION_CODE: "STH2"}
+        )
 
-    container = result["data_schema"].schema[CONF_IMIS_STATION_CODE].container
-    # The three nearest SNOW_FLAT stations to Köniz plus the "none" sentinel.
-    assert set(container) == {"none", "STH2", "JAU2", "SHE2"}
-    # The label carries the station name, elevation and distance.
-    assert container["STH2"].startswith("Vorderstocken (1791 m, ")
-    assert container["STH2"].endswith(" km)")
-    # The default is the non-empty sentinel so the HA frontend can submit (#192).
-    default = result["data_schema"]({})[CONF_IMIS_STATION_CODE]
-    assert default == "none"
-    assert default != ""
-
-
-async def test_setup_stores_selected_imis_station(
-    hass: HomeAssistant, mock_flow_with_imis
-) -> None:
-    """Picking an IMIS station stores its code, name and elevation on the entry."""
-    result = await _advance_to_station_step(hass)
-
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={CONF_STATION_ABBR: "BER", CONF_IMIS_STATION_CODE: "STH2"},
-    )
     assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Vorderstocken"
     data = result["data"]
-    assert data[CONF_STATION_ABBR] == "BER"
+    assert data[CONF_ENTRY_TYPE] == ENTRY_TYPE_SNOW_STATION
     assert data[CONF_IMIS_STATION_CODE] == "STH2"
     assert data[CONF_IMIS_STATION_NAME] == "Vorderstocken"
     assert data[CONF_IMIS_STATION_ELEVATION] == 1791.0
 
+    # Unique id is "imis-<code>".
+    entries = hass.config_entries.async_entries(DOMAIN)
+    assert len(entries) == 1
+    assert entries[0].unique_id == "imis-STH2"
 
-async def test_setup_sentinel_stores_empty_imis(
-    hass: HomeAssistant, mock_flow_with_imis
+
+async def test_snow_station_list_sorted_by_distance(hass: HomeAssistant) -> None:
+    """The snow_station step lists SNOW_FLAT stations sorted by distance."""
+    hass.config.latitude = _BERN_LAT
+    hass.config.longitude = _BERN_LON
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    with _snow_entry_patch()[0], _snow_entry_patch()[1], _snow_entry_patch()[2]:
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={_CONF_MODE: _MODE_SNOW_STATION}
+        )
+
+    assert result["step_id"] == "snow_station"
+    options = result["data_schema"].schema[CONF_IMIS_STATION_CODE].config["options"]
+    codes = [o["value"] for o in options]
+    # JAU1 (WIND) and BOG4 (SNOW_SLOPE) must not appear.
+    assert "JAU1" not in codes
+    assert "BOG4" not in codes
+    # All five SNOW_FLAT stations are within limit=10; all must be listed.
+    for code in ("STH2", "JAU2", "SHE2", "SCH2", "CSL2", "DAV2"):
+        assert code in codes
+    # Options are sorted by distance; STH2 is closest to Bern so it's first.
+    assert codes[0] == "STH2"
+    # Labels carry elevation and distance.
+    sth2_label = next(o["label"] for o in options if o["value"] == "STH2")
+    assert "1791 m" in sth2_label
+    assert "km" in sth2_label
+
+
+async def test_snow_station_no_data_label(hass: HomeAssistant) -> None:
+    """SCH2 absent from daily-snow codes → its label ends with 'currently no data'."""
+    hass.config.latitude = _BERN_LAT
+    hass.config.longitude = _BERN_LON
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    with _snow_entry_patch()[0], _snow_entry_patch()[1], _snow_entry_patch()[2]:
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={_CONF_MODE: _MODE_SNOW_STATION}
+        )
+
+    options = {
+        o["value"]: o["label"]
+        for o in result["data_schema"].schema[CONF_IMIS_STATION_CODE].config["options"]
+    }
+    # SCH2 is absent from _DAILY_SNOW_CODES → labelled "currently no data".
+    assert "currently no data" in options["SCH2"]
+    # Stations that have data must not carry the note.
+    for code in ("STH2", "JAU2", "SHE2", "CSL2", "DAV2"):
+        assert "currently no data" not in options[code]
+
+
+async def test_snow_station_duplicate_aborts(hass: HomeAssistant) -> None:
+    """Setting up the same snow-station code twice aborts as already_configured."""
+    existing = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="imis-STH2",
+        data={
+            CONF_ENTRY_TYPE: ENTRY_TYPE_SNOW_STATION,
+            CONF_IMIS_STATION_CODE: "STH2",
+            CONF_IMIS_STATION_NAME: "Vorderstocken",
+            CONF_IMIS_STATION_ELEVATION: 1791.0,
+        },
+        title="Vorderstocken",
+    )
+    existing.add_to_hass(hass)
+
+    hass.config.latitude = _BERN_LAT
+    hass.config.longitude = _BERN_LON
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    with _snow_entry_patch()[0], _snow_entry_patch()[1], _snow_entry_patch()[2]:
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={_CONF_MODE: _MODE_SNOW_STATION}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={CONF_IMIS_STATION_CODE: "STH2"}
+        )
+
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+async def test_snow_station_no_metadata_request(hass: HomeAssistant) -> None:
+    """The snow-station path never calls _load_metadata (no MeteoSwiss request)."""
+    hass.config.latitude = _BERN_LAT
+    hass.config.longitude = _BERN_LON
+
+    load_meta_mock = AsyncMock(return_value=True)
+
+    with (
+        patch(
+            "custom_components.meteoswiss_weather.async_setup_entry",
+            return_value=True,
+        ),
+        patch(
+            f"{_FLOW}.MeteoSwissWeatherConfigFlow._load_metadata", load_meta_mock
+        ),
+        _snow_entry_patch()[0],
+        _snow_entry_patch()[1],
+        _snow_entry_patch()[2],
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={_CONF_MODE: _MODE_SNOW_STATION}
+        )
+        await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={CONF_IMIS_STATION_CODE: "STH2"}
+        )
+
+    load_meta_mock.assert_not_called()
+
+
+async def test_snow_station_cannot_connect(hass: HomeAssistant) -> None:
+    """An SLF list failure shows cannot_connect on the snow_station step."""
+    from custom_components.meteoswiss_weather.slf import SlfError
+
+    hass.config.latitude = _BERN_LAT
+    hass.config.longitude = _BERN_LON
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    with (
+        patch(f"{_FLOW}.async_get_clientsession", return_value=MagicMock()),
+        patch(
+            f"{_FLOW}.fetch_imis_stations",
+            new=AsyncMock(side_effect=SlfError("down")),
+        ),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={_CONF_MODE: _MODE_SNOW_STATION}
+        )
+
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "snow_station"
+    assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_snow_station_nearest_preselected(hass: HomeAssistant) -> None:
+    """The nearest snow station to the HA location is the dropdown default."""
+    hass.config.latitude = _BERN_LAT
+    hass.config.longitude = _BERN_LON
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    with _snow_entry_patch()[0], _snow_entry_patch()[1], _snow_entry_patch()[2]:
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={_CONF_MODE: _MODE_SNOW_STATION}
+        )
+
+    assert result["step_id"] == "snow_station"
+    default = result["data_schema"]({})[CONF_IMIS_STATION_CODE]
+    assert default == "STH2"
+
+
+# ---------------------------------------------------------------------------
+# Snow-station reconfigure (ADR-0011)
+# ---------------------------------------------------------------------------
+
+
+def _snow_station_entry(code: str = "STH2") -> MockConfigEntry:
+    """A configured snow-station entry."""
+    names = {"STH2": "Vorderstocken", "JAU2": "Fochsen", "SHE2": "Schibe"}
+    elevations = {"STH2": 1791.0, "JAU2": 1707.0, "SHE2": 1852.0}
+    return MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=f"imis-{code}",
+        data={
+            CONF_ENTRY_TYPE: ENTRY_TYPE_SNOW_STATION,
+            CONF_IMIS_STATION_CODE: code,
+            CONF_IMIS_STATION_NAME: names[code],
+            CONF_IMIS_STATION_ELEVATION: elevations[code],
+        },
+        title=names[code],
+    )
+
+
+async def test_snow_station_reconfigure_switches_station(
+    hass: HomeAssistant,
 ) -> None:
-    """Submitting the 'none' sentinel stores empty IMIS keys (feature stays off)."""
-    result = await _advance_to_station_step(hass)
+    """Reconfigure of a snow-station entry switches to a different station."""
+    hass.config.latitude = _BERN_LAT
+    hass.config.longitude = _BERN_LON
 
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={CONF_STATION_ABBR: "BER", CONF_IMIS_STATION_CODE: "none"},
+    entry = _snow_station_entry("STH2")
+    entry.add_to_hass(hass)
+
+    with _snow_entry_patch()[0], _snow_entry_patch()[1], _snow_entry_patch()[2]:
+        result = await entry.start_reconfigure_flow(hass)
+        # Reconfigure of a snow-station entry goes straight to snow_station step.
+        assert result["step_id"] == "snow_station"
+        # The currently configured station is pre-selected.
+        default = result["data_schema"]({})[CONF_IMIS_STATION_CODE]
+        assert default == "STH2"
+
+        with patch.object(hass.config_entries, "async_schedule_reload"):
+            result = await hass.config_entries.flow.async_configure(
+                result["flow_id"], user_input={CONF_IMIS_STATION_CODE: "JAU2"}
+            )
+
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_IMIS_STATION_CODE] == "JAU2"
+    assert entry.data[CONF_IMIS_STATION_NAME] == "Fochsen"
+    assert entry.data[CONF_IMIS_STATION_ELEVATION] == 1707.0
+    assert entry.unique_id == "imis-JAU2"
+
+
+async def test_snow_station_reconfigure_duplicate_aborts(
+    hass: HomeAssistant,
+) -> None:
+    """Reconfiguring a snow-station entry onto a code another entry owns aborts."""
+    hass.config.latitude = _BERN_LAT
+    hass.config.longitude = _BERN_LON
+
+    other = _snow_station_entry("JAU2")
+    other.add_to_hass(hass)
+    entry = _snow_station_entry("STH2")
+    entry.add_to_hass(hass)
+
+    with _snow_entry_patch()[0], _snow_entry_patch()[1], _snow_entry_patch()[2]:
+        result = await entry.start_reconfigure_flow(hass)
+        assert result["step_id"] == "snow_station"
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={CONF_IMIS_STATION_CODE: "JAU2"}
+        )
+
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+
+
+# ---------------------------------------------------------------------------
+# Point entry: station step has no IMIS field (ADR-0011)
+# ---------------------------------------------------------------------------
+
+
+async def test_station_step_has_no_imis_field(hass: HomeAssistant) -> None:
+    """The station step for a point entry no longer offers an IMIS station field."""
+    hass.config.latitude = _BERN_LAT
+    hass.config.longitude = _BERN_LON
+
+    async def _mock_load_ok(self) -> bool:
+        self._all_points = _POINTS
+        self._all_stations = _STATIONS
+        return True
+
+    with patch(
+        f"{_FLOW}.MeteoSwissWeatherConfigFlow._load_metadata", _mock_load_ok
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": SOURCE_USER}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={_CONF_MODE: "postal_code"}
+        )
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={CONF_POSTAL_CODE: 3098}
+        )
+
+    assert result["step_id"] == "station"
+    assert CONF_IMIS_STATION_CODE not in result["data_schema"].schema
+
+
+# ---------------------------------------------------------------------------
+# Runtime: request budget and sourcing
+# ---------------------------------------------------------------------------
+
+
+def _slf_calls(aioclient_mock: AiohttpClientMocker) -> int:
+    """Number of requests to the SLF measurement API recorded so far."""
+    return sum(
+        1
+        for _method, url, *_ in aioclient_mock.mock_calls
+        if "measurement-api.slf.ch" in url.host
     )
-    assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_IMIS_STATION_CODE] == ""
-    assert result["data"][CONF_IMIS_STATION_NAME] == ""
-    assert result["data"][CONF_IMIS_STATION_ELEVATION] is None
 
 
-def test_resolve_imis_empty_string_maps_to_empty() -> None:
-    """_resolve_imis maps '' (old clients/direct API) to empty stored values."""
-    from custom_components.meteoswiss_weather.config_flow import (
-        MeteoSwissWeatherConfigFlow,
-    )
-
-    flow = MeteoSwissWeatherConfigFlow.__new__(MeteoSwissWeatherConfigFlow)
-    result = flow._resolve_imis({CONF_IMIS_STATION_CODE: ""}, _IMIS_STATIONS)
-    assert result[CONF_IMIS_STATION_CODE] == ""
-    assert result[CONF_IMIS_STATION_NAME] == ""
-    assert result[CONF_IMIS_STATION_ELEVATION] is None
+def _entity_id(hass: HomeAssistant, key: str) -> str | None:
+    """Resolve the snow sensor entity id from its unique id."""
+    registry = er.async_get(hass)
+    return registry.async_get_entity_id("sensor", DOMAIN, f"2-309800_{key}")
 
 
 def _imis_entry(
@@ -230,225 +486,6 @@ def _imis_entry(
         },
         title="Köniz",
     )
-
-
-async def test_reconfigure_roundtrip_keeps_imis_pick(
-    hass: HomeAssistant, mock_flow_with_imis
-) -> None:
-    """A reconfigure round-trip pre-selects and keeps the IMIS pick."""
-    entry = _imis_entry()
-    entry.add_to_hass(hass)
-
-    result = await entry.start_reconfigure_flow(hass)
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={CONF_POSTAL_CODE: 3098}
-    )
-    # Single Köniz point in this reference set → straight to the station step.
-    assert result["step_id"] == "station"
-    # The currently configured IMIS station is pre-selected.
-    assert result["data_schema"]({})[CONF_IMIS_STATION_CODE] == "STH2"
-
-    with patch.object(hass.config_entries, "async_schedule_reload"):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            user_input={CONF_STATION_ABBR: "BER", CONF_IMIS_STATION_CODE: "STH2"},
-        )
-
-    assert result["type"] == FlowResultType.ABORT
-    assert result["reason"] == "reconfigure_successful"
-    assert entry.data[CONF_IMIS_STATION_CODE] == "STH2"
-    assert entry.data[CONF_IMIS_STATION_NAME] == "Vorderstocken"
-    assert entry.data[CONF_IMIS_STATION_ELEVATION] == 1791.0
-
-
-async def test_reconfigure_can_clear_imis_pick(
-    hass: HomeAssistant, mock_flow_with_imis
-) -> None:
-    """Choosing the 'none' sentinel on reconfigure clears the IMIS pick."""
-    entry = _imis_entry()
-    entry.add_to_hass(hass)
-
-    result = await entry.start_reconfigure_flow(hass)
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={CONF_POSTAL_CODE: 3098}
-    )
-    with patch.object(hass.config_entries, "async_schedule_reload"):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"],
-            user_input={CONF_STATION_ABBR: "BER", CONF_IMIS_STATION_CODE: "none"},
-        )
-
-    assert result["reason"] == "reconfigure_successful"
-    assert entry.data[CONF_IMIS_STATION_CODE] == ""
-    assert entry.data[CONF_IMIS_STATION_ELEVATION] is None
-
-
-async def test_reconfigure_no_imis_preselects_sentinel(
-    hass: HomeAssistant, mock_flow_with_imis
-) -> None:
-    """Reconfigure with no IMIS configured pre-selects the non-empty sentinel."""
-    entry = _imis_entry(code="", name="", elevation=None)
-    entry.add_to_hass(hass)
-
-    result = await entry.start_reconfigure_flow(hass)
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={CONF_POSTAL_CODE: 3098}
-    )
-    assert result["step_id"] == "station"
-    default = result["data_schema"]({})[CONF_IMIS_STATION_CODE]
-    assert default == "none"
-    assert default != ""
-
-
-async def test_station_step_hides_imis_when_list_unavailable(
-    hass: HomeAssistant,
-) -> None:
-    """An SLF list failure drops the pick without failing the flow."""
-
-    async def _load_ok_no_imis(self) -> bool:
-        self._all_points = _POINTS
-        self._all_stations = _STATIONS
-        self._all_imis_stations = None
-        return True
-
-    with patch(
-        f"{_FLOW}.MeteoSwissWeatherConfigFlow._load_metadata", _load_ok_no_imis
-    ):
-        result = await _advance_to_station_step(hass)
-        # No IMIS field is shown, and the flow still completes.
-        assert CONF_IMIS_STATION_CODE not in result["data_schema"].schema
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], user_input={CONF_STATION_ABBR: "BER"}
-        )
-    assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["data"][CONF_IMIS_STATION_CODE] == ""
-
-
-# ---------------------------------------------------------------------------
-# "Currently no data" label (ADR-0009 amendment, issue #186)
-# ---------------------------------------------------------------------------
-
-# Daily-snow codes matching the fixture (SCH2 is absent — currently no data).
-_DAILY_SNOW_CODES_FIXTURE = {"BOG4", "CSL2", "DAV2", "JAU2", "SHE2", "STH2"}
-
-# A synthetic ForecastPoint placed near SCH2 (lat=46.5769, lon=7.8347) so
-# the nearest three SNOW_FLAT from _IMIS_STATIONS include SCH2.
-_POINT_NEAR_SCH2 = ForecastPoint(999900, 2, "9999", "Testort", 46.60, 7.83, 1000.0)
-_POINTS_WITH_SCH2 = [_POINT_NEAR_SCH2, *_POINTS]
-
-
-async def _mock_load_imis_with_codes(self) -> bool:
-    """Inject IMIS station list AND daily-snow codes (SCH2 absent)."""
-    self._all_points = _POINTS_WITH_SCH2
-    self._all_stations = _STATIONS
-    self._all_imis_stations = _IMIS_STATIONS
-    self._imis_daily_snow_codes = _DAILY_SNOW_CODES_FIXTURE
-    return True
-
-
-@pytest.fixture
-def mock_flow_with_codes():
-    """Patch ``_load_metadata`` to include daily-snow codes."""
-    with patch(
-        f"{_FLOW}.MeteoSwissWeatherConfigFlow._load_metadata",
-        _mock_load_imis_with_codes,
-    ):
-        yield
-
-
-async def _advance_to_station_step_9999(hass: HomeAssistant) -> dict:
-    """Drive the setup flow to the station step via postal code 9999 (near SCH2)."""
-    hass.config.latitude = 46.60
-    hass.config.longitude = 7.83
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": SOURCE_USER}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={CONF_POSTAL_CODE: 9999}
-    )
-    assert result["step_id"] == "station"
-    return result
-
-
-async def test_sch2_offered_with_no_data_note(
-    hass: HomeAssistant, mock_flow_with_codes
-) -> None:
-    """A station absent from daily-snow is still offered, with 'currently no data'."""
-    result = await _advance_to_station_step_9999(hass)
-
-    container = result["data_schema"].schema[CONF_IMIS_STATION_CODE].container
-    # SCH2 must be present in the picker (nearest three to Testort include SCH2).
-    assert "SCH2" in container
-    # Its label must carry the "currently no data" suffix.
-    assert container["SCH2"].endswith(", currently no data")
-    # A station that has data should not carry the note.
-    for code, label in container.items():
-        if code and code not in ("SCH2", "none"):
-            assert ", currently no data" not in label
-            assert code in _DAILY_SNOW_CODES_FIXTURE
-
-
-async def test_daily_snow_failure_shows_plain_labels(
-    hass: HomeAssistant,
-) -> None:
-    """When daily-snow fetch fails, labels are plain (no note); the flow completes."""
-
-    async def _load_imis_no_codes(self) -> bool:
-        self._all_points = _POINTS
-        self._all_stations = _STATIONS
-        self._all_imis_stations = _IMIS_STATIONS
-        self._imis_daily_snow_codes = None  # simulate fetch failure
-        return True
-
-    with patch(
-        f"{_FLOW}.MeteoSwissWeatherConfigFlow._load_metadata", _load_imis_no_codes
-    ):
-        result = await _advance_to_station_step(hass)
-
-    container = result["data_schema"].schema[CONF_IMIS_STATION_CODE].container
-    # All labels should be plain (no "currently no data" note).
-    for code, label in container.items():
-        if code:
-            assert ", currently no data" not in label
-
-    # The flow still completes successfully.
-    result2 = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={CONF_STATION_ABBR: "BER", CONF_IMIS_STATION_CODE: "none"},
-    )
-    assert result2["type"] == FlowResultType.CREATE_ENTRY
-
-
-# ---------------------------------------------------------------------------
-# Runtime: request budget and sourcing
-# ---------------------------------------------------------------------------
-
-
-def _slf_calls(aioclient_mock: AiohttpClientMocker) -> int:
-    """Number of requests to the SLF measurement API recorded so far."""
-    return sum(
-        1
-        for _method, url, *_ in aioclient_mock.mock_calls
-        if "measurement-api.slf.ch" in url.host
-    )
-
-
-def _entity_id(hass: HomeAssistant, key: str) -> str | None:
-    """Resolve the snow sensor entity id from its unique id."""
-    registry = er.async_get(hass)
-    return registry.async_get_entity_id("sensor", DOMAIN, f"2-309800_{key}")
 
 
 async def test_unset_makes_zero_slf_requests(
@@ -571,6 +608,7 @@ async def test_slf_failure_shows_placeholder_meteoswiss_unaffected(
 # Station outages: held value, placeholder, one warning per day, repair issue
 # (ADR-0009 amendment, issue #187)
 # ---------------------------------------------------------------------------
+
 
 _SNOW_HEIGHT = "sensor.koniz_snow_height"
 _NEW_SNOW = "sensor.koniz_new_snow_24_h_modelled"

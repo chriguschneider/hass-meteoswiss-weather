@@ -73,12 +73,12 @@
     "step": {
       "user": {
         "title": "MeteoSwiss Weather",
-        "description": "Richten Sie die offizielle MeteoSwiss-Open-Data-Integration ein. Wählen Sie den Typ des Vorhersageorts.",
+        "description": "Richten Sie die offizielle MeteoSwiss-Open-Data-Integration ein. Wählen Sie den Eintragstyp.",
         "data": {
-          "forecast_mode": "Standorttyp"
+          "forecast_mode": "Eintragstyp"
         },
         "data_description": {
-          "forecast_mode": "Postleitzahl für Orte und Städte; Bergpunkt für Gipfel, Pässe oder Skigebiete."
+          "forecast_mode": "Postleitzahl oder Bergpunkt für eine Wetterprognose; Schneestation nur für SLF-IMIS-Schneehöhe."
         }
       },
       "postal_code": {
@@ -110,22 +110,30 @@
         "description": "Wählen Sie die SwissMetNet-Station für aktuelle Messwerte. Die nächste Station ist vorausgewählt.{radar_hint}",
         "data": {
           "station_abbr": "Wetterstation",
-          "precip_station_abbr": "Niederschlagsstation (optional)",
-          "imis_station_code": "Schneestation (optional)"
+          "precip_station_abbr": "Niederschlagsstation (optional)"
         },
         "data_description": {
-          "precip_station_abbr": "Niederschlag ist sehr lokal und SwissMetNet ist dünn. Wählen Sie optional eine nähere Station aus dem automatischen Niederschlagsmessnetz; wenn gesetzt, wird nur der aktuelle Niederschlag von ihr gelesen. Belassen Sie \"None\", um die Hauptstation zu verwenden.",
-          "imis_station_code": "Schneehöhe in der Höhe aus dem SLF-IMIS-Messnetz (WSL-Institut für Schnee- und Lawinenforschung). Dies ist die Schneehöhe auf einem flachen Messfeld abseits der Piste, nicht die Pistenschneehöhe der Lifte; im Sommer nahe 0. Die drei nächsten Stationen werden mit Höhe und Entfernung angeboten; belassen Sie \"None\", um keine Schneestation hinzuzufügen."
+          "precip_station_abbr": "Niederschlag ist sehr lokal und SwissMetNet ist dünn. Wählen Sie optional eine nähere Station aus dem automatischen Niederschlagsmessnetz; wenn gesetzt, wird nur der aktuelle Niederschlag von ihr gelesen. Belassen Sie \"None\", um die Hauptstation zu verwenden."
+        }
+      },
+      "snow_station": {
+        "title": "Schneestation auswählen",
+        "description": "Wählen Sie die SLF-IMIS-Schneestation. Die zehn nächsten Flachfeld-Messpunkte werden mit Höhe, Entfernung und aktueller Datenverfügbarkeit angezeigt.",
+        "data": {
+          "imis_station_code": "Schneestation"
+        },
+        "data_description": {
+          "imis_station_code": "Schneehöhe auf einem flachen Messfeld (abseits der Piste). Stationen mit dem Hinweis \"derzeit keine Daten\" haben zuletzt keine Werte gemeldet."
         }
       },
       "reconfigure": {
         "title": "MeteoSwiss Weather neu konfigurieren",
-        "description": "Ändern Sie den Standorttyp und die Wetterstation, ohne den Eintrag zu löschen. Der aktuelle Typ ist vorausgewählt.",
+        "description": "Ändern Sie den Eintragstyp und die Wetterstation, ohne den Eintrag zu löschen. Der aktuelle Typ ist vorausgewählt.",
         "data": {
-          "forecast_mode": "Standorttyp"
+          "forecast_mode": "Eintragstyp"
         },
         "data_description": {
-          "forecast_mode": "Postleitzahl für Orte und Städte; Bergpunkt für Gipfel, Pässe oder Skigebiete."
+          "forecast_mode": "Postleitzahl oder Bergpunkt für eine Wetterprognose; Schneestation nur für SLF-IMIS-Schneehöhe."
         }
       },
       "history": {
@@ -150,7 +158,8 @@
     "forecast_mode": {
       "options": {
         "postal_code": "Postleitzahl (Ort oder Stadt)",
-        "mountain": "Bergpunkt (Gipfel, Pass oder Skigebiet)"
+        "mountain": "Bergpunkt (Gipfel, Pass oder Skigebiet)",
+        "snow_station": "Schneestation (SLF IMIS)"
       }
     },
     "history_action": {

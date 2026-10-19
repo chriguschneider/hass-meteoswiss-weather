@@ -73,12 +73,12 @@
     "step": {
       "user": {
         "title": "MeteoSwiss Weather",
-        "description": "Configura l'integrazione ufficiale MeteoSwiss Open Data. Scegli il tipo di punto di previsione.",
+        "description": "Configura l'integrazione ufficiale MeteoSwiss Open Data. Scegli il tipo di voce.",
         "data": {
-          "forecast_mode": "Tipo di localizzazione"
+          "forecast_mode": "Tipo di voce"
         },
         "data_description": {
-          "forecast_mode": "Codice postale per una città o paese; punto di montagna per una vetta, un passo o una stazione sciistica."
+          "forecast_mode": "Codice postale o punto di montagna per una previsione meteo; stazione di neve per la sola altezza neve SLF IMIS."
         }
       },
       "postal_code": {
@@ -110,22 +110,30 @@
         "description": "Scegli la stazione SwissMetNet per le condizioni attuali. La stazione più vicina è preselezionata.{radar_hint}",
         "data": {
           "station_abbr": "Stazione meteorologica",
-          "precip_station_abbr": "Stazione di precipitazione (facoltativa)",
-          "imis_station_code": "Stazione di neve (facoltativa)"
+          "precip_station_abbr": "Stazione di precipitazione (facoltativa)"
         },
         "data_description": {
-          "precip_station_abbr": "Le precipitazioni sono molto locali e SwissMetNet è rada. Scegli facoltativamente una stazione più vicina dalla rete automatica di misurazione delle precipitazioni; se impostata, ne viene letta solo la precipitazione attuale. Lascia \"None\" per usare la stazione principale.",
-          "imis_station_code": "Altezza della neve in quota dalla rete SLF IMIS (Istituto WSL per lo studio della neve e delle valanghe). È l'altezza della neve su un campo di misura pianeggiante fuori pista, non l'altezza della neve sulle piste degli impianti; vicina a 0 in estate. Vengono proposte le tre stazioni più vicine con quota e distanza; lascia \"None\" per non aggiungere alcuna stazione di neve."
+          "precip_station_abbr": "Le precipitazioni sono molto locali e SwissMetNet è rada. Scegli facoltativamente una stazione più vicina dalla rete automatica di misurazione delle precipitazioni; se impostata, ne viene letta solo la precipitazione attuale. Lascia \"None\" per usare la stazione principale."
+        }
+      },
+      "snow_station": {
+        "title": "Seleziona la stazione di neve",
+        "description": "Scegli la stazione SLF IMIS da monitorare. Vengono mostrate le dieci stazioni pianeggianti più vicine con quota, distanza e disponibilità dei dati.",
+        "data": {
+          "imis_station_code": "Stazione di neve"
+        },
+        "data_description": {
+          "imis_station_code": "Altezza neve misurata su un campo pianeggiante (fuori pista). Le stazioni con la nota \"nessun dato attuale\" non hanno trasmesso dati di recente."
         }
       },
       "reconfigure": {
         "title": "Riconfigura MeteoSwiss Weather",
-        "description": "Modifica il tipo di localizzazione e la stazione meteorologica senza eliminare la voce. Il tipo attuale è preselezionato.",
+        "description": "Modifica il tipo di voce e la stazione meteorologica senza eliminare la voce. Il tipo attuale è preselezionato.",
         "data": {
-          "forecast_mode": "Tipo di localizzazione"
+          "forecast_mode": "Tipo di voce"
         },
         "data_description": {
-          "forecast_mode": "Codice postale per una città o paese; punto di montagna per una vetta, un passo o una stazione sciistica."
+          "forecast_mode": "Codice postale o punto di montagna per una previsione meteo; stazione di neve per la sola altezza neve SLF IMIS."
         }
       },
       "history": {
@@ -150,7 +158,8 @@
     "forecast_mode": {
       "options": {
         "postal_code": "Codice postale (città o paese)",
-        "mountain": "Punto di montagna (vetta, passo o stazione sciistica)"
+        "mountain": "Punto di montagna (vetta, passo o stazione sciistica)",
+        "snow_station": "Stazione di neve (SLF IMIS)"
       }
     },
     "history_action": {

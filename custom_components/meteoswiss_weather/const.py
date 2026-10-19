@@ -38,6 +38,12 @@ CONF_IMIS_STATION_CODE = "imis_station_code"
 CONF_IMIS_STATION_NAME = "imis_station_name"
 CONF_IMIS_STATION_ELEVATION = "imis_station_elevation"
 
+# Entry-type discriminator (ADR-0011). Absent means a point entry (postal-code
+# or mountain). A snow-station entry stores only IMIS keys and no OGD forecast
+# keys; slice 2 reads this to decide which coordinator to build.
+CONF_ENTRY_TYPE = "entry_type"
+ENTRY_TYPE_SNOW_STATION = "snow_station"
+
 # Reconfigure flow (A9, #52): what to do with the recorded station history when
 # the station changes. ``keep`` leaves values and statistics untouched and logs
 # the switch; ``discard`` purges the station sensors' states and clears their

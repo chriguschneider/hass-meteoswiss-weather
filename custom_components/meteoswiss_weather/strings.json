@@ -73,12 +73,12 @@
     "step": {
       "user": {
         "title": "MeteoSwiss Weather",
-        "description": "Set up the official MeteoSwiss open data integration. Choose the type of forecast location.",
+        "description": "Set up the official MeteoSwiss open data integration. Choose the type of entry.",
         "data": {
-          "forecast_mode": "Location type"
+          "forecast_mode": "Entry type"
         },
         "data_description": {
-          "forecast_mode": "Postal code for a town or city; mountain point for a summit, pass, or resort."
+          "forecast_mode": "Postal code or mountain point for a weather forecast; snow station for SLF IMIS snow depth only."
         }
       },
       "postal_code": {
@@ -110,22 +110,30 @@
         "description": "Choose the SwissMetNet station to use for current conditions. The nearest station is pre-selected.{radar_hint}",
         "data": {
           "station_abbr": "Weather station",
-          "precip_station_abbr": "Precipitation station (optional)",
-          "imis_station_code": "Snow station (optional)"
+          "precip_station_abbr": "Precipitation station (optional)"
         },
         "data_description": {
-          "precip_station_abbr": "Rain is hyper-local and SwissMetNet is sparse. Optionally pick a nearer station from the automatic precipitation network; when set, only the current precipitation is read from it. Leave as \"None\" to use the main station.",
-          "imis_station_code": "Snow height at altitude from the SLF IMIS network (WSL Institute for Snow and Avalanche Research). This is the snow depth on a flat study plot off-piste, not the lifts' piste snow depth; values are near 0 in summer. The three nearest stations are offered with elevation and distance; leave as \"None\" to add no snow station."
+          "precip_station_abbr": "Rain is hyper-local and SwissMetNet is sparse. Optionally pick a nearer station from the automatic precipitation network; when set, only the current precipitation is read from it. Leave as \"None\" to use the main station."
+        }
+      },
+      "snow_station": {
+        "title": "Select snow station",
+        "description": "Choose the SLF IMIS snow station to monitor. The ten nearest flat study plots are shown with elevation, distance and current data availability.",
+        "data": {
+          "imis_station_code": "Snow station"
+        },
+        "data_description": {
+          "imis_station_code": "Snow height measured on a flat study plot (off-piste). Stations labelled \"currently no data\" have not reported recently."
         }
       },
       "reconfigure": {
         "title": "Reconfigure MeteoSwiss Weather",
-        "description": "Change the forecast location type and weather station without deleting the entry. The current type is pre-selected.",
+        "description": "Change the entry type and weather station without deleting the entry. The current type is pre-selected.",
         "data": {
-          "forecast_mode": "Location type"
+          "forecast_mode": "Entry type"
         },
         "data_description": {
-          "forecast_mode": "Postal code for a town or city; mountain point for a summit, pass, or resort."
+          "forecast_mode": "Postal code or mountain point for a weather forecast; snow station for SLF IMIS snow depth only."
         }
       },
       "history": {
@@ -150,7 +158,8 @@
     "forecast_mode": {
       "options": {
         "postal_code": "Postal code (town or city)",
-        "mountain": "Mountain point (summit, pass, or resort)"
+        "mountain": "Mountain point (summit, pass, or resort)",
+        "snow_station": "Snow station (SLF IMIS)"
       }
     },
     "history_action": {

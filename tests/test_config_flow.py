@@ -294,16 +294,26 @@ async def test_duplicate_entry_aborts(
 async def test_cannot_connect_on_metadata_failure(
     hass: HomeAssistant,
 ) -> None:
-    """_load_metadata returning False shows the cannot_connect error."""
+    """_load_metadata returning False shows the cannot_connect error on the user step.
+
+    The metadata is now loaded after the user selects a mode (not on the initial
+    display), so we must submit a mode selection first to trigger the fetch.
+    """
 
     async def _mock_load_fail(self) -> bool:
         return False
 
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "user"
+
     with patch(
         f"{_FLOW}.MeteoSwissWeatherConfigFlow._load_metadata", _mock_load_fail
     ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": SOURCE_USER}
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
         )
 
     assert result["type"] == FlowResultType.FORM
@@ -1138,17 +1148,29 @@ async def test_reconfigure_backfill_shown_when_available(
 
 
 async def test_reconfigure_cannot_connect(hass: HomeAssistant) -> None:
-    """A metadata failure on reconfigure shows cannot_connect on its own step."""
+    """A metadata failure on reconfigure shows cannot_connect on its own step.
+
+    The metadata is deferred until the user submits a mode, so the initial
+    display shows no error; only submitting postal-code/mountain mode triggers
+    the fetch and the error.
+    """
     entry = _configured_entry()
     entry.add_to_hass(hass)
 
     async def _mock_load_fail(self) -> bool:
         return False
 
+    result = await entry.start_reconfigure_flow(hass)
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "reconfigure"
+    assert result["errors"] == {}
+
     with patch(
         f"{_FLOW}.MeteoSwissWeatherConfigFlow._load_metadata", _mock_load_fail
     ):
-        result = await entry.start_reconfigure_flow(hass)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
+        )
 
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "reconfigure"
