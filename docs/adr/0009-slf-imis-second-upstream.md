@@ -48,14 +48,15 @@ Measured 2026-10-19:
   pure Python (aiohttp/stdlib, no Home Assistant imports), separate from
   `ogd/`; the base URL is a constant in `const.py` (`SLF_API_BASE`).
 - A config entry may carry an **optional IMIS station**
-  (`CONF_IMIS_STATION`). Setup and reconfigure offer the nearest
+  (`CONF_IMIS_STATION_CODE`, `CONF_IMIS_STATION_NAME` in `entry.data`,
+  like the precipitation station of ADR-0006). Setup and reconfigure offer the nearest
   `SNOW_FLAT` stations with elevation and distance; **none is selected by
   default**. Without it, no SLF request is made.
 - Entities: **snow height** (measured `HS`) and **new snow 24 h**
   (modelled `HN_1D`, labelled as modelled). Entities fed by the SLF set
   `attribution = "Source: WSL Institute for Snow and Avalanche Research
-  SLF"` instead of the MeteoSwiss one; their device names the IMIS
-  station.
+  SLF"` instead of the MeteoSwiss one and expose a `station` attribute
+  naming the IMIS station; they sit on the entry's device.
 - Cadence, in a coordinator of its own: station measurements every **30
   minutes**, conditional, `period_in_days=1`, keeping only the newest
   row; daily snow **once a day**, keeping only the configured station's
@@ -74,4 +75,4 @@ Measured 2026-10-19:
   sensors show unknown rather than inventing a value.
 - `ogd/` stays MeteoSwiss-only and keeps its path to PyPI (#20); `slf/`
   can follow the same way later.
-- Implementation: #171.
+- Measured facts and fixtures: `docs/slf.md`. Implementation: #171.
