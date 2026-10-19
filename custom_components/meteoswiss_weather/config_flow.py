@@ -74,7 +74,13 @@ from .ogd import (
     points_for_postal_code,
 )
 from .ogd.geo import haversine_km
-from .slf import ImisStation, SlfError, fetch_imis_stations, nearest_snow_stations
+from .slf import (
+    ImisStation,
+    SlfError,
+    fetch_imis_daily_snow_codes,
+    fetch_imis_stations,
+    nearest_snow_stations,
+)
 
 # Flow-internal mode constants; never stored in the config entry.
 _CONF_MODE = "forecast_mode"
@@ -137,6 +143,9 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
         # SLF IMIS snow stations for the optional snow-station pick (ADR-0009).
         # ``None`` means the list was unavailable; the pick is then dropped.
         self._all_imis_stations: list[ImisStation] | None = None
+        # Station codes present in /daily-snow; absent means "currently no data".
+        # ``None`` means the fetch failed; labels are shown without a note.
+        self._imis_daily_snow_codes: set[str] | None = None
         self._point_choices: list[ForecastPoint] = []
         self._point: ForecastPoint | None = None
         # Set while the reconfigure flow (A9, #52) resolves a station change and
@@ -178,6 +187,16 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
             self._all_imis_stations = await fetch_imis_stations(session)
         except SlfError:
             self._all_imis_stations = None
+        # Daily-snow codes mark which stations currently have data (ADR-0009
+        # amendment, issue #186). A failure leaves codes as None; the label
+        # then omits the "currently no data" note — the flow must never fail.
+        if self._all_imis_stations is not None:
+            try:
+                self._imis_daily_snow_codes = await fetch_imis_daily_snow_codes(
+                    session
+                )
+            except SlfError:
+                self._imis_daily_snow_codes = None
         return True
 
     async def async_step_user(
@@ -511,12 +530,21 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     def _imis_label(self, station: ImisStation) -> str:
-        """Picker label for an IMIS station: name, elevation and distance."""
+        """Picker label for an IMIS station: name, elevation, distance, data status."""
         assert self._point is not None
         distance = haversine_km(
             self._point.lat, self._point.lon, station.lat, station.lon
         )
-        return f"{station.label} ({int(station.elevation)} m, {round(distance)} km)"
+        base = f"{station.label} ({int(station.elevation)} m, {round(distance)} km)"
+        # If we have daily-snow codes and this station is absent, it is currently
+        # without data (ADR-0009 amendment, issue #186). When codes are None the
+        # fetch failed; omit the note so the flow never breaks.
+        if (
+            self._imis_daily_snow_codes is not None
+            and station.code not in self._imis_daily_snow_codes
+        ):
+            return f"{base}, currently no data"
+        return base
 
     def _resolve_imis(
         self, user_input: dict[str, Any], imis_nearby: list[ImisStation]

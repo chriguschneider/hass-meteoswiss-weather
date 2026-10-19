@@ -284,6 +284,104 @@ async def test_station_step_hides_imis_when_list_unavailable(
 
 
 # ---------------------------------------------------------------------------
+# "Currently no data" label (ADR-0009 amendment, issue #186)
+# ---------------------------------------------------------------------------
+
+# Daily-snow codes matching the fixture (SCH2 is absent — currently no data).
+_DAILY_SNOW_CODES_FIXTURE = {"BOG4", "CSL2", "DAV2", "JAU2", "SHE2", "STH2"}
+
+# A synthetic ForecastPoint placed near SCH2 (lat=46.5769, lon=7.8347) so
+# the nearest three SNOW_FLAT from _IMIS_STATIONS include SCH2.
+_POINT_NEAR_SCH2 = ForecastPoint(999900, 2, "9999", "Testort", 46.60, 7.83, 1000.0)
+_POINTS_WITH_SCH2 = [_POINT_NEAR_SCH2, *_POINTS]
+
+
+async def _mock_load_imis_with_codes(self) -> bool:
+    """Inject IMIS station list AND daily-snow codes (SCH2 absent)."""
+    self._all_points = _POINTS_WITH_SCH2
+    self._all_stations = _STATIONS
+    self._all_imis_stations = _IMIS_STATIONS
+    self._imis_daily_snow_codes = _DAILY_SNOW_CODES_FIXTURE
+    return True
+
+
+@pytest.fixture
+def mock_flow_with_codes():
+    """Patch ``_load_metadata`` to include daily-snow codes."""
+    with patch(
+        f"{_FLOW}.MeteoSwissWeatherConfigFlow._load_metadata",
+        _mock_load_imis_with_codes,
+    ):
+        yield
+
+
+async def _advance_to_station_step_9999(hass: HomeAssistant) -> dict:
+    """Drive the setup flow to the station step via postal code 9999 (near SCH2)."""
+    hass.config.latitude = 46.60
+    hass.config.longitude = 7.83
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={CONF_POSTAL_CODE: 9999}
+    )
+    assert result["step_id"] == "station"
+    return result
+
+
+async def test_sch2_offered_with_no_data_note(
+    hass: HomeAssistant, mock_flow_with_codes
+) -> None:
+    """A station absent from daily-snow is still offered, with 'currently no data'."""
+    result = await _advance_to_station_step_9999(hass)
+
+    container = result["data_schema"].schema[CONF_IMIS_STATION_CODE].container
+    # SCH2 must be present in the picker (nearest three to Testort include SCH2).
+    assert "SCH2" in container
+    # Its label must carry the "currently no data" suffix.
+    assert container["SCH2"].endswith(", currently no data")
+    # A station that has data should not carry the note.
+    for code, label in container.items():
+        if code and code != "SCH2":
+            assert ", currently no data" not in label
+            assert code in _DAILY_SNOW_CODES_FIXTURE
+
+
+async def test_daily_snow_failure_shows_plain_labels(
+    hass: HomeAssistant,
+) -> None:
+    """When daily-snow fetch fails, labels are plain (no note); the flow completes."""
+
+    async def _load_imis_no_codes(self) -> bool:
+        self._all_points = _POINTS
+        self._all_stations = _STATIONS
+        self._all_imis_stations = _IMIS_STATIONS
+        self._imis_daily_snow_codes = None  # simulate fetch failure
+        return True
+
+    with patch(
+        f"{_FLOW}.MeteoSwissWeatherConfigFlow._load_metadata", _load_imis_no_codes
+    ):
+        result = await _advance_to_station_step(hass)
+
+    container = result["data_schema"].schema[CONF_IMIS_STATION_CODE].container
+    # All labels should be plain (no "currently no data" note).
+    for code, label in container.items():
+        if code:
+            assert ", currently no data" not in label
+
+    # The flow still completes successfully.
+    result2 = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={CONF_STATION_ABBR: "BER", CONF_IMIS_STATION_CODE: ""},
+    )
+    assert result2["type"] == FlowResultType.CREATE_ENTRY
+
+
+# ---------------------------------------------------------------------------
 # Runtime: request budget and sourcing
 # ---------------------------------------------------------------------------
 

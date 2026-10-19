@@ -9,6 +9,14 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **IMIS silent stations in the picker** (#186). The setup/reconfigure station
+  picker now labels temporarily silent SNOW_FLAT stations (those absent from
+  `/daily-snow`) as "currently no data" so the user knows before picking.
+  The client also distinguishes a temporary outage (HTTP 404 with `NO_DATA`
+  body) from an unknown code (HTTP 400) via a new `ImisNoDataError` exception.
+
 ## [v0.6.0] — 2026-10-19
 
 ### Added

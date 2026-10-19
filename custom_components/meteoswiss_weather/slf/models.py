@@ -18,6 +18,14 @@ class SlfConnectionError(SlfError):
     """The upstream endpoint could not be fetched (network error, 4xx/5xx)."""
 
 
+class ImisNoDataError(SlfConnectionError):
+    """The station has no data in the requested period (HTTP 404 NO_DATA).
+
+    Subclass of SlfConnectionError so existing ``except SlfConnectionError``
+    callers keep working unchanged (ADR-0009 amendment, issue #186).
+    """
+
+
 class SlfParseError(SlfError):
     """The upstream response was fetched but could not be understood."""
 
