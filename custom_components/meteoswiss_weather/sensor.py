@@ -447,18 +447,24 @@ _POLLEN_SENSORS: tuple[PollenSensorDescription, ...] = (
 # (not the MeteoSwiss one) plus ``station`` and ``elevation`` attributes.
 @dataclass(frozen=True, slots=True)
 class ImisSensorDescription(SensorEntityDescription):
-    """SensorEntityDescription for an IMIS snow value.
+    """SensorEntityDescription for an IMIS value (ADR-0009 amendment).
 
     ``data_attr`` is the attribute on :class:`~coordinator.ImisData` (either
     ``measurement`` or ``daily_snow``); ``field`` is the value attribute on that
     object. ``time_field`` is the attribute on that object carrying the time of
     the value, surfaced as the ``measured_at`` attribute: ``time`` (a datetime)
     for the 30-minute measurement, ``date`` (a date) for the daily-snow row.
+
+    ``placeholder_zero`` marks the snow values (snow height, new snow, modelled
+    snow height) that show ``0`` before the first real value ever arrives; every
+    other value stays ``unknown`` until then, because a placeholder temperature
+    or wind of 0 would read as a real measurement (ADR-0009 amendment).
     """
 
     data_attr: str = ""
     field: str = ""
     time_field: str = ""
+    placeholder_zero: bool = False
 
 
 _IMIS_SENSORS: tuple[ImisSensorDescription, ...] = (
@@ -469,6 +475,7 @@ _IMIS_SENSORS: tuple[ImisSensorDescription, ...] = (
         data_attr="measurement",
         field="snow_height_cm",
         time_field="time",
+        placeholder_zero=True,
         device_class=SensorDeviceClass.DISTANCE,
         native_unit_of_measurement=UnitOfLength.CENTIMETERS,
         state_class=SensorStateClass.MEASUREMENT,
@@ -483,11 +490,165 @@ _IMIS_SENSORS: tuple[ImisSensorDescription, ...] = (
         data_attr="daily_snow",
         field="new_snow_24h_cm",
         time_field="date",
+        placeholder_zero=True,
         device_class=SensorDeviceClass.DISTANCE,
         native_unit_of_measurement=UnitOfLength.CENTIMETERS,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
         icon="mdi:snowflake",
+    ),
+    # SNOWPACK-modelled snow height on the flat study plot (daily-snow ``HS``), a
+    # snow value → 0 placeholder before the first value. Enabled by default.
+    ImisSensorDescription(
+        key="snow_height_modelled",
+        translation_key="snow_height_modelled",
+        data_attr="daily_snow",
+        field="snow_height_cm",
+        time_field="date",
+        placeholder_zero=True,
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement=UnitOfLength.CENTIMETERS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        icon="mdi:snowflake",
+    ),
+    # Every other value the 30-minute measurement row already carries: no new
+    # endpoint, no extra traffic. All enabled by default; all stay ``unknown``
+    # until the first real value (no 0 placeholder).
+    ImisSensorDescription(
+        key="temperature",
+        translation_key="temperature",
+        data_attr="measurement",
+        field="air_temperature",
+        time_field="time",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    ImisSensorDescription(
+        key="humidity",
+        translation_key="humidity",
+        data_attr="measurement",
+        field="humidity",
+        time_field="time",
+        device_class=SensorDeviceClass.HUMIDITY,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    # Wind is reported in m/s by the SLF; keep it native (#196). The metric
+    # unit system would otherwise convert WIND_SPEED to km/h, so pin the display
+    # unit to m/s with ``suggested_unit_of_measurement``.
+    ImisSensorDescription(
+        key="wind_speed",
+        translation_key="wind_speed",
+        data_attr="measurement",
+        field="wind_speed_ms",
+        time_field="time",
+        device_class=SensorDeviceClass.WIND_SPEED,
+        native_unit_of_measurement=UnitOfSpeed.METERS_PER_SECOND,
+        suggested_unit_of_measurement=UnitOfSpeed.METERS_PER_SECOND,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    ImisSensorDescription(
+        key="gust_speed",
+        translation_key="gust_speed",
+        data_attr="measurement",
+        field="gust_ms",
+        time_field="time",
+        device_class=SensorDeviceClass.WIND_SPEED,
+        native_unit_of_measurement=UnitOfSpeed.METERS_PER_SECOND,
+        suggested_unit_of_measurement=UnitOfSpeed.METERS_PER_SECOND,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    ImisSensorDescription(
+        key="wind_bearing",
+        translation_key="wind_bearing",
+        data_attr="measurement",
+        field="wind_bearing",
+        time_field="time",
+        native_unit_of_measurement=DEGREE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+    ),
+    ImisSensorDescription(
+        key="wind_bearing_sd",
+        translation_key="wind_bearing_sd",
+        data_attr="measurement",
+        field="wind_bearing_sd",
+        time_field="time",
+        native_unit_of_measurement=DEGREE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+    ),
+    ImisSensorDescription(
+        key="snow_surface_temperature",
+        translation_key="snow_surface_temperature",
+        data_attr="measurement",
+        field="snow_surface_temperature",
+        time_field="time",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    ImisSensorDescription(
+        key="snow_temperature_0cm",
+        translation_key="snow_temperature_0cm",
+        data_attr="measurement",
+        field="snow_temperature_0cm",
+        time_field="time",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    ImisSensorDescription(
+        key="snow_temperature_25cm",
+        translation_key="snow_temperature_25cm",
+        data_attr="measurement",
+        field="snow_temperature_25cm",
+        time_field="time",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    ImisSensorDescription(
+        key="snow_temperature_50cm",
+        translation_key="snow_temperature_50cm",
+        data_attr="measurement",
+        field="snow_temperature_50cm",
+        time_field="time",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    ImisSensorDescription(
+        key="snow_temperature_100cm",
+        translation_key="snow_temperature_100cm",
+        data_attr="measurement",
+        field="snow_temperature_100cm",
+        time_field="time",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    ImisSensorDescription(
+        key="reflected_radiation",
+        translation_key="reflected_radiation",
+        data_attr="measurement",
+        field="reflected_shortwave_radiation",
+        time_field="time",
+        device_class=SensorDeviceClass.IRRADIANCE,
+        native_unit_of_measurement=UnitOfIrradiance.WATTS_PER_SQUARE_METER,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
     ),
 )
 
@@ -1028,19 +1189,23 @@ class RequestsTodaySensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
 
 
 class ImisSnowSensor(CoordinatorEntity[ImisCoordinator], RestoreSensor):
-    """One snow value from the configured SLF IMIS station (ADR-0009, #174).
+    """One value from the configured SLF IMIS station (ADR-0009, #174/#196).
 
-    Snow height is measured on a flat study plot; new snow is SNOWPACK-modelled.
-    Both carry the SLF attribution (not the MeteoSwiss one) and expose a
-    ``station`` attribute naming the IMIS station plus its ``elevation`` in m, so
-    a dashboard shows where the value comes from and at what altitude.
+    Snow height is measured on a flat study plot; new snow and modelled snow
+    height are SNOWPACK-modelled; the 30-minute row also carries temperature,
+    humidity, wind, snow temperatures and reflected radiation. All carry the SLF
+    attribution (not the MeteoSwiss one) and expose a ``station`` attribute
+    naming the IMIS station plus its ``elevation`` in m, so a dashboard shows
+    where the value comes from and at what altitude.
 
-    These sensors are **never** ``unavailable``/``unknown`` because of the SLF
-    (ADR-0009 amendment, #187). They hold the last real value — across restarts
-    via :class:`RestoreSensor` — through an outage or any SLF fetch failure, with
-    its original ``measured_at`` time and ``placeholder: false``. Before the very
-    first real value has ever arrived they show ``0`` with ``measured_at: null``
-    and ``placeholder: true``. A new real value replaces the held one.
+    These sensors never go ``unavailable`` because of the SLF (ADR-0009
+    amendment, #187). They hold the last real value — across restarts via
+    :class:`RestoreSensor` — through an outage or any SLF fetch failure, with its
+    original ``measured_at`` time and ``placeholder: false``. Before the very
+    first real value has ever arrived, a snow value (``placeholder_zero``) shows
+    ``0`` with ``measured_at: null`` and ``placeholder: true``; every other value
+    stays ``unknown`` so a placeholder 0 does not read as a real measurement. A
+    new real value replaces the held one.
     """
 
     _attr_has_entity_name = True
@@ -1061,6 +1226,7 @@ class ImisSnowSensor(CoordinatorEntity[ImisCoordinator], RestoreSensor):
         self._data_attr = description.data_attr
         self._field = description.field
         self._time_field = description.time_field
+        self._placeholder_zero = description.placeholder_zero
         self._attr_unique_id = f"{device_unique_id}_{description.key}"
         self._attr_device_info = device_info
         self._base_attributes: dict[str, str | float] = {"station": station_name}
@@ -1125,9 +1291,15 @@ class ImisSnowSensor(CoordinatorEntity[ImisCoordinator], RestoreSensor):
         super()._handle_coordinator_update()
 
     @property
-    def native_value(self) -> float:
-        """The held real value, or ``0`` before the first real value arrives."""
-        return self._held_value if self._held_value is not None else 0
+    def native_value(self) -> float | None:
+        """The held real value, else ``0`` for a snow value / ``None`` otherwise.
+
+        Before the first real value, a snow value (``placeholder_zero``) shows
+        the ``0`` placeholder; every other value stays ``unknown`` (``None``).
+        """
+        if self._held_value is not None:
+            return self._held_value
+        return 0 if self._placeholder_zero else None
 
     @property
     def extra_state_attributes(self) -> dict[str, str | float | bool | None]:

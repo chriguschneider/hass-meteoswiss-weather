@@ -56,7 +56,7 @@ what you get:
 | **Clouds and uncertainty** *(options)* | total cloud cover plus the high, mid and low layers; the 10–90 % band of the temperature forecast |
 | **Right now** | up to 21 sensors from the nearest SwissMetNet station, every 10 minutes: temperature, humidity, three pressures, wind, gusts, rain, sunshine, three kinds of radiation, snow depth, wind chill, ground and soil temperatures |
 | **Better rain readings** | optionally from the nearest station of the denser precipitation network |
-| **Snow at altitude** *(option)* | measured snow height and modelled new snow from the nearest SLF IMIS mountain study plot (off-piste, near 0 in summer) |
+| **Snow at altitude** *(own entry)* | an SLF IMIS mountain study plot as its own entry: measured and modelled snow height, new snow, temperature, wind, humidity, snow-pack temperatures and radiation (off-piste, snow near 0 in summer) |
 | **Mountains** | 631 summits, passes and ski resorts as well as every postal code, and as many places as you like |
 | **Pollen** *(option)* | grass, birch, alder, hazel, beech, ash and oak from the nearest of the 15 automatic pollen stations |
 | **Your graphs reach back** | one service imports the station's official history into Home Assistant's statistics, back to 1980 |
@@ -105,10 +105,11 @@ Or by hand:
 5. Go to **Settings → Devices & Services → Add integration** and search for
    **MeteoSwiss Weather**.
 
-Setup asks three things: postal code or mountain point, which forecast point if
-your postal code has several, and which weather station to use for the current
-values. The nearest one is preselected every time, so you can mostly press
-*Next*.
+Setup first asks what kind of entry to add: a postal code, a mountain point, or
+an SLF IMIS **snow station**. For a postal code or mountain point it then asks
+which forecast point (if your postal code has several) and which weather station
+to use for the current values; for a snow station it just asks which station. The
+nearest one is preselected every time, so you can mostly press *Next*.
 
 Needs Home Assistant **2024.7.0 or newer**.
 
@@ -279,19 +280,36 @@ All in grains/m³.
 </details>
 
 <details>
-<summary><b>Snow sensors (opt-in, SLF IMIS)</b></summary>
+<summary><b>Snow-station sensors (SLF IMIS)</b></summary>
 
-Opt-in when you pick a snow station in the setup/reconfigure step. Fed by the
-SLF IMIS network (WSL Institute for Snow and Avalanche Research), a second
-official open-data upstream. Both carry the attribution
-`Source: WSL Institute for Snow and Avalanche Research SLF` and a `station`
-attribute (plus `elevation`). This is snow height at altitude on a flat study
-plot off-piste — **not** the lifts' piste snow depth — and near 0 in summer.
+A **snow station** is its own config entry — the third choice in the setup, next
+to postal code and mountain point. It makes no MeteoSwiss request: it is fed only
+by the SLF IMIS network (WSL Institute for Snow and Avalanche Research), a second
+official open-data upstream. Every sensor sits on the station's own device, is
+enabled by default, carries the attribution
+`Source: WSL Institute for Snow and Avalanche Research SLF` and `station`,
+`elevation`, `measured_at` and `placeholder` attributes. A snow station is a flat
+study plot off-piste — **not** the lifts' piste snow depth — so snow values are
+near 0 in summer.
 
-| Sensor | Description | Unit | Default |
-|---|---|---|---|
-| Snow height | Measured snow height (`HS`) on the station's flat study plot | cm | on |
-| New snow 24 h (modelled) | SNOWPACK-modelled new snow over the last 24 h (`HN_1D`) | cm | on |
+| Sensor | Description | Unit |
+|---|---|---|
+| Snow height | Measured snow height (`HS`) on the station's flat study plot | cm |
+| New snow 24 h (modelled) | SNOWPACK-modelled new snow over the last 24 h (`HN_1D`) | cm |
+| Snow height (modelled) | SNOWPACK-modelled snow height | cm |
+| Temperature | Air temperature (30-min mean) | °C |
+| Humidity | Relative humidity | % |
+| Wind speed | Wind speed (30-min mean), native m/s | m/s |
+| Wind gust speed | Gust (5 s max), native m/s | m/s |
+| Wind bearing | Wind direction | ° |
+| Wind bearing standard deviation | Spread of the wind direction | ° |
+| Snow surface temperature | Temperature of the snow surface | °C |
+| Snow temperature (0 / 25 / 50 / 100 cm) | Snow-pack temperatures | °C |
+| Reflected radiation | Reflected short-wave radiation | W/m² |
+
+The snow values (snow height, new snow, modelled snow height) show `0` before the
+station's first reading; the others stay unknown until then. During an outage the
+last real value is held and restored across restarts.
 
 </details>
 
