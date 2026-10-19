@@ -40,3 +40,4 @@ added test coverage, and prose/style tweaks.
 - [0007 — Station history is imported into long-term statistics on request only](0007-station-history-backfill.md)
 - [0008 — One run-scoped forecast store, filled by an escalating fetch](0008-run-scoped-forecast-store.md)
 - [0009 — SLF IMIS snow stations as a second official upstream](0009-slf-imis-second-upstream.md)
+- [0010 — Sunshine duration rides the daily point blocks](0010-sunshine-duration-daily-block.md)
