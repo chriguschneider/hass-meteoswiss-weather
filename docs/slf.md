@@ -84,3 +84,16 @@ Trimmed real responses in `tests/fixtures/`:
 - `slf-imis_jau1_measurements.json`: last 2 rows of a `WIND` station.
 - `slf-imis_daily-snow.json`: the rows of the stations above (SCH2 absent,
   BOG4 all null).
+
+## Outages (measured 2026-10-19)
+
+- `/station/{code}/measurements` answers **404** with
+  `{"code":"NO_DATA","title":"Not found","status":404}` when the station has
+  no row within the requested period (max 7 days). An unknown code answers
+  400.
+- 6 `SNOW_FLAT` stations were silent: SCH2 (last 30.09. 07:00 UTC), CMA2
+  (29.09.), BOV2 (18.09.), SAA4 (06.10.), BRU2, GON2. They are exactly the
+  `SNOW_FLAT` stations missing from `/daily-snow`, and still listed (and
+  flagged active in the SLF archive's `stations.csv`).
+- SCH2 had no gap of 3 days or more since 2015 and reports year round
+  (0 cm in summer). Handling: ADR-0009 amendment.
