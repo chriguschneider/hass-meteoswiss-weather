@@ -665,9 +665,13 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if station.abbr == entry.data.get(CONF_STATION_ABBR):
             # Station unchanged: a point/postal-only change leaves history alone.
-            return self.async_update_reload_and_abort(
+            # Use async_update_entry so the registered update listener reloads
+            # the entry — calling async_update_reload_and_abort when a listener
+            # exists triggers HA's "update listener" deprecation warning (#210).
+            self.hass.config_entries.async_update_entry(
                 entry, unique_id=new_unique_id, data=new_data
             )
+            return self.async_abort(reason="reconfigure_successful")
 
         # Station changed: ask what to do with the recorded history.
         self._new_station = station
@@ -701,11 +705,12 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
                 )
             # HISTORY_BACKFILL is unreachable while BACKFILL_AVAILABLE is False;
             # its recorder-import path is wired with issue #51's follow-up.
-            return self.async_update_reload_and_abort(
+            self.hass.config_entries.async_update_entry(
                 entry,
                 unique_id=self._pending_unique_id,
                 data=self._pending_data,
             )
+            return self.async_abort(reason="reconfigure_successful")
 
         actions = [HISTORY_KEEP, HISTORY_DISCARD]
         if BACKFILL_AVAILABLE:
