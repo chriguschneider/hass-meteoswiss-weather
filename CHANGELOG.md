@@ -9,6 +9,16 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Station step could not be submitted with 'None' selected** (#192). The
+  precipitation-station and snow-station pickers used an empty-string option
+  value for "None (use the main station)" / "None (no snow station)". The Home
+  Assistant frontend treats a required field whose value is `""` as unfilled
+  and shows "Not all required fields are filled in." The sentinel is now
+  `"none"` (never a valid station code), and existing entries are unchanged —
+  the stored value remains `""` when no station is configured.
+
 ## [v0.6.1] — 2026-10-19
 
 ### Fixed

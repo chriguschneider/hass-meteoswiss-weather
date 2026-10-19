@@ -88,14 +88,16 @@ _MODE_POSTAL_CODE = "postal_code"
 _MODE_MOUNTAIN = "mountain"
 
 # Sentinel option for "no precipitation station" in the station step's optional
-# precipitation pick (ADR-0006). An empty string is never a valid abbreviation,
-# so it cleanly marks the opt-out; the feature is off by default.
-_PRECIP_NONE = ""
+# precipitation pick (ADR-0006). Must be non-empty so the HA frontend does not
+# treat it as an unfilled required field and block form submission (#192).
+# "none" is never a valid SwissMetNet abbreviation, so it safely marks the
+# opt-out. The stored entry value remains "" (no migration needed).
+_PRECIP_NONE = "none"
 
 # Sentinel for "no IMIS snow station" in the station step's optional IMIS pick
-# (ADR-0009). Like the precipitation sentinel: an empty string is never a valid
-# station code, so it marks the opt-out; the feature is off by default.
-_IMIS_NONE = ""
+# (ADR-0009). Same reasoning as _PRECIP_NONE: non-empty so the form submits,
+# "none" is never a valid IMIS station code (#192).
+_IMIS_NONE = "none"
 
 
 def _mode_schema(default: str = _MODE_POSTAL_CODE) -> vol.Schema:
@@ -506,10 +508,12 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> dict[str, str]:
         """Map the station step's precip pick to the entry keys (ADR-0006).
 
-        Returns empty abbreviation/name when the "none" sentinel was chosen or
-        the field was absent, so the feature stays off.
+        Returns empty abbreviation/name when the sentinel ("none"), an empty
+        string (old clients), or a missing key is chosen, so the feature stays
+        off. The stored entry value is always "" for "no station".
         """
-        chosen = str(user_input.get(CONF_PRECIP_STATION_ABBR, _PRECIP_NONE) or "")
+        raw = user_input.get(CONF_PRECIP_STATION_ABBR, _PRECIP_NONE)
+        chosen = "" if (raw == _PRECIP_NONE or not raw) else str(raw)
         precip = next((s for s in precip_nearby if s.abbr == chosen), None)
         return {
             CONF_PRECIP_STATION_ABBR: precip.abbr if precip else "",
@@ -551,11 +555,12 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> dict[str, Any]:
         """Map the station step's IMIS pick to the entry keys (ADR-0009).
 
-        Returns empty code/name (and no elevation) when the "none" sentinel was
-        chosen or the field was absent, so the feature stays off and no SLF
-        request is ever made.
+        Returns empty code/name (and no elevation) when the sentinel ("none"),
+        an empty string (old clients), or a missing key is chosen, so the
+        feature stays off and no SLF request is ever made.
         """
-        chosen = str(user_input.get(CONF_IMIS_STATION_CODE, _IMIS_NONE) or "")
+        raw = user_input.get(CONF_IMIS_STATION_CODE, _IMIS_NONE)
+        chosen = "" if (raw == _IMIS_NONE or not raw) else str(raw)
         imis = next((s for s in imis_nearby if s.code == chosen), None)
         return {
             CONF_IMIS_STATION_CODE: imis.code if imis else "",
