@@ -68,6 +68,9 @@ CONF_HOURLY_TEMP_PERCENTILES = "hourly_temp_percentiles"
 # files; the files themselves are plain HTTPS downloads under OGD_FILE_BASE.
 OGD_STAC_BASE = "https://data.geo.admin.ch/api/stac/v1"
 OGD_FILE_BASE = "https://data.geo.admin.ch"
+
+# SLF IMIS open data (ADR-0009). Endpoint paths are constants in slf/const.py.
+SLF_API_BASE = "https://measurement-api.slf.ch"
 COLLECTION_STATIONS = "ch.meteoschweiz.ogd-smn"
 COLLECTION_LOCAL_FORECAST = "ch.meteoschweiz.ogd-local-forecasting"
 

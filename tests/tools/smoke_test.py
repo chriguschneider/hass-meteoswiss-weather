@@ -157,6 +157,26 @@ BER_REQUIRED_CODES = {
     "tso005s0",
 }
 
+# SLF IMIS API (ADR-0009, docs/slf.md).
+SLF_API_BASE = "https://measurement-api.slf.ch"
+SLF_STATIONS_URL = f"{SLF_API_BASE}/public/api/imis/stations"
+SLF_DAILY_SNOW_URL = f"{SLF_API_BASE}/public/api/imis/daily-snow"
+# A known SNOW_FLAT station (STH2 Vorderstocken) used for the measurements probe.
+SLF_PROBE_STATION = "STH2"
+SLF_MEASUREMENTS_URL = (
+    f"{SLF_API_BASE}/public/api/imis/station/{SLF_PROBE_STATION}"
+    "/measurements?period_in_days=1"
+)
+# Required fields in each endpoint's JSON (docs/slf.md).
+SLF_STATION_REQUIRED = {
+    "code", "label", "lat", "lon", "elevation", "canton_code", "type",
+}
+SLF_MEASUREMENT_REQUIRED = {
+    "station_code", "measure_date", "HS",
+    "TA_30MIN_MEAN", "VW_30MIN_MEAN", "VW_30MIN_MAX", "DW_30MIN_MEAN",
+}
+SLF_DAILY_SNOW_REQUIRED = {"station_code", "measure_date", "HS", "HN_1D"}
+
 _failures: list[str] = []
 
 
@@ -576,6 +596,83 @@ def check_cloud_value_range(hrefs: dict[str, str]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# SLF IMIS checks (ADR-0009)
+# ---------------------------------------------------------------------------
+
+
+def check_slf_stations() -> None:
+    """SLF check 1: /stations returns a non-empty list with required fields."""
+    label = "SLF stations: reachable, required fields present"
+    try:
+        raw = _get(SLF_STATIONS_URL)
+        data = json.loads(raw.decode())
+        if not isinstance(data, list) or not data:
+            _report(label, False, "empty or non-list response")
+            return
+        first = data[0]
+        missing = SLF_STATION_REQUIRED - set(first.keys())
+        snow_flat = [s for s in data if s.get("type") == "SNOW_FLAT"]
+        ok = not missing and bool(snow_flat)
+        detail = ""
+        if missing:
+            detail = f"missing keys: {sorted(missing)}"
+        elif not snow_flat:
+            detail = "no SNOW_FLAT stations found"
+        else:
+            detail = (
+                f"{len(data)} stations, {len(snow_flat)} SNOW_FLAT; "
+                f"first SNOW_FLAT: {snow_flat[0]['code']}"
+            )
+        _report(label, ok, detail)
+    except Exception as exc:
+        _report(label, False, str(exc))
+
+
+def check_slf_measurements() -> None:
+    """SLF check 2: /station/{code}/measurements returns rows with required fields."""
+    label = (
+        f"SLF measurements ({SLF_PROBE_STATION}): reachable, required fields present"
+    )
+    try:
+        raw = _get(SLF_MEASUREMENTS_URL)
+        data = json.loads(raw.decode())
+        if not isinstance(data, list) or not data:
+            _report(label, False, "empty or non-list response")
+            return
+        last = data[-1]
+        missing = SLF_MEASUREMENT_REQUIRED - set(last.keys())
+        ok = not missing
+        detail = (
+            f"missing keys: {sorted(missing)}" if missing
+            else f"{len(data)} rows; newest measure_date={last.get('measure_date')}"
+        )
+        _report(label, ok, detail)
+    except Exception as exc:
+        _report(label, False, str(exc))
+
+
+def check_slf_daily_snow() -> None:
+    """SLF check 3: /daily-snow returns rows with required fields."""
+    label = "SLF daily-snow: reachable, required fields present"
+    try:
+        raw = _get(SLF_DAILY_SNOW_URL)
+        data = json.loads(raw.decode())
+        if not isinstance(data, list) or not data:
+            _report(label, False, "empty or non-list response")
+            return
+        first = data[0]
+        missing = SLF_DAILY_SNOW_REQUIRED - set(first.keys())
+        ok = not missing
+        detail = (
+            f"missing keys: {sorted(missing)}" if missing
+            else f"{len(data)} rows; first station={first.get('station_code')}"
+        )
+        _report(label, ok, detail)
+    except Exception as exc:
+        _report(label, False, str(exc))
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -595,6 +692,13 @@ def main() -> None:
     check_point_meta()
     check_ber_obs()
     check_station_meta()
+
+    print()
+    print("SLF IMIS checks")
+    print("-" * 50)
+    check_slf_stations()
+    check_slf_measurements()
+    check_slf_daily_snow()
 
     print("=" * 50)
     if _failures:

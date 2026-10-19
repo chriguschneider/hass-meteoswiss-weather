@@ -9,6 +9,14 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Added
+
+- **SLF IMIS client** (`slf/` package, ADR-0009, #173). Pure-Python client
+  for the SLF snow-station API: station list, nearest `SNOW_FLAT` station
+  picker, latest 30-minute measurement, and SNOWPACK-modelled daily snow.
+  No Home Assistant wiring yet (coordinator/entities follow in a later issue);
+  `SLF_API_BASE` added to `const.py`.
+
 ## [v0.4.2] — 2026-10-14
 
 ### Fixed
