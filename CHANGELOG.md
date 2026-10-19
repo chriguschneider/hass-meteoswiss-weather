@@ -9,24 +9,22 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+## [v0.5.0] — 2026-10-19
+
 ### Added
 
-- **SLF IMIS client** (`slf/` package, ADR-0009, #173). Pure-Python client
-  for the SLF snow-station API: station list, nearest `SNOW_FLAT` station
-  picker, latest 30-minute measurement, and SNOWPACK-modelled daily snow.
-  No Home Assistant wiring yet (coordinator/entities follow in a later issue);
-  `SLF_API_BASE` added to `const.py`.
-- **Optional snow station (SLF IMIS)** (ADR-0009, #174). The setup and
-  reconfigure station step now offers an optional snow station — the three
-  nearest SLF IMIS flat-field stations, labelled with elevation and distance,
+- **Optional snow station (SLF IMIS)** (ADR-0009, #171). The setup and
+  reconfigure station step offers an optional snow station: the three nearest
+  automatic IMIS stations of the WSL Institute for Snow and Avalanche Research
+  SLF that measure on a flat study plot, labelled with elevation and distance,
   **none selected by default**. When picked, two sensors appear on the entry's
-  device: **Snow height** (measured `HS`) and **New snow 24 h (modelled)**
-  (`HN_1D`, SNOWPACK-modelled), both attributed to the WSL Institute for Snow
-  and Avalanche Research SLF with a `station`/`elevation` attribute. A dedicated
-  coordinator polls the station's latest measurement every 30 minutes and the
-  modelled daily snow at most once a day, conditionally; **no SLF request is
-  made when no snow station is configured**. A failing SLF fetch leaves the snow
-  sensors unavailable and never affects the MeteoSwiss entities.
+  device: **Snow height** (measured, every 30 minutes) and **New snow 24 h
+  (modelled)** (SNOWPACK model, daily), both attributed to the SLF with a
+  `station` and `elevation` attribute. The station stands off-piste, so the
+  value is not the lifts' piste snow depth, but it is measured at ski altitude.
+  **No SLF request is made when no snow station is configured**; a failing SLF
+  fetch leaves the snow sensors unavailable and never affects the MeteoSwiss
+  entities.
 
 ## [v0.4.2] — 2026-10-14
 
@@ -611,7 +609,8 @@ integration produces a weather entity (see the tracking issue in the README).
   tag-triggered release gate with a zip asset, and the opt-in Claude agent
   workflows (label, mention, autopilot, reviewer)
 
-[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.5.0...HEAD
+[v0.5.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.4.2...v0.5.0
 [v0.4.2]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.4.1...v0.4.2
 [v0.4.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.4.0...v0.4.1
 [v0.4.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.3.1...v0.4.0
