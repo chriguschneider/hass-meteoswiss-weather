@@ -329,6 +329,26 @@ def mock_ogd_imis(aioclient_mock):
 
 
 @pytest.fixture
+def mock_slf(aioclient_mock):
+    """Register only the SLF IMIS endpoints for STH2 — no MeteoSwiss OGD.
+
+    A snow-station entry (ADR-0011) must make zero ``data.geo.admin.ch``
+    requests, so its setup is given only the SLF station's measurement and
+    daily-snow endpoints. Any accidental OGD request would raise here (no mock
+    registered), which is the point of not using ``mock_ogd``.
+    """
+    aioclient_mock.get(
+        measurements_url("STH2"),
+        content=_fixture_bytes("slf-imis_sth2_measurements.json"),
+    )
+    aioclient_mock.get(
+        DAILY_SNOW_URL,
+        content=_fixture_bytes("slf-imis_daily-snow.json"),
+    )
+    return aioclient_mock
+
+
+@pytest.fixture
 def mock_ogd_pollen(aioclient_mock):
     """Like ``mock_ogd`` but also mocks the PBE pollen station (ADR-0005).
 

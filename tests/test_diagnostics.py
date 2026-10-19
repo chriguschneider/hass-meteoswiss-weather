@@ -139,6 +139,47 @@ async def test_diagnostics_after_station_failure(
     assert sc["last_exception"] is not None
 
 
+async def test_diagnostics_snow_station_imis_block_only(
+    hass: HomeAssistant,
+    mock_slf: AiohttpClientMocker,
+) -> None:
+    """A snow-station entry's diagnostics carry only the IMIS block (ADR-0011)."""
+    from custom_components.meteoswiss_weather.const import (
+        CONF_ENTRY_TYPE,
+        CONF_IMIS_STATION_CODE,
+        CONF_IMIS_STATION_ELEVATION,
+        CONF_IMIS_STATION_NAME,
+        ENTRY_TYPE_SNOW_STATION,
+    )
+    from custom_components.meteoswiss_weather.diagnostics import (
+        async_get_config_entry_diagnostics,
+    )
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="imis-STH2",
+        data={
+            CONF_ENTRY_TYPE: ENTRY_TYPE_SNOW_STATION,
+            CONF_IMIS_STATION_CODE: "STH2",
+            CONF_IMIS_STATION_NAME: "Vorderstocken",
+            CONF_IMIS_STATION_ELEVATION: 1791.0,
+        },
+        title="Vorderstocken",
+    )
+    await _setup(hass, entry)
+
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+
+    # Only the entry section and the IMIS block are present — no point entry
+    # coordinators (station/forecast/precip) for a snow-station entry.
+    assert set(diag) == {"entry", "imis_coordinator"}
+    ic = diag["imis_coordinator"]
+    assert ic["station_code"] == "STH2"
+    assert ic["station_name"] == "Vorderstocken"
+    assert ic["elevation"] == 1791.0
+    assert ic["last_update_success"] is True
+
+
 # ---------------------------------------------------------------------------
 # Availability: weather entity
 # ---------------------------------------------------------------------------

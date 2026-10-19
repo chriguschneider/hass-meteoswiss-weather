@@ -41,8 +41,8 @@ from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
-from . import MeteoSwissConfigEntry
-from .const import ATTRIBUTION, ATTRIBUTION_SLF, DOMAIN
+from . import MeteoSwissConfigEntry, SnowStationRuntimeData
+from .const import ATTRIBUTION, ATTRIBUTION_SLF, DOMAIN, SLF_DATA_SERVICE_URL
 from .coordinator import (
     ForecastCoordinator,
     ImisCoordinator,
@@ -499,6 +499,10 @@ async def async_setup_entry(
 ) -> None:
     """Set up station sensor entities for a config entry."""
     runtime = entry.runtime_data
+    if isinstance(runtime, SnowStationRuntimeData):
+        _async_setup_snow_station(runtime, async_add_entities)
+        return
+
     point = runtime.point
     device_unique_id = f"{point.point_type_id}-{point.point_id}"
     device_info = DeviceInfo(
@@ -548,13 +552,10 @@ async def async_setup_entry(
         # is excluded from ``supported``, so keep its id in the valid set.
         if precip_coordinator is not None:
             valid_unique_ids.add(f"{device_unique_id}_precipitation")
-        # The IMIS snow sensors (ADR-0009) are backed by their own coordinator,
-        # not the station inventory, so keep their ids in the valid set when an
-        # IMIS station is configured — otherwise the cleanup would remove them.
-        if runtime.imis_coordinator is not None:
-            valid_unique_ids |= {
-                f"{device_unique_id}_{desc.key}" for desc in _IMIS_SENSORS
-            }
+        # Point entries no longer carry IMIS snow sensors (ADR-0011): an IMIS
+        # station is its own entry now. The snow sensor ids are therefore not in
+        # the valid set, so this cleanup removes any left on a point entry by
+        # v0.5.0–v0.6.2 (``imis_station_*`` keys in ``entry.data`` are ignored).
         sensor_uid_prefix = f"{device_unique_id}_"
         entity_reg = er.async_get(hass)
         for entity_entry in er.async_entries_for_config_entry(
@@ -627,19 +628,42 @@ async def async_setup_entry(
             device_unique_id, device_info,
         ),
     ])
-    # SLF IMIS snow sensors (ADR-0009, #174): only when an IMIS station is set.
-    if runtime.imis_coordinator is not None:
-        async_add_entities(
-            ImisSnowSensor(
-                runtime.imis_coordinator,
-                description,
-                device_unique_id,
-                device_info,
-                station_name=runtime.imis_station_name,
-                elevation=runtime.imis_station_elevation,
-            )
-            for description in _IMIS_SENSORS
+
+
+def _async_setup_snow_station(
+    runtime: SnowStationRuntimeData,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up the SLF IMIS snow sensors for a snow-station entry (ADR-0011).
+
+    The sensors live on a device of the station itself: identifiers
+    ``(DOMAIN, "imis-<code>")``, name ``"<name> (<elevation> m)"``, manufacturer
+    SLF, linking back to the SLF data service. Their unique ids are
+    ``"imis-<code>_<key>"``. No MeteoSwiss device or sensor is created.
+    """
+    code = runtime.imis_station_code
+    device_unique_id = f"imis-{code}"
+    elevation = runtime.imis_station_elevation
+    name = runtime.imis_station_name
+    device_name = f"{name} ({int(elevation)} m)" if elevation is not None else name
+    device_info = DeviceInfo(
+        identifiers={(DOMAIN, device_unique_id)},
+        name=device_name,
+        manufacturer="SLF",
+        entry_type=DeviceEntryType.SERVICE,
+        configuration_url=SLF_DATA_SERVICE_URL,
+    )
+    async_add_entities(
+        ImisSnowSensor(
+            runtime.imis_coordinator,
+            description,
+            device_unique_id,
+            device_info,
+            station_name=name,
+            elevation=elevation,
         )
+        for description in _IMIS_SENSORS
+    )
 
 
 class MeteoSwissSensor(CoordinatorEntity[StationCoordinator], SensorEntity):

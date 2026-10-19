@@ -22,9 +22,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from freezegun import freeze_time
-from homeassistant.config_entries import SOURCE_USER
+from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
 from homeassistant.core import HomeAssistant, State
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import (
@@ -33,6 +34,10 @@ from pytest_homeassistant_custom_component.common import (
 )
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
 
+from custom_components.meteoswiss_weather import (
+    MeteoSwissRuntimeData,
+    SnowStationRuntimeData,
+)
 from custom_components.meteoswiss_weather.const import (
     ATTRIBUTION_SLF,
     CONF_ENTRY_TYPE,
@@ -47,6 +52,7 @@ from custom_components.meteoswiss_weather.const import (
     CONF_STATION_NAME,
     DOMAIN,
     ENTRY_TYPE_SNOW_STATION,
+    SLF_DATA_SERVICE_URL,
 )
 from custom_components.meteoswiss_weather.ogd import ForecastPoint, Station
 from custom_components.meteoswiss_weather.slf import (
@@ -445,7 +451,8 @@ async def test_station_step_has_no_imis_field(hass: HomeAssistant) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Runtime: request budget and sourcing
+# Runtime: snow-station entry builds the IMIS coordinator and sensors only
+# (ADR-0011), and a point entry ignores leftover IMIS keys.
 # ---------------------------------------------------------------------------
 
 
@@ -458,10 +465,196 @@ def _slf_calls(aioclient_mock: AiohttpClientMocker) -> int:
     )
 
 
-def _entity_id(hass: HomeAssistant, key: str) -> str | None:
-    """Resolve the snow sensor entity id from its unique id."""
+def _ogd_calls(aioclient_mock: AiohttpClientMocker) -> int:
+    """Number of requests to the MeteoSwiss open-data host recorded so far."""
+    return sum(
+        1
+        for _method, url, *_ in aioclient_mock.mock_calls
+        if "data.geo.admin.ch" in url.host
+    )
+
+
+def _snow_entity_id(hass: HomeAssistant, key: str, code: str = "STH2") -> str | None:
+    """Resolve a snow-station sensor's entity id from its ``imis-<code>_<key>``."""
+    registry = er.async_get(hass)
+    return registry.async_get_entity_id("sensor", DOMAIN, f"imis-{code}_{key}")
+
+
+def _point_entity_id(hass: HomeAssistant, key: str) -> str | None:
+    """Resolve a point entry's sensor entity id from its ``2-309800_<key>``."""
     registry = er.async_get(hass)
     return registry.async_get_entity_id("sensor", DOMAIN, f"2-309800_{key}")
+
+
+def _point_entry_with_leftover_imis() -> MockConfigEntry:
+    """A point (postal-code) entry still carrying v0.5.0–v0.6.2 IMIS keys.
+
+    ADR-0011 says such keys are ignored: no IMIS coordinator is built and no SLF
+    request is made for a point entry.
+    """
+    return MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="2-309800",
+        data={
+            CONF_POINT_ID: 309800,
+            CONF_POINT_TYPE_ID: 2,
+            CONF_POSTAL_CODE: "3098",
+            CONF_POINT_NAME: "Köniz",
+            CONF_STATION_ABBR: "BER",
+            CONF_STATION_NAME: "Bern / Zollikofen",
+            # Leftover keys from before ADR-0011 — must be ignored.
+            CONF_IMIS_STATION_CODE: "STH2",
+            CONF_IMIS_STATION_NAME: "Vorderstocken",
+            CONF_IMIS_STATION_ELEVATION: 1791.0,
+        },
+        title="Köniz",
+    )
+
+
+async def test_snow_station_builds_imis_only_zero_ogd(
+    hass: HomeAssistant,
+    mock_slf: AiohttpClientMocker,
+) -> None:
+    """A snow-station entry builds the IMIS coordinator and sensors, no OGD."""
+    entry = _snow_station_entry("STH2")
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    runtime = entry.runtime_data
+    # Snow-station runtime shape: only the IMIS coordinator (ADR-0011).
+    assert isinstance(runtime, SnowStationRuntimeData)
+    assert runtime.imis_coordinator is not None
+    # The SLF API was polled; data.geo.admin.ch was never touched.
+    assert _slf_calls(mock_slf) >= 1
+    assert _ogd_calls(mock_slf) == 0
+
+    # No weather entity is created for a snow-station entry.
+    assert not [
+        s for s in hass.states.async_entity_ids() if s.startswith("weather.")
+    ]
+
+    # The sensors live on the station's own device.
+    dev_reg = dr.async_get(hass)
+    device = dev_reg.async_get_device(identifiers={(DOMAIN, "imis-STH2")})
+    assert device is not None
+    assert device.name == "Vorderstocken (1791 m)"
+    assert device.manufacturer == "SLF"
+    assert device.configuration_url == SLF_DATA_SERVICE_URL
+
+    # The snow-height sensor reads the measured HS (1.0 cm) with SLF attribution.
+    snow_id = _snow_entity_id(hass, "snow_height")
+    assert snow_id is not None
+    snow_state = hass.states.get(snow_id)
+    assert snow_state is not None
+    assert float(snow_state.state) == 1.0
+    assert snow_state.attributes["attribution"] == ATTRIBUTION_SLF
+    assert snow_state.attributes.get("station") == "Vorderstocken"
+    assert snow_state.attributes.get("elevation") == 1791.0
+
+    # The modelled new-snow sensor reads HN_1D (0.0 cm).
+    new_snow_id = _snow_entity_id(hass, "new_snow_24h")
+    assert new_snow_id is not None
+    new_snow_state = hass.states.get(new_snow_id)
+    assert new_snow_state is not None
+    assert float(new_snow_state.state) == 0.0
+    assert new_snow_state.attributes["attribution"] == ATTRIBUTION_SLF
+
+
+async def test_point_entry_ignores_leftover_imis_keys(
+    hass: HomeAssistant,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A point entry builds no IMIS coordinator and removes stale snow sensors."""
+    entry = _point_entry_with_leftover_imis()
+    entry.add_to_hass(hass)
+
+    # A stale snow sensor left on the point device by v0.5.0–v0.6.2.
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "2-309800_snow_height",
+        config_entry=entry,
+    )
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    runtime = entry.runtime_data
+    # Point entry runtime: no IMIS coordinator at all (ADR-0011).
+    assert isinstance(runtime, MeteoSwissRuntimeData)
+    assert not hasattr(runtime, "imis_coordinator")
+    # No SLF request was made for a point entry.
+    assert _slf_calls(mock_ogd) == 0
+    # The stale snow sensor was removed by the registry cleanup.
+    assert _point_entity_id(hass, "snow_height") is None
+    # And no snow-station device was created.
+    dev_reg = dr.async_get(hass)
+    assert dev_reg.async_get_device(identifiers={(DOMAIN, "imis-STH2")}) is None
+
+
+async def test_point_entry_makes_no_slf_request_or_repair_issue(
+    hass: HomeAssistant,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A point entry (even with leftover keys) makes no SLF request, no issue."""
+    entry = _point_entry_with_leftover_imis()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert isinstance(entry.runtime_data, MeteoSwissRuntimeData)
+    assert _slf_calls(mock_ogd) == 0
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, _no_data_issue_id(entry)) is None
+
+
+async def test_snow_station_unload_and_reload(
+    hass: HomeAssistant,
+    mock_slf: AiohttpClientMocker,
+) -> None:
+    """A snow-station entry unloads cleanly and reloads to the same state."""
+    entry = _snow_station_entry("STH2")
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    snow_id = _snow_entity_id(hass, "snow_height")
+    assert snow_id is not None
+    assert float(hass.states.get(snow_id).state) == 1.0
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.NOT_LOADED
+    assert hass.states.get(snow_id).state == "unavailable"
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert isinstance(entry.runtime_data, SnowStationRuntimeData)
+    assert float(hass.states.get(snow_id).state) == 1.0
+
+
+async def test_point_entry_unload_and_reload(
+    hass: HomeAssistant,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A point entry unloads and reloads cleanly (unchanged behaviour)."""
+    entry = _imis_entry()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.koniz_temperature").state == "19.5"
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.NOT_LOADED
+    assert hass.states.get("sensor.koniz_temperature").state == "unavailable"
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert isinstance(entry.runtime_data, MeteoSwissRuntimeData)
+    assert hass.states.get("sensor.koniz_temperature").state == "19.5"
 
 
 def _imis_entry(
@@ -469,7 +662,7 @@ def _imis_entry(
     name: str = "Vorderstocken",
     elevation: float | None = 1791.0,
 ) -> MockConfigEntry:
-    """A configured Köniz entry carrying an IMIS snow-station pick."""
+    """A point (Köniz) entry carrying leftover IMIS keys (ignored, ADR-0011)."""
     return MockConfigEntry(
         domain=DOMAIN,
         unique_id="2-309800",
@@ -488,130 +681,14 @@ def _imis_entry(
     )
 
 
-async def test_unset_makes_zero_slf_requests(
-    hass: HomeAssistant,
-    mock_ogd: AiohttpClientMocker,
-) -> None:
-    """With no IMIS station configured, the SLF API is never hit."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        unique_id="2-309800",
-        data={
-            CONF_POINT_ID: 309800,
-            CONF_POINT_TYPE_ID: 2,
-            CONF_POSTAL_CODE: "3098",
-            CONF_POINT_NAME: "Köniz",
-            CONF_STATION_ABBR: "BER",
-            CONF_STATION_NAME: "Bern / Zollikofen",
-        },
-        title="Köniz",
-    )
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert entry.runtime_data.imis_coordinator is None
-    assert _slf_calls(mock_ogd) == 0
-
-
-async def test_set_sources_snow_from_imis_station(
-    hass: HomeAssistant,
-    mock_ogd_imis: AiohttpClientMocker,
-) -> None:
-    """Snow sensors come from the SLF station; MeteoSwiss sensors are unchanged."""
-    entry = _imis_entry()
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    runtime = entry.runtime_data
-    # The IMIS coordinator exists and polled the SLF API.
-    assert runtime.imis_coordinator is not None
-    assert _slf_calls(mock_ogd_imis) >= 1
-    data = runtime.imis_coordinator.data
-    assert data is not None
-    # Newest row in the STH2 fixture has HS = 1.0 cm.
-    assert data.measurement is not None
-    assert data.measurement.snow_height_cm == 1.0
-    # STH2's daily-snow row has HN_1D = 0.0 cm (SNOWPACK-modelled).
-    assert data.daily_snow is not None
-    assert data.daily_snow.new_snow_24h_cm == 0.0
-
-    # The snow-height sensor reads the measured HS.
-    snow_id = _entity_id(hass, "snow_height")
-    assert snow_id is not None
-    snow_state = hass.states.get(snow_id)
-    assert snow_state is not None
-    assert float(snow_state.state) == 1.0
-    # Its attribution is the SLF one, and it names the station and elevation.
-    assert snow_state.attributes["attribution"] == ATTRIBUTION_SLF
-    assert snow_state.attributes.get("station") == "Vorderstocken"
-    assert snow_state.attributes.get("elevation") == 1791.0
-
-    # The modelled new-snow sensor reads HN_1D.
-    new_snow_id = _entity_id(hass, "new_snow_24h")
-    assert new_snow_id is not None
-    new_snow_state = hass.states.get(new_snow_id)
-    assert new_snow_state is not None
-    assert float(new_snow_state.state) == 0.0
-    assert new_snow_state.attributes["attribution"] == ATTRIBUTION_SLF
-
-    # The MeteoSwiss temperature sensor is unaffected (still BER, 19.5 °C).
-    temp_state = hass.states.get("sensor.koniz_temperature")
-    assert temp_state is not None
-    assert temp_state.state == "19.5"
-
-
-async def test_slf_failure_shows_placeholder_meteoswiss_unaffected(
-    hass: HomeAssistant,
-    mock_ogd: AiohttpClientMocker,
-) -> None:
-    """A failing SLF fetch shows the marked placeholder, never unavailable.
-
-    With no value ever received (first setup, SLF down), the snow sensors show
-    ``0`` with ``placeholder: true`` and ``measured_at: null`` rather than going
-    unavailable (ADR-0009 amendment, #187). MeteoSwiss entities are untouched.
-    """
-    # Register the SLF endpoints to fail (500) on top of the healthy OGD mocks.
-    mock_ogd.get(measurements_url("STH2"), status=500)
-    mock_ogd.get(DAILY_SNOW_URL, status=500)
-
-    entry = _imis_entry()
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    runtime = entry.runtime_data
-    # The coordinator exists but its first refresh failed (non-fatal).
-    assert runtime.imis_coordinator is not None
-    assert runtime.imis_coordinator.last_update_success is False
-
-    # The snow sensors show the marked placeholder, not "unavailable".
-    snow_id = _entity_id(hass, "snow_height")
-    assert snow_id is not None
-    snow_state = hass.states.get(snow_id)
-    assert snow_state is not None
-    assert float(snow_state.state) == 0.0
-    assert snow_state.attributes["placeholder"] is True
-    assert snow_state.attributes["measured_at"] is None
-    # The SLF attribution and station attributes are still present.
-    assert snow_state.attributes["attribution"] == ATTRIBUTION_SLF
-    assert snow_state.attributes.get("station") == "Vorderstocken"
-
-    # The MeteoSwiss temperature sensor is unaffected.
-    temp_state = hass.states.get("sensor.koniz_temperature")
-    assert temp_state is not None
-    assert temp_state.state == "19.5"
-
-
 # ---------------------------------------------------------------------------
-# Station outages: held value, placeholder, one warning per day, repair issue
-# (ADR-0009 amendment, issue #187)
+# Station outages on a snow-station entry: held value, placeholder, one warning
+# per day, repair issue (ADR-0009 amendment, issue #187; ADR-0011 entry type)
 # ---------------------------------------------------------------------------
 
 
-_SNOW_HEIGHT = "sensor.koniz_snow_height"
-_NEW_SNOW = "sensor.koniz_new_snow_24_h_modelled"
+_SNOW_HEIGHT = "sensor.vorderstocken_1791_m_snow_height"
+_NEW_SNOW = "sensor.vorderstocken_1791_m_new_snow_24_h_modelled"
 _NO_DATA_BODY = b'{"code": "NO_DATA"}'
 _COORD_LATEST = (
     "custom_components.meteoswiss_weather.coordinator.fetch_imis_latest"
@@ -623,28 +700,54 @@ def _no_data_issue_id(entry: MockConfigEntry) -> str:
     return f"imis_no_data_{entry.entry_id}"
 
 
+async def test_slf_failure_shows_placeholder(
+    hass: HomeAssistant,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """A failing SLF fetch shows the marked placeholder, never unavailable."""
+    aioclient_mock.get(measurements_url("STH2"), status=500)
+    aioclient_mock.get(DAILY_SNOW_URL, status=500)
+
+    entry = _snow_station_entry("STH2")
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    runtime = entry.runtime_data
+    assert isinstance(runtime, SnowStationRuntimeData)
+    assert runtime.imis_coordinator.last_update_success is False
+
+    snow_id = _snow_entity_id(hass, "snow_height")
+    assert snow_id is not None
+    snow_state = hass.states.get(snow_id)
+    assert snow_state is not None
+    assert float(snow_state.state) == 0.0
+    assert snow_state.attributes["placeholder"] is True
+    assert snow_state.attributes["measured_at"] is None
+    assert snow_state.attributes["attribution"] == ATTRIBUTION_SLF
+    assert snow_state.attributes.get("station") == "Vorderstocken"
+
+
 async def test_first_setup_no_data_shows_marked_placeholder(
     hass: HomeAssistant,
-    mock_ogd: AiohttpClientMocker,
+    aioclient_mock: AiohttpClientMocker,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A station silent from the first poll shows a marked 0, never an ERROR."""
-    # Measurement answers 404 NO_DATA; daily-snow has no row for the station.
-    mock_ogd.get(measurements_url("STH2"), status=404, content=_NO_DATA_BODY)
-    mock_ogd.get(DAILY_SNOW_URL, content=b"[]")
+    aioclient_mock.get(measurements_url("STH2"), status=404, content=_NO_DATA_BODY)
+    aioclient_mock.get(DAILY_SNOW_URL, content=b"[]")
 
-    entry = _imis_entry()
+    entry = _snow_station_entry("STH2")
     entry.add_to_hass(hass)
     with caplog.at_level(logging.DEBUG):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    # NO_DATA is handled gracefully: the coordinator "succeeds" (no UpdateFailed).
-    coordinator = entry.runtime_data.imis_coordinator
-    assert coordinator is not None
-    assert coordinator.last_update_success is True
+    runtime = entry.runtime_data
+    assert isinstance(runtime, SnowStationRuntimeData)
+    # NO_DATA is handled gracefully: the coordinator "succeeds".
+    assert runtime.imis_coordinator.last_update_success is True
 
-    # Both snow sensors show the marked placeholder.
     for entity_id in (_SNOW_HEIGHT, _NEW_SNOW):
         state = hass.states.get(entity_id)
         assert state is not None, entity_id
@@ -653,42 +756,38 @@ async def test_first_setup_no_data_shows_marked_placeholder(
         assert state.attributes["measured_at"] is None
         assert state.attributes["attribution"] == ATTRIBUTION_SLF
 
-    # No ERROR-level log mentions the silent station.
     assert not [
         r
         for r in caplog.records
         if r.levelno >= logging.ERROR and ("STH2" in r.getMessage())
     ]
 
-    # The MeteoSwiss temperature sensor is unaffected.
-    assert hass.states.get("sensor.koniz_temperature").state == "19.5"
-
 
 async def test_held_value_and_one_warning_per_day(
     hass: HomeAssistant,
-    mock_ogd_imis: AiohttpClientMocker,
+    mock_slf: AiohttpClientMocker,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """After a real value, an outage holds it and warns once a day, again next day."""
     day0 = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
     day1 = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
 
-    entry = _imis_entry()
+    entry = _snow_station_entry("STH2")
     entry.add_to_hass(hass)
     with freeze_time(day0):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
 
-    coordinator = entry.runtime_data.imis_coordinator
-    assert coordinator is not None
-    # Real value from the fixture, with its measured_at.
+    runtime = entry.runtime_data
+    assert isinstance(runtime, SnowStationRuntimeData)
+    coordinator = runtime.imis_coordinator
     first = hass.states.get(_SNOW_HEIGHT)
+    assert first is not None
     assert float(first.state) == 1.0
     assert first.attributes["placeholder"] is False
     assert first.attributes["measured_at"] == _STH2_MEASURED_AT
 
     with patch(_COORD_LATEST, side_effect=ImisNoDataError("no data")):
-        # Two polls on the same local day → exactly one warning.
         with freeze_time(day0):
             caplog.clear()
             with caplog.at_level(logging.WARNING):
@@ -702,13 +801,11 @@ async def test_held_value_and_one_warning_per_day(
             assert len(same_day) == 1
             assert all(r.levelno == logging.WARNING for r in same_day)
 
-            # The value is held: unchanged state and unchanged measured_at.
             held = hass.states.get(_SNOW_HEIGHT)
             assert float(held.state) == 1.0
             assert held.attributes["placeholder"] is False
             assert held.attributes["measured_at"] == _STH2_MEASURED_AT
 
-        # The next local day warns again.
         with freeze_time(day1):
             caplog.clear()
             with caplog.at_level(logging.WARNING):
@@ -722,11 +819,11 @@ async def test_held_value_and_one_warning_per_day(
 
 async def test_restored_real_value_held_while_silent(
     hass: HomeAssistant,
-    mock_ogd: AiohttpClientMocker,
+    aioclient_mock: AiohttpClientMocker,
 ) -> None:
     """A restored non-placeholder value is shown after restart while silent."""
-    mock_ogd.get(measurements_url("STH2"), status=404, content=_NO_DATA_BODY)
-    mock_ogd.get(DAILY_SNOW_URL, content=b"[]")
+    aioclient_mock.get(measurements_url("STH2"), status=404, content=_NO_DATA_BODY)
+    aioclient_mock.get(DAILY_SNOW_URL, content=b"[]")
 
     restored = State(
         _SNOW_HEIGHT,
@@ -741,12 +838,11 @@ async def test_restored_real_value_held_while_silent(
     extra = {"native_value": 5.0, "native_unit_of_measurement": "cm"}
     mock_restore_cache_with_extra_data(hass, [(restored, extra)])
 
-    entry = _imis_entry()
+    entry = _snow_station_entry("STH2")
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    # The station is still silent, but the restored real value is shown.
     state = hass.states.get(_SNOW_HEIGHT)
     assert state is not None
     assert float(state.state) == 5.0
@@ -756,13 +852,13 @@ async def test_restored_real_value_held_while_silent(
 
 async def test_no_data_creates_repair_issue_cleared_by_real_value(
     hass: HomeAssistant,
-    mock_ogd: AiohttpClientMocker,
+    aioclient_mock: AiohttpClientMocker,
 ) -> None:
     """NO_DATA raises the repair issue immediately; a real value clears it."""
-    mock_ogd.get(measurements_url("STH2"), status=404, content=_NO_DATA_BODY)
-    mock_ogd.get(DAILY_SNOW_URL, content=b"[]")
+    aioclient_mock.get(measurements_url("STH2"), status=404, content=_NO_DATA_BODY)
+    aioclient_mock.get(DAILY_SNOW_URL, content=b"[]")
 
-    entry = _imis_entry()
+    entry = _snow_station_entry("STH2")
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
@@ -774,12 +870,12 @@ async def test_no_data_creates_repair_issue_cleared_by_real_value(
     assert issue.translation_key == "imis_no_data"
     assert issue.translation_placeholders["code"] == "STH2"
 
-    # A real measurement on the next poll clears the issue.
     good = ImisMeasurement(
         time=datetime(2026, 10, 21, 6, 0, tzinfo=UTC), snow_height_cm=3.0
     )
-    coordinator = entry.runtime_data.imis_coordinator
-    assert coordinator is not None
+    runtime = entry.runtime_data
+    assert isinstance(runtime, SnowStationRuntimeData)
+    coordinator = runtime.imis_coordinator
     with patch(_COORD_LATEST, return_value=good):
         await coordinator.async_refresh()
         await hass.async_block_till_done()
@@ -788,31 +884,3 @@ async def test_no_data_creates_repair_issue_cleared_by_real_value(
     state = hass.states.get(_SNOW_HEIGHT)
     assert float(state.state) == 3.0
     assert state.attributes["placeholder"] is False
-
-
-async def test_unset_creates_no_repair_issue(
-    hass: HomeAssistant,
-    mock_ogd: AiohttpClientMocker,
-) -> None:
-    """An entry without an IMIS station makes no SLF request and no repair issue."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        unique_id="2-309800",
-        data={
-            CONF_POINT_ID: 309800,
-            CONF_POINT_TYPE_ID: 2,
-            CONF_POSTAL_CODE: "3098",
-            CONF_POINT_NAME: "Köniz",
-            CONF_STATION_ABBR: "BER",
-            CONF_STATION_NAME: "Bern / Zollikofen",
-        },
-        title="Köniz",
-    )
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    assert entry.runtime_data.imis_coordinator is None
-    assert _slf_calls(mock_ogd) == 0
-    registry = ir.async_get(hass)
-    assert registry.async_get_issue(DOMAIN, _no_data_issue_id(entry)) is None

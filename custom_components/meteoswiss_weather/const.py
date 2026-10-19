@@ -90,6 +90,10 @@ OGD_FILE_BASE = "https://data.geo.admin.ch"
 
 # SLF IMIS open data (ADR-0009). Endpoint paths are constants in slf/const.py.
 SLF_API_BASE = "https://measurement-api.slf.ch"
+# The public SLF data service page, used as the ``configuration_url`` of a
+# snow-station entry's device (ADR-0011) so the device page links back to the
+# upstream source.
+SLF_DATA_SERVICE_URL = "https://www.slf.ch/en/services-and-products/slf-data-service"
 COLLECTION_STATIONS = "ch.meteoschweiz.ogd-smn"
 COLLECTION_LOCAL_FORECAST = "ch.meteoschweiz.ogd-local-forecasting"
 

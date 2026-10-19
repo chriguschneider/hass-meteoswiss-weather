@@ -9,6 +9,18 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- **A snow station is now its own entry** (ADR-0011, #199). An SLF IMIS snow
+  station is configured as a separate entry — "Snow station" in the setup flow
+  — with its own device (manufacturer SLF, named `"<station> (<elevation> m)"`),
+  instead of being an option on a postal-code or mountain entry. A snow-station
+  entry polls only the SLF data service and makes **no MeteoSwiss request at
+  all**. Point entries no longer offer or read an IMIS station, and any snow
+  sensors previously attached to a point entry are removed on the next restart.
+  There is no automatic migration — snow picks existed only briefly in
+  v0.5.0–v0.6.2; re-add the station as its own entry by hand.
+
 ## [v0.6.2] — 2026-10-19
 
 ### Fixed
