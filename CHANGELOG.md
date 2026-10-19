@@ -9,6 +9,12 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- Reconfiguring a location entry no longer reloads the entry twice and no
+  longer triggers Home Assistant's "update listener" deprecation warning
+  (would break in HA 2026.12, #210).
+
 ## [v0.7.0] — 2026-10-19
 
 ### Changed

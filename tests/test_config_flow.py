@@ -925,11 +925,16 @@ def _history_options(result: dict) -> list[str]:
 
 
 async def test_reconfigure_station_change_keep(
-    hass: HomeAssistant, mock_ogd_functions
+    hass: HomeAssistant, mock_ogd_functions, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A station change offers keep/discard; keep updates data and logs the switch."""
     entry = _configured_entry()
     entry.add_to_hass(hass)
+
+    async def _reload_listener(h: HomeAssistant, e: MockConfigEntry) -> None:
+        await h.config_entries.async_reload(e.entry_id)
+
+    entry.add_update_listener(_reload_listener)
 
     result = await entry.start_reconfigure_flow(hass)
     assert result["step_id"] == "reconfigure"
@@ -963,7 +968,7 @@ async def test_reconfigure_station_change_keep(
 
     with (
         patch(f"{_FLOW}.async_log_station_switch") as log_switch,
-        patch.object(hass.config_entries, "async_schedule_reload") as reload_mock,
+        patch.object(hass.config_entries, "async_reload") as reload_mock,
     ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], user_input={CONF_HISTORY_ACTION: HISTORY_KEEP}
@@ -971,7 +976,8 @@ async def test_reconfigure_station_change_keep(
 
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
-    # Same entry, station updated in place, reload requested, no duplicate.
+    # Same entry, station updated in place, reload requested exactly once via
+    # the update listener — not by the flow itself (#210).
     assert len(hass.config_entries.async_entries(DOMAIN)) == 1
     assert entry.data[CONF_STATION_ABBR] == "KLO"
     assert entry.data[CONF_STATION_NAME] == "Zürich / Kloten"
@@ -979,14 +985,20 @@ async def test_reconfigure_station_change_keep(
     log_switch.assert_called_once()
     assert log_switch.call_args.args[2] == "Zürich / Fluntern"
     assert log_switch.call_args.args[3] == "Zürich / Kloten"
+    assert "has an update listener" not in caplog.text
 
 
 async def test_reconfigure_station_change_discard(
-    hass: HomeAssistant, mock_ogd_functions
+    hass: HomeAssistant, mock_ogd_functions, caplog: pytest.LogCaptureFixture
 ) -> None:
     """The discard choice calls the purge/clear helper before updating the entry."""
     entry = _configured_entry()
     entry.add_to_hass(hass)
+
+    async def _reload_listener(h: HomeAssistant, e: MockConfigEntry) -> None:
+        await h.config_entries.async_reload(e.entry_id)
+
+    entry.add_update_listener(_reload_listener)
 
     result = await entry.start_reconfigure_flow(hass)
     result = await hass.config_entries.flow.async_configure(
@@ -1004,7 +1016,7 @@ async def test_reconfigure_station_change_discard(
         patch(
             f"{_FLOW}.async_discard_station_history", new=AsyncMock()
         ) as discard_mock,
-        patch.object(hass.config_entries, "async_schedule_reload"),
+        patch.object(hass.config_entries, "async_reload") as reload_mock,
     ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], user_input={CONF_HISTORY_ACTION: HISTORY_DISCARD}
@@ -1015,10 +1027,12 @@ async def test_reconfigure_station_change_discard(
     discard_mock.assert_awaited_once()
     assert discard_mock.await_args.args[1] is entry
     assert entry.data[CONF_STATION_ABBR] == "KLO"
+    reload_mock.assert_called_once_with(entry.entry_id)
+    assert "has an update listener" not in caplog.text
 
 
 async def test_reconfigure_point_only_change_skips_history(
-    hass: HomeAssistant, mock_ogd_functions
+    hass: HomeAssistant, mock_ogd_functions, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Changing only the forecast point never shows the history step."""
     entry = _configured_entry(
@@ -1029,6 +1043,11 @@ async def test_reconfigure_point_only_change_skips_history(
         station_name="Bern / Zollikofen",
     )
     entry.add_to_hass(hass)
+
+    async def _reload_listener(h: HomeAssistant, e: MockConfigEntry) -> None:
+        await h.config_entries.async_reload(e.entry_id)
+
+    entry.add_update_listener(_reload_listener)
 
     result = await entry.start_reconfigure_flow(hass)
     result = await hass.config_entries.flow.async_configure(
@@ -1047,12 +1066,12 @@ async def test_reconfigure_point_only_change_skips_history(
     )
     assert result["step_id"] == "station"
 
-    with patch.object(hass.config_entries, "async_schedule_reload") as reload_mock:
+    with patch.object(hass.config_entries, "async_reload") as reload_mock:
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], user_input={CONF_STATION_ABBR: "BER"}
         )
 
-    # No history step: the station is unchanged.
+    # No history step: the station is unchanged. Reload via listener (#210).
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
     assert entry.data[CONF_POINT_ID] == 309801
@@ -1060,6 +1079,7 @@ async def test_reconfigure_point_only_change_skips_history(
     assert entry.data[CONF_STATION_ABBR] == "BER"
     assert entry.unique_id == "2-309801"
     reload_mock.assert_called_once_with(entry.entry_id)
+    assert "has an update listener" not in caplog.text
 
 
 async def test_reconfigure_onto_existing_point_aborts(
