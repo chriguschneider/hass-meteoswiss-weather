@@ -1,6 +1,6 @@
 # ADR-0001: The official MeteoSwiss open data is the only upstream
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by ADR-0009 (SLF IMIS host)
 - **Date:** 2026-08-26
 
 ## Context
