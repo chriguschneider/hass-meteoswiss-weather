@@ -108,3 +108,24 @@ Decided by the owner:
 - Accepted risk: an entry set up in winter on a silent station shows 0 cm
   until the station reports.
 
+
+## Amendment 2026-10-19: every measured IMIS value as a sensor
+
+Decided by the owner: the configured IMIS station exposes **every value the
+two endpoints already deliver**, not only snow. No new endpoint, no extra
+request, no extra traffic: the 30-minute measurement row already carries
+them all.
+
+- Measurement row: air temperature, relative humidity, wind speed (mean),
+  gust (5 s max), wind direction, wind direction standard deviation, snow
+  surface temperature, snow temperature at 0/25/50/100 cm, reflected
+  short-wave radiation, snow height (already a sensor).
+- Daily snow: new snow 24 h (already a sensor) and the SNOWPACK-modelled
+  snow height.
+- All enabled by default, SLF attribution, `station`/`elevation`/
+  `measured_at` attributes as for the snow sensors.
+- Outage handling as above: the last real value is held. The `0`
+  placeholder before the first value applies to the snow values only
+  (snow height, new snow, modelled snow height); a placeholder temperature,
+  wind or humidity of 0 would read as a real measurement, so those stay
+  unknown until the station's first value.
