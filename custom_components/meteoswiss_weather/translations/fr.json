@@ -73,12 +73,12 @@
     "step": {
       "user": {
         "title": "MeteoSwiss Weather",
-        "description": "Configurez l'intégration officielle MeteoSwiss des données ouvertes. Choisissez le type de point de prévision.",
+        "description": "Configurez l'intégration officielle MeteoSwiss des données ouvertes. Choisissez le type d'entrée.",
         "data": {
-          "forecast_mode": "Type de localisation"
+          "forecast_mode": "Type d'entrée"
         },
         "data_description": {
-          "forecast_mode": "Code postal pour une ville ou localité ; point de montagne pour un sommet, un col ou une station de ski."
+          "forecast_mode": "Code postal ou point de montagne pour une prévision météo ; station de neige pour la hauteur de neige SLF IMIS uniquement."
         }
       },
       "postal_code": {
@@ -110,22 +110,30 @@
         "description": "Choisissez la station SwissMetNet pour les conditions actuelles. La station la plus proche est présélectionnée.{radar_hint}",
         "data": {
           "station_abbr": "Station météorologique",
-          "precip_station_abbr": "Station de précipitations (facultatif)",
-          "imis_station_code": "Station de neige (facultatif)"
+          "precip_station_abbr": "Station de précipitations (facultatif)"
         },
         "data_description": {
-          "precip_station_abbr": "Les précipitations sont très locales et SwissMetNet est clairsemé. Choisissez éventuellement une station plus proche dans le réseau automatique de mesure des précipitations ; si elle est définie, seules les précipitations actuelles en sont lues. Laissez « None » pour utiliser la station principale.",
-          "imis_station_code": "Hauteur de neige en altitude depuis le réseau SLF IMIS (Institut WSL pour l'étude de la neige et des avalanches). Il s'agit de la hauteur de neige sur un champ de mesure plat hors-piste, et non de la hauteur de neige des pistes de ski ; proche de 0 en été. Les trois stations les plus proches sont proposées avec altitude et distance ; laissez « None » pour n'ajouter aucune station de neige."
+          "precip_station_abbr": "Les précipitations sont très locales et SwissMetNet est clairsemé. Choisissez éventuellement une station plus proche dans le réseau automatique de mesure des précipitations ; si elle est définie, seules les précipitations actuelles en sont lues. Laissez « None » pour utiliser la station principale."
+        }
+      },
+      "snow_station": {
+        "title": "Sélectionner une station de neige",
+        "description": "Choisissez la station SLF IMIS à surveiller. Les dix stations de mesure en plat les plus proches sont affichées avec altitude, distance et disponibilité des données.",
+        "data": {
+          "imis_station_code": "Station de neige"
+        },
+        "data_description": {
+          "imis_station_code": "Hauteur de neige mesurée sur un champ plat (hors-piste). Les stations avec la mention « pas de données actuellement » n'ont pas signalé récemment."
         }
       },
       "reconfigure": {
         "title": "Reconfigurer MeteoSwiss Weather",
-        "description": "Modifiez le type de localisation et la station météorologique sans supprimer l'entrée. Le type actuel est présélectionné.",
+        "description": "Modifiez le type d'entrée et la station météorologique sans supprimer l'entrée. Le type actuel est présélectionné.",
         "data": {
-          "forecast_mode": "Type de localisation"
+          "forecast_mode": "Type d'entrée"
         },
         "data_description": {
-          "forecast_mode": "Code postal pour une ville ou localité ; point de montagne pour un sommet, un col ou une station de ski."
+          "forecast_mode": "Code postal ou point de montagne pour une prévision météo ; station de neige pour la hauteur de neige SLF IMIS uniquement."
         }
       },
       "history": {
@@ -150,7 +158,8 @@
     "forecast_mode": {
       "options": {
         "postal_code": "Code postal (ville ou localité)",
-        "mountain": "Point de montagne (sommet, col ou station de ski)"
+        "mountain": "Point de montagne (sommet, col ou station de ski)",
+        "snow_station": "Station de neige (SLF IMIS)"
       }
     },
     "history_action": {

@@ -1,9 +1,10 @@
 """Config flow for the MeteoSwiss Weather integration.
 
-Setup: the user chooses between a postal-code forecast point (default) or a
-mountain point of interest, then picks a SwissMetNet station. Reconfigure
-re-offers the same choice, pre-filled from the current entry. All choices are
-derived from the official open data (ADR-0001); no app API is involved.
+Setup: the user chooses between a postal-code forecast point (default), a
+mountain point of interest, or an SLF IMIS snow station (ADR-0011). Point and
+mountain entries are derived from the official MeteoSwiss OGD; snow-station
+entries come from the SLF IMIS upstream only. All sources are official open
+data (ADR-0001); no app API is involved.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from homeassistant.helpers.selector import (
 
 from .const import (
     BACKFILL_AVAILABLE,
+    CONF_ENTRY_TYPE,
     CONF_HISTORY_ACTION,
     CONF_HOURLY_CLOUD_LAYERS,
     CONF_HOURLY_FORECAST,
@@ -49,6 +51,7 @@ from .const import (
     CONF_STATION_NAME,
     DEFAULT_HOURLY_HORIZON_DAYS,
     DOMAIN,
+    ENTRY_TYPE_SNOW_STATION,
     HISTORY_BACKFILL,
     HISTORY_DISCARD,
     HISTORY_KEEP,
@@ -86,6 +89,7 @@ from .slf import (
 _CONF_MODE = "forecast_mode"
 _MODE_POSTAL_CODE = "postal_code"
 _MODE_MOUNTAIN = "mountain"
+_MODE_SNOW_STATION = "snow_station"
 
 # Sentinel option for "no precipitation station" in the station step's optional
 # precipitation pick (ADR-0006). Must be non-empty so the HA frontend does not
@@ -94,18 +98,13 @@ _MODE_MOUNTAIN = "mountain"
 # opt-out. The stored entry value remains "" (no migration needed).
 _PRECIP_NONE = "none"
 
-# Sentinel for "no IMIS snow station" in the station step's optional IMIS pick
-# (ADR-0009). Same reasoning as _PRECIP_NONE: non-empty so the form submits,
-# "none" is never a valid IMIS station code (#192).
-_IMIS_NONE = "none"
-
 
 def _mode_schema(default: str = _MODE_POSTAL_CODE) -> vol.Schema:
     return vol.Schema(
         {
             vol.Required(_CONF_MODE, default=default): SelectSelector(
                 SelectSelectorConfig(
-                    options=[_MODE_POSTAL_CODE, _MODE_MOUNTAIN],
+                    options=[_MODE_POSTAL_CODE, _MODE_MOUNTAIN, _MODE_SNOW_STATION],
                     translation_key="forecast_mode",
                     mode=SelectSelectorMode.LIST,
                 )
@@ -142,8 +141,8 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
         # Precipitation-only network for the optional station pick (ADR-0006).
         # ``None`` means its metadata was unavailable; the pick is then dropped.
         self._all_precip_stations: list[Station] | None = None
-        # SLF IMIS snow stations for the optional snow-station pick (ADR-0009).
-        # ``None`` means the list was unavailable; the pick is then dropped.
+        # SLF IMIS snow stations for the snow-station entry type (ADR-0011).
+        # ``None`` means the list has not been loaded yet.
         self._all_imis_stations: list[ImisStation] | None = None
         # Station codes present in /daily-snow; absent means "currently no data".
         # ``None`` means the fetch failed; labels are shown without a note.
@@ -182,41 +181,24 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
             self._all_precip_stations = await fetch_precip_stations(session)
         except OgdError:
             self._all_precip_stations = None
-        # The SLF IMIS snow-station list powers the optional snow-station pick in
-        # the station step (ADR-0009). Opt-in and a second upstream, so a failure
-        # here only drops the pick — it never fails the whole flow.
-        try:
-            self._all_imis_stations = await fetch_imis_stations(session)
-        except SlfError:
-            self._all_imis_stations = None
-        # Daily-snow codes mark which stations currently have data (ADR-0009
-        # amendment, issue #186). A failure leaves codes as None; the label
-        # then omits the "currently no data" note — the flow must never fail.
-        if self._all_imis_stations is not None:
-            try:
-                self._imis_daily_snow_codes = await fetch_imis_daily_snow_codes(
-                    session
-                )
-            except SlfError:
-                self._imis_daily_snow_codes = None
         return True
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 1: choose postal-code or mountain-point mode."""
-        errors: dict[str, str] = {}
-
-        if not await self._load_metadata():
-            errors["base"] = "cannot_connect"
-            return self.async_show_form(
-                step_id="user",
-                data_schema=_mode_schema(),
-                errors=errors,
-            )
-
+        """Step 1: choose postal-code, mountain-point, or snow-station mode."""
         if user_input is not None:
             mode = user_input[_CONF_MODE]
+            if mode == _MODE_SNOW_STATION:
+                # Snow-station path never calls _load_metadata (ADR-0011).
+                return await self.async_step_snow_station()
+            # Point/mountain path: load OGD metadata now.
+            if not await self._load_metadata():
+                return self.async_show_form(
+                    step_id="user",
+                    data_schema=_mode_schema(mode),
+                    errors={"base": "cannot_connect"},
+                )
             if mode == _MODE_MOUNTAIN:
                 return await self.async_step_mountain()
             return await self.async_step_postal_code()
@@ -224,7 +206,6 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user",
             data_schema=_mode_schema(),
-            errors=errors,
         )
 
     async def async_step_postal_code(
@@ -392,17 +373,13 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
             self._all_stations, self._point.lat, self._point.lon, limit=3
         )
         precip_nearby = self._nearest_precip_stations()
-        imis_nearby = self._nearest_imis_stations()
 
         if user_input is not None:
             abbr = user_input[CONF_STATION_ABBR]
             station = next(s for s in nearby if s.abbr == abbr)
             precip_data = self._resolve_precip(user_input, precip_nearby)
-            imis_data = self._resolve_imis(user_input, imis_nearby)
             if self.source == SOURCE_RECONFIGURE:
-                return await self._async_reconfigure_station(
-                    station, precip_data, imis_data
-                )
+                return await self._async_reconfigure_station(station, precip_data)
             return self.async_create_entry(
                 title=self._point.name,
                 data={
@@ -413,7 +390,6 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_STATION_ABBR: station.abbr,
                     CONF_STATION_NAME: station.name,
                     **precip_data,
-                    **imis_data,
                 },
             )
 
@@ -448,29 +424,6 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
             schema[
                 vol.Required(CONF_PRECIP_STATION_ABBR, default=precip_default)
             ] = vol.In(precip_options)
-
-        # Optional IMIS snow station (ADR-0009): the three nearest SNOW_FLAT
-        # stations, labelled with elevation and distance. Only offered when the
-        # SLF list loaded; defaults to "none" — the feature is opt-in and no SLF
-        # request is made until a station is picked.
-        if imis_nearby:
-            imis_options = {_IMIS_NONE: "None (no snow station)"}
-            imis_options.update(
-                {
-                    s.code: self._imis_label(s)
-                    for s in imis_nearby
-                }
-            )
-            imis_default = _IMIS_NONE
-            if self.source == SOURCE_RECONFIGURE:
-                current_imis = self._get_reconfigure_entry().data.get(
-                    CONF_IMIS_STATION_CODE, ""
-                )
-                if current_imis and any(s.code == current_imis for s in imis_nearby):
-                    imis_default = current_imis
-            schema[
-                vol.Required(CONF_IMIS_STATION_CODE, default=imis_default)
-            ] = vol.In(imis_options)
 
         # The description always references {radar_hint}; supply it in both
         # cases (empty when the radar integration is already installed) so the
@@ -520,79 +473,152 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_PRECIP_STATION_NAME: precip.name if precip else "",
         }
 
-    def _nearest_imis_stations(self) -> list[ImisStation]:
-        """The three nearest SNOW_FLAT IMIS stations to the point, or empty.
+    async def async_step_snow_station(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Snow-station entry (ADR-0011): 10 nearest SNOW_FLAT IMIS stations.
 
-        Empty when the SLF list was unavailable (the pick is then dropped) — the
-        feature is opt-in and must never block the station step (ADR-0009).
+        This step loads its own SLF data without calling ``_load_metadata``,
+        so no MeteoSwiss OGD request is ever made on the snow-station path.
+        On failure the ``cannot_connect`` error is shown on this step only —
+        it is the entry's only source.
         """
-        assert self._point is not None
-        if not self._all_imis_stations:
-            return []
-        return nearest_snow_stations(
-            self._all_imis_stations, self._point.lat, self._point.lon, limit=3
+        errors: dict[str, str] = {}
+
+        # Load IMIS data on first call; cached on the instance across retries.
+        if self._all_imis_stations is None:
+            session = async_get_clientsession(self.hass)
+            try:
+                self._all_imis_stations = await fetch_imis_stations(session)
+            except SlfError:
+                errors["base"] = "cannot_connect"
+                return self.async_show_form(
+                    step_id="snow_station",
+                    data_schema=vol.Schema({}),
+                    errors=errors,
+                )
+            # Daily-snow codes mark which stations currently have data (ADR-0009
+            # amendment). A failure leaves codes as None — labels omit the note.
+            try:
+                self._imis_daily_snow_codes = await fetch_imis_daily_snow_codes(
+                    session
+                )
+            except SlfError:
+                self._imis_daily_snow_codes = None
+
+        nearby = nearest_snow_stations(
+            self._all_imis_stations,
+            self.hass.config.latitude,
+            self.hass.config.longitude,
+            limit=10,
         )
 
-    def _imis_label(self, station: ImisStation) -> str:
-        """Picker label for an IMIS station: name, elevation, distance, data status."""
-        assert self._point is not None
-        distance = haversine_km(
-            self._point.lat, self._point.lon, station.lat, station.lon
+        if user_input is not None:
+            code = user_input[CONF_IMIS_STATION_CODE]
+            station = next(s for s in nearby if s.code == code)
+            unique_id = f"imis-{code}"
+            if self.source == SOURCE_RECONFIGURE:
+                entry = self._get_reconfigure_entry()
+                for other in self._async_current_entries():
+                    if (
+                        other.entry_id != entry.entry_id
+                        and other.unique_id == unique_id
+                    ):
+                        return self.async_abort(reason="already_configured")
+                return self.async_update_reload_and_abort(
+                    entry,
+                    unique_id=unique_id,
+                    title=station.label,
+                    data={
+                        CONF_ENTRY_TYPE: ENTRY_TYPE_SNOW_STATION,
+                        CONF_IMIS_STATION_CODE: station.code,
+                        CONF_IMIS_STATION_NAME: station.label,
+                        CONF_IMIS_STATION_ELEVATION: station.elevation,
+                    },
+                )
+            await self.async_set_unique_id(unique_id)
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(
+                title=station.label,
+                data={
+                    CONF_ENTRY_TYPE: ENTRY_TYPE_SNOW_STATION,
+                    CONF_IMIS_STATION_CODE: station.code,
+                    CONF_IMIS_STATION_NAME: station.label,
+                    CONF_IMIS_STATION_ELEVATION: station.elevation,
+                },
+            )
+
+        def _snow_label(s: ImisStation) -> str:
+            distance = haversine_km(
+                self.hass.config.latitude,
+                self.hass.config.longitude,
+                s.lat,
+                s.lon,
+            )
+            base = f"{s.label} ({int(s.elevation)} m, {round(distance)} km)"
+            if (
+                self._imis_daily_snow_codes is not None
+                and s.code not in self._imis_daily_snow_codes
+            ):
+                return f"{base}, currently no data"
+            return base
+
+        options = [{"value": s.code, "label": _snow_label(s)} for s in nearby]
+
+        # Pre-select: nearest on setup; current station on reconfigure.
+        default_code: str | vol.Undefined = nearby[0].code if nearby else vol.UNDEFINED
+        if self.source == SOURCE_RECONFIGURE:
+            current = self._get_reconfigure_entry().data.get(
+                CONF_IMIS_STATION_CODE, ""
+            )
+            if current and any(s.code == current for s in nearby):
+                default_code = current
+
+        return self.async_show_form(
+            step_id="snow_station",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_IMIS_STATION_CODE, default=default_code
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=options,
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    )
+                }
+            ),
+            errors=errors,
         )
-        base = f"{station.label} ({int(station.elevation)} m, {round(distance)} km)"
-        # If we have daily-snow codes and this station is absent, it is currently
-        # without data (ADR-0009 amendment, issue #186). When codes are None the
-        # fetch failed; omit the note so the flow never breaks.
-        if (
-            self._imis_daily_snow_codes is not None
-            and station.code not in self._imis_daily_snow_codes
-        ):
-            return f"{base}, currently no data"
-        return base
-
-    def _resolve_imis(
-        self, user_input: dict[str, Any], imis_nearby: list[ImisStation]
-    ) -> dict[str, Any]:
-        """Map the station step's IMIS pick to the entry keys (ADR-0009).
-
-        Returns empty code/name (and no elevation) when the sentinel ("none"),
-        an empty string (old clients), or a missing key is chosen, so the
-        feature stays off and no SLF request is ever made.
-        """
-        raw = user_input.get(CONF_IMIS_STATION_CODE, _IMIS_NONE)
-        chosen = "" if (raw == _IMIS_NONE or not raw) else str(raw)
-        imis = next((s for s in imis_nearby if s.code == chosen), None)
-        return {
-            CONF_IMIS_STATION_CODE: imis.code if imis else "",
-            CONF_IMIS_STATION_NAME: imis.label if imis else "",
-            CONF_IMIS_STATION_ELEVATION: imis.elevation if imis else None,
-        }
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Reconfigure entry point (A9, #52): choose mode, then re-run point/station.
 
-        Pre-fills the mode from the current entry's point type. Routes to
-        ``async_step_postal_code`` or ``async_step_mountain``, both shared
-        with the setup flow.
+        Snow-station entries skip the mode step entirely and go straight to the
+        ``snow_station`` step (ADR-0011). Point entries show the mode selector
+        pre-filled with the current type.
         """
         entry = self._get_reconfigure_entry()
-        errors: dict[str, str] = {}
 
-        if not await self._load_metadata():
-            errors["base"] = "cannot_connect"
-            current_type = int(entry.data.get(CONF_POINT_TYPE_ID, 2))
-            is_mountain = current_type == POINT_TYPE_MOUNTAIN
-            default_mode = _MODE_MOUNTAIN if is_mountain else _MODE_POSTAL_CODE
-            return self.async_show_form(
-                step_id="reconfigure",
-                data_schema=_mode_schema(default_mode),
-                errors=errors,
-            )
+        # Snow-station entries never need OGD metadata: go straight to the step.
+        if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_SNOW_STATION:
+            return await self.async_step_snow_station(user_input)
+
+        errors: dict[str, str] = {}
 
         if user_input is not None:
             mode = user_input[_CONF_MODE]
+            if not await self._load_metadata():
+                current_type = int(entry.data.get(CONF_POINT_TYPE_ID, 2))
+                is_mountain = current_type == POINT_TYPE_MOUNTAIN
+                default_mode = _MODE_MOUNTAIN if is_mountain else _MODE_POSTAL_CODE
+                return self.async_show_form(
+                    step_id="reconfigure",
+                    data_schema=_mode_schema(default_mode),
+                    errors={"base": "cannot_connect"},
+                )
             if mode == _MODE_MOUNTAIN:
                 return await self.async_step_mountain()
             return await self.async_step_postal_code()
@@ -610,16 +636,14 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
         self,
         station: Station,
         precip_data: dict[str, str],
-        imis_data: dict[str, Any],
     ) -> ConfigFlowResult:
         """Resolve the station pick on reconfigure and route the history choice.
 
         Rejects a point that already belongs to another entry. When the station
         actually changed, defers to the history-choice step; otherwise finishes
         immediately (a point-only change never touches history). The optional
-        precipitation pick (ADR-0006) and IMIS snow-station pick (ADR-0009) are
-        carried on the new data either way — neither triggers the history step,
-        which is about the main station only.
+        precipitation pick (ADR-0006) is carried on the new data either way —
+        it never triggers the history step, which is about the main station only.
         """
         assert self._point is not None
         entry = self._get_reconfigure_entry()
@@ -638,7 +662,6 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
             CONF_STATION_ABBR: station.abbr,
             CONF_STATION_NAME: station.name,
             **precip_data,
-            **imis_data,
         }
 
         if station.abbr == entry.data.get(CONF_STATION_ABBR):
