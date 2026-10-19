@@ -45,11 +45,30 @@ issues also carry an explicit `agent:*` label to pick the model on merit.
   and inside the traffic budget (ADR-0002), and to stop rather than guess.
 - Ambiguous issue → draft with a "Blocked / needs decision" note.
 - Implementation runs (autopilot and label flow) are capped at **150
-  turns**. A run that hits the cap leaves nothing behind — no branch, no
-  PR, no comment — and the autopilot retries the same issue every 30
-  minutes. So the cap is not a budget to fill: an issue that needs
-  upstream measurement, an ADR and code is three issues (measure and
-  decide by hand, then implementation slices), not one.
+  turns**. A run that hits the cap is handled by
+  `.github/scripts/on-turn-cap.sh`: its partial work is pushed to a
+  `wip/claude-<issue>-<run>` branch, the issue gets a comment asking for a
+  split, and it is labelled **`needs-verification`** so the autopilot moves
+  on instead of retrying it from zero every tick. A later run on that issue
+  is told to continue from the `wip/` branch. Other failures keep the
+  normal retry. The cap is not a budget to fill; size issues as below.
+
+## Sizing an issue
+
+One autopilot run is one slice. Before giving an issue a P-label:
+
+- **One layer per issue**: the pure client (`ogd/`, `slf/`), *or* the
+  coordinator/store, *or* entities + docs + changelog. A feature that
+  spans all three is a tracking issue with slices (IMIS: #173/#174;
+  sunshine: #180/#181 after #178 hit the cap).
+- **At most about four modules changed**, tests included.
+- **Measurements, ADR and fixtures land first** in a maintainer docs PR,
+  so the slice never measures upstream, writes an ADR or invents data.
+- The issue names the files to touch and the exact test expectations;
+  "follow the pattern of X" beats a description of the goal.
+- Slices of one feature get ascending numbers and the same P-label, so the
+  autopilot takes them in order; a later slice says what to do when its
+  predecessor is not merged ("Blocked" draft).
 
 ## Automated review + auto-merge
 

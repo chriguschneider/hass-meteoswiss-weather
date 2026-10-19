@@ -103,6 +103,7 @@ jobs:
         run: bash .github/scripts/pick-model.sh "${{ steps.next.outputs.number }}" >> "$GITHUB_OUTPUT"
 
       - name: Implement and open a draft PR
+        id: impl
         if: steps.token.outputs.present == 'true' && steps.gate.outputs.open == '0' && steps.next.outputs.number != ''
         uses: anthropics/claude-code-action@v1
         with:
@@ -133,3 +134,18 @@ jobs:
             - If the issue is ambiguous or you cannot verify the fix, DO NOT
               guess: open the draft PR with partial work and a clear
               "Blocked / needs decision" section, and stop.
+            - If a branch `wip/claude-${{ steps.next.outputs.number }}-*` exists on origin, a
+              previous run hit the turn cap there: start your branch from it
+              and continue that work instead of starting over.
+
+      # A capped run used to vanish and be retried from zero every tick
+      # (#178). Save its partial work, explain on the issue, and park it.
+      - name: Save partial work when the turn cap was hit
+        if: failure() && steps.impl.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          bash .github/scripts/on-turn-cap.sh
+          "${{ steps.next.outputs.number }}"
+          "${{ steps.impl.outputs.execution_file }}"
