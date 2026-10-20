@@ -54,6 +54,7 @@
       "temp_max_today": { "name": "Température maximale aujourd'hui" },
       "temp_min_today": { "name": "Température minimale aujourd'hui" },
       "precipitation_today": { "name": "Précipitations aujourd'hui" },
+      "sunshine_duration_today": { "name": "Durée d'ensoleillement aujourd'hui" },
       "zero_degree_level": { "name": "Limite du zéro degré" },
       "zero_degree_level_48h": { "name": "Limite du zéro degré dans 48 h" },
       "measurement_time": { "name": "Heure de mesure" },

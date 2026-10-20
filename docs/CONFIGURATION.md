@@ -295,7 +295,7 @@ for the full grouped list and the one-step path to enable them.
 | Options → Pollen | **Pollen toggle** (`pollen`) | `pollen_grasses`, `pollen_birch` (enabled by default). Disabled by default: `pollen_alder`, `pollen_hazel`, `pollen_beech`, `pollen_ash`, `pollen_oak`. | ~1.2 KB / h (conditional) | Weather entity, station sensors, forecast |
 | Options → Pollen | **Pollen station** (`pollen_station`) | Which of the 15 pollen stations the sensors read | None | All other options |
 | Entity settings | **Enable a disabled sensor** | Individual enablement of any sensor in [Disabled by default](#entities-that-are-disabled-by-default) | No extra traffic | Nothing else changes |
-| Always on | **Forecast sensors** | `temp_max_today`, `temp_min_today`, `precipitation_today` (today's aggregates from the daily forecast, enabled by default) | Included in the daily forecast cost | Station sensors, hourly option |
+| Always on | **Forecast sensors** | `temp_max_today`, `temp_min_today`, `precipitation_today`, `sunshine_duration_today` (in hours; today's aggregates from the daily forecast, enabled by default) | Included in the daily forecast cost | Station sensors, hourly option |
 | Always on | **Zero-degree level sensor** | `zero_degree_level` sensor (disabled by default); filled by the daily refresh, no hourly opt-in required | Included in the daily fetch | Hourly option |
 | Always on | **Diagnostic sensors** | `data_fetched_today` (enabled by default); `requests_today` (disabled by default) | None | Everything |
 

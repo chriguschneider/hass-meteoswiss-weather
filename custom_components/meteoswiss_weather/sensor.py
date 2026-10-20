@@ -295,6 +295,8 @@ class ForecastSensorDescription(SensorEntityDescription):
 
     forecast_key: str = ""
     # Attribute name on :class:`~ogd.DailyForecast` that carries this value.
+    divisor: float = 1
+    # The forecast value is divided by this (minutes → hours for sunshine).
 
 
 _FORECAST_SENSORS: tuple[ForecastSensorDescription, ...] = (
@@ -324,6 +326,18 @@ _FORECAST_SENSORS: tuple[ForecastSensorDescription, ...] = (
         forecast_key="precipitation",
         device_class=SensorDeviceClass.PRECIPITATION,
         native_unit_of_measurement=UnitOfPrecipitationDepth.MILLIMETERS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    ),
+    # The forecast carries minutes; the state is hours because
+    # weather-station-card reads values below 30 as hours (issue #222).
+    ForecastSensorDescription(
+        key="sunshine_duration_today",
+        translation_key="sunshine_duration_today",
+        forecast_key="sunshine_duration",
+        divisor=60,
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.HOURS,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
     ),
@@ -932,6 +946,7 @@ class ForecastSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
         super().__init__(coordinator)
         self.entity_description = description
         self._forecast_key: str = description.forecast_key
+        self._divisor: float = description.divisor
         self._attr_unique_id = f"{device_unique_id}_{description.key}"
         self._attr_device_info = device_info
 
@@ -970,7 +985,10 @@ class ForecastSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
         row = self._today_row()
         if row is None:
             return None
-        return getattr(row, self._forecast_key, None)
+        value = getattr(row, self._forecast_key, None)
+        if value is None:
+            return None
+        return value if self._divisor == 1 else round(value / self._divisor, 2)
 
 
 class PollenSensor(CoordinatorEntity[PollenCoordinator], SensorEntity):

@@ -54,6 +54,7 @@
       "temp_max_today": { "name": "High temperature today" },
       "temp_min_today": { "name": "Low temperature today" },
       "precipitation_today": { "name": "Precipitation today" },
+      "sunshine_duration_today": { "name": "Sunshine duration today" },
       "zero_degree_level": { "name": "Zero-degree level" },
       "zero_degree_level_48h": { "name": "Zero-degree level in 48 h" },
       "measurement_time": { "name": "Measurement time" },
