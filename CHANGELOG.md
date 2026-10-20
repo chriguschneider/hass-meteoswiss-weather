@@ -9,6 +9,13 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Added
+
+- New sensor "Sunshine duration today" (hours, enabled by default): today's
+  sunshine total from the MeteoSwiss daily forecast. Its recorded history
+  gives past days a MeteoSwiss value, which weather-station-card reads as
+  `sensors.sunshine_duration` (#222).
+
 ## [v0.8.0] — 2026-10-20
 
 ### Added

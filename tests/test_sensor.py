@@ -501,6 +501,37 @@ async def test_precipitation_today_value(
         assert _state(hass, "precipitation_today") == "0.0"
 
 
+async def test_sunshine_duration_today_hours(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """Today's sunshine is the daily forecast minutes (203) converted to hours."""
+    with freeze_time(_DAY0):
+        await _setup(hass, config_entry)
+        assert _state(hass, "sunshine_duration_today") == "3.38"
+        assert _attr(hass, "sunshine_duration_today", "unit_of_measurement") == "h"
+        assert _attr(hass, "sunshine_duration_today", "device_class") == "duration"
+
+    entity = er.async_get(hass).async_get("sensor.koniz_sunshine_duration_today")
+    assert entity is not None
+    assert entity.unique_id == "2-309800_sunshine_duration_today"
+    assert entity.disabled_by is None
+
+    # Day 1 carries 71 min; the sensor advances without a new fetch.
+    with freeze_time(_DAY1):
+        coordinator = config_entry.runtime_data.forecast_coordinator
+        coordinator.async_set_updated_data(coordinator.data)
+        await hass.async_block_till_done()
+        assert _state(hass, "sunshine_duration_today") == "1.18"
+
+    # Day 2 has no complete sunshine day in the fixture: unknown.
+    with freeze_time(datetime(2026, 8, 29, 12, 0, tzinfo=UTC)):
+        coordinator.async_set_updated_data(coordinator.data)
+        await hass.async_block_till_done()
+        assert _state(hass, "sunshine_duration_today") == STATE_UNKNOWN
+
+
 async def test_midnight_rollover_flips_to_next_day(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -594,6 +625,7 @@ async def test_forecast_sensors_not_removed_by_reduced_inventory(
         "sensor.koniz_high_temperature_today",
         "sensor.koniz_low_temperature_today",
         "sensor.koniz_precipitation_today",
+        "sensor.koniz_sunshine_duration_today",
     ):
         assert entity_reg.async_get(entity_id) is not None, (
             f"{entity_id!r} was incorrectly removed by inventory cleanup"

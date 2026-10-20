@@ -50,6 +50,7 @@ _SENSOR_KEYS: frozenset[str] = frozenset({
     "temp_max_today",
     "temp_min_today",
     "precipitation_today",
+    "sunshine_duration_today",
     # Standalone sensor descriptions
     "zero_degree_level",
     "measurement_time",
