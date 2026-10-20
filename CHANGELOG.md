@@ -9,6 +9,8 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+## [v0.8.0] — 2026-10-20
+
 ### Added
 
 - New sensor "Zero-degree level in 48 h" (disabled by default) with a
@@ -683,7 +685,8 @@ integration produces a weather entity (see the tracking issue in the README).
   tag-triggered release gate with a zip asset, and the opt-in Claude agent
   workflows (label, mention, autopilot, reviewer)
 
-[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.8.0...HEAD
+[v0.8.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.7.1...v0.8.0
 [v0.7.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.7.0...v0.7.1
 [v0.7.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.6.2...v0.7.0
 [v0.6.2]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.6.1...v0.6.2
