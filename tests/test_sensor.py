@@ -766,6 +766,7 @@ async def test_zero_degree_sensor_value_without_hourly_option(
     with freeze_time(datetime(2026, 8, 27, 1, 30, tzinfo=UTC)):
         await _setup_with_zero_degree(hass, config_entry)
         assert _state(hass, "zero_degree_level") == "2505.0"
+        assert _attr(hass, "zero_degree_level", "elevation") == 595.0
 
     # The default entry has no options: the hourly path never ran.
     coordinator = config_entry.runtime_data.forecast_coordinator
@@ -959,6 +960,7 @@ async def test_zero_degree_48h_full_window(
         assert _attr(hass, name, "max") == 3000.0
         assert _attr(hass, name, "max_at") == hour + timedelta(hours=40)
         assert _attr(hass, name, "covered_hours") == 48
+        assert _attr(hass, name, "elevation") == 595.0
         forecast = _attr(hass, name, "forecast")
         assert len(forecast) == 60
         assert forecast[0] == {"datetime": hour.isoformat(), "level": 2500.0}
@@ -1085,3 +1087,24 @@ async def test_zero_degree_48h_disabled_by_default(
     assert entry is not None
     assert entry.disabled
     assert entry.unique_id == "2-309800_zero_degree_level_48h"
+
+
+async def test_zero_degree_elevation_absent_when_unknown(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """No known point height -> no ``elevation`` attribute."""
+    from unittest.mock import AsyncMock, patch
+
+    from custom_components.meteoswiss_weather.ogd import OgdError
+
+    with (
+        freeze_time(datetime(2026, 8, 27, 1, 30, tzinfo=UTC)),
+        patch(
+            "custom_components.meteoswiss_weather.fetch_points",
+            AsyncMock(side_effect=OgdError("boom")),
+        ),
+    ):
+        await _setup_with_zero_degree(hass, config_entry)
+        assert "elevation" not in hass.states.get(_ZERO_DEGREE_ID).attributes

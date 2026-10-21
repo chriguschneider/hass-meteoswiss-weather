@@ -8,6 +8,7 @@ via the ``mock_ogd`` fixture (conftest.py); no test hits the network.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from freezegun import freeze_time
@@ -18,6 +19,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClien
 
 from custom_components.meteoswiss_weather.const import (
     CONF_HOURLY_FORECAST,
+    CONF_POINT_HEIGHT,
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
@@ -27,6 +29,7 @@ from custom_components.meteoswiss_weather.const import (
     DOMAIN,
     HOURLY_FAR_MAX_AGE,
 )
+from custom_components.meteoswiss_weather.ogd import OgdError
 from custom_components.meteoswiss_weather.ogd.const import (
     DAILY_BLOCK_PARAMS,
     DAILY_REQUIRED_PARAMS,
@@ -35,6 +38,7 @@ from custom_components.meteoswiss_weather.ogd.const import (
     HOURLY_SUNSHINE,
     HOURLY_SYMBOL,
     HOURLY_ZERO_DEGREE,
+    META_POINT_URL,
     station_now_url,
 )
 
@@ -196,6 +200,8 @@ async def test_first_refresh_failure_is_not_ready(
     # coordinator refreshes first, so its OgdError raises ConfigEntryNotReady
     # before the forecast coordinator is ever reached.
     aioclient_mock.get(station_now_url(_STATION_ABBR), status=503)
+    # The height lookup of a pre-#227 entry fails too; setup goes on regardless.
+    aioclient_mock.get(META_POINT_URL, status=503)
 
     config_entry.add_to_hass(hass)
     assert not await hass.config_entries.async_setup(config_entry.entry_id)
@@ -582,3 +588,76 @@ async def test_setup_uses_day_item_not_listing(
     assert len(day_item_calls) == 1, "day item must be fetched exactly once"
     assert len(listing_calls) == 0, "listing must not be fetched when day item succeeds"
     assert config_entry.runtime_data.forecast_coordinator.run is not None
+
+
+# ---------------------------------------------------------------------------
+# Point height migration (issue #227)
+# ---------------------------------------------------------------------------
+
+
+def _points_calls(aioclient_mock: AiohttpClientMocker) -> int:
+    return sum(
+        1
+        for _m, url, *_ in aioclient_mock.mock_calls
+        if url.path.endswith("ogd-local-forecasting_meta_point.csv")
+    )
+
+
+async def test_missing_point_height_is_fetched_once_and_stored(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """An entry without the key looks the height up once, then never again."""
+    config_entry.add_to_hass(hass)
+    assert CONF_POINT_HEIGHT not in config_entry.data
+
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert config_entry.data[CONF_POINT_HEIGHT] == 595.0
+    assert config_entry.runtime_data.point.height_masl == 595.0
+    assert _points_calls(mock_ogd) == 1
+
+    assert await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert _points_calls(mock_ogd) == 1
+
+
+async def test_point_height_fetch_failure_does_not_fail_setup(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failed lookup sets up without the height and leaves the key absent."""
+    config_entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.meteoswiss_weather.fetch_points",
+        AsyncMock(side_effect=OgdError("boom")),
+    ):
+        assert await hass.config_entries.async_setup(config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert config_entry.state is ConfigEntryState.LOADED
+    assert CONF_POINT_HEIGHT not in config_entry.data
+    assert config_entry.runtime_data.point.height_masl is None
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
+
+
+async def test_stored_none_height_is_not_looked_up_again(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A stored ``None`` (CSV without height) counts as done."""
+    config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        config_entry, data={**config_entry.data, CONF_POINT_HEIGHT: None}
+    )
+
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert _points_calls(mock_ogd) == 0

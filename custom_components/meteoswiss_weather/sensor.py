@@ -792,13 +792,13 @@ async def async_setup_entry(
     async_add_entities([
         ZeroDegreeSensor(
             runtime.forecast_coordinator, _ZERO_DEGREE_DESCRIPTION,
-            device_unique_id, device_info,
+            device_unique_id, device_info, point.height_masl,
         )
     ])
     async_add_entities([
         ZeroDegree48hSensor(
             runtime.forecast_coordinator, _ZERO_DEGREE_48H_DESCRIPTION,
-            device_unique_id, device_info,
+            device_unique_id, device_info, point.height_masl,
         )
     ])
     async_add_entities([
@@ -1051,11 +1051,20 @@ class ZeroDegreeSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
         description: SensorEntityDescription,
         device_unique_id: str,
         device_info: DeviceInfo,
+        elevation: float | None = None,
     ) -> None:
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{device_unique_id}_{description.key}"
         self._attr_device_info = device_info
+        self._elevation = elevation
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return the forecast point's height, when known (issue #227)."""
+        if self._elevation is None:
+            return None
+        return {"elevation": float(self._elevation)}
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to the top of every hour so the value advances promptly."""
@@ -1125,13 +1134,14 @@ class ZeroDegree48hSensor(ZeroDegreeSensor):
         """Return where and how far the level dips, plus the hourly curve."""
         window = self._window()
         if window is None:
-            return None
+            return super().extra_state_attributes
         this_hour, curve = window
         inside = self._in_window(this_hour, curve)
         # min/max return the first of tied entries, i.e. the earliest hour.
         low_at = min(inside, key=inside.__getitem__)
         high_at = max(inside, key=inside.__getitem__)
         return {
+            **(super().extra_state_attributes or {}),
             "at": low_at,
             "change": inside[low_at] - curve[this_hour],
             "max": inside[high_at],

@@ -18,6 +18,10 @@ using the matching section below as release notes.
 
 ### Added
 
+- Both zero-degree sensors expose the attribute `elevation` (m), the height
+  of the forecast point, so a dashboard can tell whether the snow line
+  reaches your location. Existing entries look the height up once after the
+  update (#227).
 - The zero-degree 48 h sensor gains the attributes `at`, `change`, `max`,
   `max_at`, `covered_hours` and `forecast` (the hourly curve, not recorded),
   so a dashboard can draw where the snow line goes. Without the hourly

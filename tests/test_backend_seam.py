@@ -28,6 +28,7 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClien
 
 from custom_components.meteoswiss_weather.const import (
     CONF_HOURLY_FORECAST,
+    CONF_POINT_HEIGHT,
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
@@ -150,6 +151,7 @@ def _entry_data() -> dict:
         CONF_POINT_TYPE_ID: 2,
         CONF_POSTAL_CODE: "3098",
         CONF_POINT_NAME: "Köniz",
+        CONF_POINT_HEIGHT: 595.0,
         CONF_STATION_ABBR: _STATION_ABBR,
         CONF_STATION_NAME: "Bern / Zollikofen",
     }
