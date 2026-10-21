@@ -8,6 +8,7 @@ platform lands in its own issue.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -33,6 +34,7 @@ from .const import (
     CONF_IMIS_STATION_CODE,
     CONF_IMIS_STATION_ELEVATION,
     CONF_IMIS_STATION_NAME,
+    CONF_POINT_HEIGHT,
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
@@ -64,6 +66,7 @@ from .ogd import (
     ForecastPoint,
     OgdError,
     fetch_datainventory,
+    fetch_points,
     fetch_pollen_datainventory,
 )
 
@@ -85,6 +88,8 @@ _IMPORT_HISTORY_SCHEMA = vol.Schema(
         vol.Optional(ATTR_END): cv.datetime,
     }
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 # Seam for tests: replace with a FakeBackend to run without network I/O.
 # A future OGC Features backend (announced by MeteoSwiss for end-2026) will
@@ -189,7 +194,37 @@ def _point_from_entry(entry: ConfigEntry) -> ForecastPoint:
         name=str(data.get(CONF_POINT_NAME, "")),
         lat=0.0,
         lon=0.0,
-        height_masl=None,
+        height_masl=data.get(CONF_POINT_HEIGHT),
+    )
+
+
+async def _async_migrate_point_height(
+    hass: HomeAssistant, entry: ConfigEntry, session: aiohttp.ClientSession
+) -> None:
+    """Persist the point height for entries created before it was stored (#227).
+
+    One ``fetch_points`` lookup per entry: the key is written (even as ``None``
+    when the CSV has no height) only after a successful fetch, so a failed
+    fetch is retried on the next start and a successful one never repeats.
+    """
+    if CONF_POINT_HEIGHT in entry.data:
+        return
+    key = (int(entry.data[CONF_POINT_ID]), int(entry.data[CONF_POINT_TYPE_ID]))
+    try:
+        points = await fetch_points(session)
+    except OgdError as err:
+        _LOGGER.debug("Could not look up the height of point %s: %s", key, err)
+        return
+    height = next(
+        (
+            p.height_masl
+            for p in points
+            if (p.point_id, p.point_type_id) == key
+        ),
+        None,
+    )
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_POINT_HEIGHT: height}
     )
 
 
@@ -207,6 +242,7 @@ async def async_setup_entry(
         return await _async_setup_snow_station_entry(hass, entry)
 
     session = async_get_clientsession(hass)
+    await _async_migrate_point_height(hass, entry, session)
     point = _point_from_entry(entry)
     station_abbr = str(entry.data[CONF_STATION_ABBR])
     backend: ForecastBackend = _backend_factory(session)

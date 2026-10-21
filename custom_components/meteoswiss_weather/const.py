@@ -19,6 +19,8 @@ CONF_POSTAL_CODE = "postal_code"
 CONF_POINT_ID = "point_id"
 CONF_POINT_TYPE_ID = "point_type_id"
 CONF_POINT_NAME = "point_name"
+# Forecast point height in m (``point_height_masl``); ``None`` when the CSV has none.
+CONF_POINT_HEIGHT = "point_height"
 CONF_STATION_ABBR = "station_abbr"
 CONF_STATION_NAME = "station_name"
 

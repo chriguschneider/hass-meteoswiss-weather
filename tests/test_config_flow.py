@@ -26,6 +26,7 @@ from custom_components.meteoswiss_weather.const import (
     CONF_HOURLY_FORECAST,
     CONF_HOURLY_HORIZON_DAYS,
     CONF_HOURLY_TEMP_PERCENTILES,
+    CONF_POINT_HEIGHT,
     CONF_POINT_ID,
     CONF_POINT_NAME,
     CONF_POINT_TYPE_ID,
@@ -150,6 +151,7 @@ async def test_happy_path_two_point_postal_code(
     assert data[CONF_POINT_TYPE_ID] == 2
     assert data[CONF_POSTAL_CODE] == "3098"
     assert data[CONF_POINT_NAME] == "Köniz"
+    assert data[CONF_POINT_HEIGHT] == 595.0
     assert data[CONF_STATION_ABBR] == "BER"
     assert data[CONF_STATION_NAME] == "Bern / Zollikofen"
 
@@ -1076,6 +1078,7 @@ async def test_reconfigure_point_only_change_skips_history(
     assert result["reason"] == "reconfigure_successful"
     assert entry.data[CONF_POINT_ID] == 309801
     assert entry.data[CONF_POINT_NAME] == "Schliern b. Köniz"
+    assert entry.data[CONF_POINT_HEIGHT] == 620.0
     assert entry.data[CONF_STATION_ABBR] == "BER"
     assert entry.unique_id == "2-309801"
     reload_mock.assert_called_once_with(entry.entry_id)
