@@ -137,10 +137,25 @@ before you save.
 | Option | Gives you | Per refresh |
 |---|---|---|
 | *(always on)* | daily forecast, current conditions, zero-degree level | ~0.35 MB |
-| Hourly forecast | temperature, rain, chance of rain, wind, radiation and zero-degree level for every hour | + ~0.3 MB |
+| Hourly forecast | temperature, rain, chance of rain, wind, radiation, sunshine and zero-degree level for every hour | + ~0.3 MB |
 | Cloud cover layers | total cloud cover and the high, mid and low layers per hour | + ~0.05 MB |
 | Temperature percentiles | the uncertainty band of the temperature forecast per hour | + ~0.5 MB |
 | Pollen | one sensor per pollen type the station measures | one small file per hour |
+
+The hourly forecast also has a **horizon** (`hourly_horizon_days`, in the
+options next to the toggle): full local calendar days, default 2 (the rest of
+today plus two full days), 0–8 or the full run (about 9 days). Up to the default
+every file is read row by row; longer horizons and the full run add a far tail
+that is refreshed at most every 6 hours and costs a little more, so choose them
+only if you need them.
+
+To change the station or forecast point later, use **Reconfigure** (entry ⋮
+menu). The current picks are preselected and the entities are kept. When you
+switch the weather station you choose what happens to the recorded history:
+*keep* it (default, a logbook entry marks the switch), *discard* it (the station
+sensors' states and long-term statistics are cleared), or *backfill* it
+(statistics rewritten from the new station's official history; offered once the
+import layer of [ADR-0007](docs/adr/0007-station-history-backfill.md) ships).
 
 Measured in September 2026 for one place. MeteoSwiss adjusts the coming hours
 about once an hour, so with everything switched on expect around **1.2 MB per
@@ -193,6 +208,8 @@ lands (checked hourly). Per day:
 | `wind_speed` | Highest hourly mean wind speed of the day | km/h |
 | `wind_gust_speed` | Highest hourly gust of the day | km/h |
 | `wind_bearing` | Wind direction at the hour of the strongest wind | ° |
+| `precipitation_probability` | Probability of precipitation that day | % |
+| `sunshine_duration` | Total sunshine of the day; absent for incomplete days at the tail of the run | min |
 
 **Hourly forecast** — opt-in ([why](#why-another-meteoswiss-integration)).
 With the option on it is fetched on every forecast refresh, so the data is
@@ -207,6 +224,7 @@ always there when a card opens. Per hour:
 | `wind_speed` / `wind_gust_speed` / `wind_bearing` | Hourly mean wind, gust and direction | km/h, km/h, ° |
 | `radiation` | Global (incoming short-wave) solar radiation | W/m² |
 | `zero_degree_level` | Altitude of the 0 °C isotherm (snow-line material) | m |
+| `sunshine_duration` | Minutes of sunshine in that hour (0–60) | min |
 | `cloud_coverage` | Total cloud cover, the maximum of the three layers — **only with the cloud-layers option** | % |
 | `cloud_coverage_high` / `_mid` / `_low` | The three cloud layers — **only with the cloud-layers option** | % |
 | `temperature_p10` / `temperature_p90` | 10th / 90th percentile of the temperature forecast, the uncertainty band — **only with the temperature-percentiles option** | °C |
@@ -255,8 +273,16 @@ Derived from the local forecast for the configured point.
 | Low temperature today | Today's forecast minimum | °C | on |
 | Precipitation today | Today's forecast precipitation sum | mm | on |
 | Sunshine duration today | Today's forecast sunshine total | h | on |
-| Zero-degree level | Forecast altitude of the 0 °C isotherm for the current hour — snow-line material; advances every hour. Works without the hourly forecast option | m | off |
-| Zero-degree level, lowest in 48 h | Lowest forecast altitude of the 0 °C isotherm within the next 48 h, with `at`, `change`, `max`, `max_at`, `covered_hours` and the hourly curve as `forecast`. Without the hourly forecast option the window is only partly covered for most of the day (`covered_hours`); with a horizon of 3 days or more (or the full run) it is always complete | m | off |
+| Zero-degree level | Forecast altitude of the 0 °C isotherm for the current hour — snow-line material; advances every hour. Works without the hourly forecast option. Attribute `elevation` (m, height of the forecast point, since v0.10.0) | m | off |
+| Zero-degree level, lowest in 48 h | Lowest forecast altitude of the 0 °C isotherm within the next 48 h, with `elevation` (m), `at`, `change`, `max`, `max_at`, `covered_hours` and the hourly curve as `forecast` (not recorded). Without the hourly forecast option the window is only partly covered for most of the day (`covered_hours`); with a horizon of 3 days or more (or the full run) it is always complete | m | off |
+
+Both zero-degree sensors are **disabled by default**: open the device page, click
+*N entities not shown*, pick the sensor and toggle *Enable* (no extra traffic).
+A dashboard compares the snow line with `elevation` to tell whether it reaches
+your location; the
+[Weather Station Card](https://github.com/chriguschneider/weather-station-card)
+uses the curve for its popup and trend row
+(see [Works together](#works-together)).
 
 </details>
 
@@ -290,12 +316,14 @@ by the SLF IMIS network (WSL Institute for Snow and Avalanche Research), a secon
 official open-data upstream. Every sensor sits on the station's own device, is
 enabled by default, carries the attribution
 `Source: WSL Institute for Snow and Avalanche Research SLF` and `station`,
-`elevation`, `measured_at` and `placeholder` attributes. A snow station is a flat
+`elevation`, `measured_at` and `placeholder` attributes (all sensors except
+*Elevation*, which is static). A snow station is a flat
 study plot off-piste — **not** the lifts' piste snow depth — so snow values are
 near 0 in summer.
 
 | Sensor | Description | Unit |
 |---|---|---|
+| Elevation | Station altitude from the entry data; always available, even when the station is silent | m |
 | Snow height | Measured snow height (`HS`) on the station's flat study plot | cm |
 | New snow 24 h (modelled) | SNOWPACK-modelled new snow over the last 24 h (`HN_1D`) | cm |
 | Snow height (modelled) | SNOWPACK-modelled snow height | cm |
@@ -368,15 +396,34 @@ integration reads **only** that open data
 `Rudd-O/homeassistant-meteoswiss` and `izacus/hass-swissweather`, feature by
 feature, including the things they do better.
 
-## Goes well with
+## Works together
 
-- [**MeteoSwiss Radar**](https://github.com/chriguschneider/hass-meteoswiss-radar):
-  the app's animated rain radar as a dashboard card. Same author, same icon,
-  deliberately a separate install
+This integration, [MeteoSwiss Radar](https://github.com/chriguschneider/hass-meteoswiss-radar)
+and the [Weather Station Card](https://github.com/chriguschneider/weather-station-card)
+are **three independent installs; none needs the others**. Together they fit like this:
+
+```
+this integration ──(weather entity · station sensors · zero-degree level + curve + elevation · sunshine today)──▶ weather-station-card
+this integration ──(hourly forecast, option on)──▶ hass-meteoswiss-radar ──(next_rain sensor)──▶ weather-station-card
+```
+
+| What you want | Which piece | Setting |
+|---|---|---|
+| Snow line now, lowest in 48 h, popup and trend | this integration | enable `zero_degree_level` and `zero_degree_level_48h` here → card `sensors.zero_degree_level`, `sensors.zero_degree_level_48h` |
+| Sunshine today | this integration | `sunshine_duration_today` → card `sensors.sunshine_duration` |
+| Next rain beyond the radar's 2 h | radar integration | pick this weather entity in the radar's options **and switch the hourly option on here** → card `sensors.next_rain` |
+| Measured values | this integration's station sensors | → card `sensors.*` |
+| Radar animation | the radar card | — |
+
+- [**MeteoSwiss Radar**](https://github.com/chriguschneider/hass-meteoswiss-radar)
+  ([forum thread](https://community.home-assistant.io/t/1022501)): the app's
+  animated rain radar as a dashboard card. Same author, same icon, deliberately
+  a separate install
   ([ADR-0003](docs/adr/0003-sibling-of-the-radar-integration.md)).
-- [**Weather Station Card**](https://github.com/chriguschneider/weather-station-card):
-  one chart with what was measured on the left and what is forecast on the
-  right. This integration delivers both halves.
+- [**Weather Station Card**](https://github.com/chriguschneider/weather-station-card)
+  ([forum thread](https://community.home-assistant.io/t/1011385)): one chart
+  with what was measured on the left and what is forecast on the right. This
+  integration delivers both halves.
 
 ## Contributing
 

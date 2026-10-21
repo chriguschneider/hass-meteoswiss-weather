@@ -9,6 +9,15 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Documentation
+
+- README and configuration guide brought up to v0.10.0: zero-degree sensor
+  attributes including `elevation`, the forecast horizon and Reconfigure,
+  missing forecast fields and the snow-station `elevation` sensor, a new
+  "Works together" section for the Weather Station Card and MeteoSwiss Radar,
+  and dashboard examples that use `weather.get_forecasts` instead of the
+  removed `forecast` attribute (#230).
+
 ## [v0.10.0] — 2026-10-21
 
 ### Changed

@@ -28,7 +28,7 @@ If your postal code has multiple forecast points, you'll be asked to choose one.
 
 Choose a mountain point from the dropdown list. All 631 alpine forecast points are listed alphabetically, labelled `"<name> (<altitude> m)"`. The nearest point to your Home Assistant location is pre-selected.
 
-**Example (ski-area use case):** Add a second config entry for the mountain above your ski area. Pick the nearest summit or glacier point — you'll get a 9-day forecast for that exact altitude, including temperature, snow, wind, and the MeteoSwiss weather symbol. Pair it with the nearest mountain SwissMetNet station for current conditions; once snow-depth support lands (#47) you'll have live snow depth too.
+**Example (ski-area use case):** Add a second config entry for the mountain above your ski area. Pick the nearest summit or glacier point — you'll get a 9-day forecast for that exact altitude, including temperature, snow, wind, and the MeteoSwiss weather symbol. Pair it with the nearest mountain SwissMetNet station for current conditions; enable the `snow_depth` station sensor if that station measures it for live snow depth.
 
 ### Step 3: Weather Station
 
@@ -84,6 +84,7 @@ One `weather` entity per config entry.
 | `wind_gust_speed` | Peak wind gust from the station | km/h |
 | `condition` | Weather condition (`sunny`, `partlycloudy`, `cloudy`, `rainy`, `snowy`, etc.) | — |
 | `current_precipitation` | Current 10-minute precipitation (from the precipitation station when one is configured, otherwise the main station) | mm |
+| `precipitation_station` | Name of the precipitation-only station; present only when one is configured | — |
 
 **Forecast:**
 
@@ -104,11 +105,8 @@ One `weather` entity per config entry.
   | `cloud_coverage_high` / `_mid` / `_low` | The three cloud layers — **only with the cloud-layers option** | % |
   | `temperature_p10` / `temperature_p90` | 10th/90th percentile of the temperature forecast — **only with the temperature-percentiles option** | °C |
 
-  **Example — next-hour radiation from a template:**
-  ```yaml
-  {{ state_attr('weather.MY_ENTITY', 'forecast') }}
-  ```
-  Or with the `weather.get_forecasts` service:
+  **Example — read the hourly forecast with `weather.get_forecasts`:**
+  The weather entity has no `forecast` attribute; ask the service instead.
   ```yaml
   action: weather.get_forecasts
   data:
@@ -122,7 +120,7 @@ One `weather` entity per config entry.
 
 ### Station Sensors
 
-One sensor entity per measured field from the SwissMetNet station. All are disabled by default except the most common ones (temperature, humidity, pressure, wind speed, wind bearing, gust speed, precipitation).
+One sensor entity per measured field from the SwissMetNet station. This table lists the sensors enabled by default plus a few common disabled ones; the complete list of disabled ones is under [Station sensors (disabled by default)](#station-sensors-disabled-by-default).
 
 | Sensor | Unit | Enabled by Default | Notes |
 |--------|------|-------|-------|
@@ -296,7 +294,7 @@ for the full grouped list and the one-step path to enable them.
 | Options → Pollen | **Pollen station** (`pollen_station`) | Which of the 15 pollen stations the sensors read | None | All other options |
 | Entity settings | **Enable a disabled sensor** | Individual enablement of any sensor in [Disabled by default](#entities-that-are-disabled-by-default) | No extra traffic | Nothing else changes |
 | Always on | **Forecast sensors** | `temp_max_today`, `temp_min_today`, `precipitation_today`, `sunshine_duration_today` (in hours; today's aggregates from the daily forecast, enabled by default) | Included in the daily forecast cost | Station sensors, hourly option |
-| Always on | **Zero-degree level sensor** | `zero_degree_level` sensor (disabled by default); filled by the daily refresh, no hourly opt-in required | Included in the daily fetch | Hourly option |
+| Always on | **Zero-degree level sensors** | `zero_degree_level` and `zero_degree_level_48h` sensors (both disabled by default); filled by the daily refresh, no hourly opt-in required | Included in the daily fetch | Hourly option |
 | Always on | **Diagnostic sensors** | `data_fetched_today` (enabled by default); `requests_today` (disabled by default) | None | Everything |
 
 ## Services
@@ -351,7 +349,32 @@ This displays the current conditions, today's forecast summary, and a daily fore
 
 ### Daily Forecast with ApexCharts
 
-For a more detailed daily view, use [ApexCharts Card](https://github.com/RomRider/apexcharts-card):
+The weather entity has no `forecast` attribute; fetch the forecast with
+`weather.get_forecasts`. A template sensor holds the daily forecast in an
+attribute and refreshes hourly:
+
+```yaml
+template:
+  - trigger:
+      - platform: time_pattern
+        hours: "/1"
+      - platform: homeassistant
+        event: start
+    action:
+      - action: weather.get_forecasts
+        data:
+          type: daily
+        target:
+          entity_id: weather.postal_code_location
+        response_variable: daily
+    sensor:
+      - name: MeteoSwiss daily forecast
+        state: "{{ now().isoformat() }}"
+        attributes:
+          forecast: "{{ daily['weather.postal_code_location'].forecast }}"
+```
+
+Then chart it with [ApexCharts Card](https://github.com/RomRider/apexcharts-card):
 
 ```yaml
 type: custom:apexcharts-card
@@ -359,14 +382,14 @@ header:
   show: true
   title: 9-Day Forecast
 series:
-  - entity: weather.postal_code_location
+  - entity: sensor.meteoswiss_daily_forecast
     type: line
     data_generator: |
       return entity.attributes.forecast.map((forecast) => {
         return [new Date(forecast.datetime).getTime(), forecast.temperature];
       });
     name: High
-  - entity: weather.postal_code_location
+  - entity: sensor.meteoswiss_daily_forecast
     type: line
     data_generator: |
       return entity.attributes.forecast.map((forecast) => {
@@ -396,6 +419,13 @@ cards:
   - type: entity
     entity: sensor.postal_code_location_wind_bearing
 ```
+
+## Works together
+
+This integration pairs with the [Weather Station Card](https://github.com/chriguschneider/weather-station-card)
+and [MeteoSwiss Radar](https://github.com/chriguschneider/hass-meteoswiss-radar);
+they are independent installs. Which sensors and options feed which card setting
+is in the README section [Works together](../README.md#works-together).
 
 ## FAQ
 
@@ -464,7 +494,7 @@ Both are atmospheric pressure measurements, differing in how they account for al
 - **QFE** (pressure at station level): The actual pressure at your station's elevation. Rarely used outside aviation.
 - **QFF** (pressure reduced to sea level): The pressure adjusted as if measured at sea level. This is the standard for weather forecasts and is what the integration reports in the main `pressure` attribute.
 
-The integration exposes both as separate sensor attributes if you need them; QFE is disabled by default.
+The integration exposes the pressure values as separate sensors (`pressure_qff`, `pressure_qfe`, `pressure_qnh`) if you need them; QFE and QNH are disabled by default.
 
 ### Is there an automation example?
 
