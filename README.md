@@ -256,7 +256,7 @@ Derived from the local forecast for the configured point.
 | Precipitation today | Today's forecast precipitation sum | mm | on |
 | Sunshine duration today | Today's forecast sunshine total | h | on |
 | Zero-degree level | Forecast altitude of the 0 °C isotherm for the current hour — snow-line material; advances every hour. Works without the hourly forecast option | m | off |
-| Zero-degree level in 48 h | Forecast altitude of the 0 °C isotherm 48 h from now, with a `change` attribute against the current hour — will the snow line rise or fall? Needs the hourly forecast option with a horizon of 3 days or more (or the full run); otherwise it reads `unknown` for most of the day | m | off |
+| Zero-degree level, lowest in 48 h | Lowest forecast altitude of the 0 °C isotherm within the next 48 h, with `at`, `change`, `max`, `max_at`, `covered_hours` and the hourly curve as `forecast`. Without the hourly forecast option the window is only partly covered for most of the day (`covered_hours`); with a horizon of 3 days or more (or the full run) it is always complete | m | off |
 
 </details>
 

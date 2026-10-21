@@ -931,60 +931,116 @@ def _file_series(coordinator, series: dict[datetime, float], now: datetime) -> N
     coordinator.async_update_listeners()
 
 
-async def test_zero_degree_48h_value_and_change(
+async def _setup_48h(hass, config_entry, now, series):
+    await _setup_with_zero_degree_48h(hass, config_entry)
+    coordinator = config_entry.runtime_data.forecast_coordinator
+    _file_series(coordinator, series, now)
+    await hass.async_block_till_done()
+
+
+async def test_zero_degree_48h_full_window(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """Covered hour -> the store's value for now + 48 h, ``change`` vs. now."""
+    """Fully covered window -> lowest of the 49 hours, with its attributes."""
     now = datetime(2026, 8, 27, 1, 30, tzinfo=UTC)
     hour = now.replace(minute=0)
+    series = {hour + timedelta(hours=i): 2500.0 - i for i in range(0, 60)}
+    series[hour + timedelta(hours=30)] = 1600.0
+    series[hour + timedelta(hours=40)] = 3000.0
+    series[hour + timedelta(hours=55)] = 900.0  # outside the window
     with freeze_time(now):
-        await _setup_with_zero_degree_48h(hass, config_entry)
-        coordinator = config_entry.runtime_data.forecast_coordinator
-        _file_series(
-            coordinator,
-            {hour: 2500.0, hour + timedelta(hours=48): 2300.0},
-            now,
-        )
-        await hass.async_block_till_done()
-        assert _state(hass, "zero_degree_level_in_48_h") == "2300.0"
-        assert _attr(hass, "zero_degree_level_in_48_h", "change") == -200.0
+        await _setup_48h(hass, config_entry, now, series)
+        name = "zero_degree_level_in_48_h"
+        assert _state(hass, name) == "1600.0"
+        assert _attr(hass, name, "at") == hour + timedelta(hours=30)
+        assert _attr(hass, name, "change") == -900.0
+        assert _attr(hass, name, "max") == 3000.0
+        assert _attr(hass, name, "max_at") == hour + timedelta(hours=40)
+        assert _attr(hass, name, "covered_hours") == 48
+        forecast = _attr(hass, name, "forecast")
+        assert len(forecast) == 60
+        assert forecast[0] == {"datetime": hour.isoformat(), "level": 2500.0}
 
 
-async def test_zero_degree_48h_unknown_without_attribute_when_not_covered(
+async def test_zero_degree_48h_partly_covered(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
-    """Beyond the window -> ``unknown`` and no ``change``; no extrapolation."""
+    now = datetime(2026, 8, 27, 1, 30, tzinfo=UTC)
+    hour = now.replace(minute=0)
+    series = {hour + timedelta(hours=i): 2500.0 - 10 * i for i in range(0, 11)}
+    with freeze_time(now):
+        await _setup_48h(hass, config_entry, now, series)
+        assert _state(hass, "zero_degree_level_in_48_h") == "2400.0"
+        assert _attr(hass, "zero_degree_level_in_48_h", "covered_hours") == 10
+
+
+async def test_zero_degree_48h_unknown_without_current_hour(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
     now = datetime(2026, 8, 27, 1, 30, tzinfo=UTC)
     hour = now.replace(minute=0)
     with freeze_time(now):
-        await _setup_with_zero_degree_48h(hass, config_entry)
-        coordinator = config_entry.runtime_data.forecast_coordinator
-        _file_series(
-            coordinator, {hour: 2500.0, hour + timedelta(hours=47): 2400.0}, now
+        await _setup_48h(
+            hass, config_entry, now, {hour + timedelta(hours=48): 2300.0}
         )
-        await hass.async_block_till_done()
         assert _state(hass, "zero_degree_level_in_48_h") == STATE_UNKNOWN
-        assert "change" not in hass.states.get(_ZERO_DEGREE_48H_ID).attributes
+        attrs = hass.states.get(_ZERO_DEGREE_48H_ID).attributes
+        assert "change" not in attrs
+        assert "forecast" not in attrs
 
 
-async def test_zero_degree_48h_no_change_when_current_hour_missing(
+async def test_zero_degree_48h_tie_takes_earliest_hour(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     mock_ogd: AiohttpClientMocker,
 ) -> None:
     now = datetime(2026, 8, 27, 1, 30, tzinfo=UTC)
     hour = now.replace(minute=0)
+    series = {
+        hour: 2500.0,
+        hour + timedelta(hours=5): 1800.0,
+        hour + timedelta(hours=9): 1800.0,
+    }
     with freeze_time(now):
-        await _setup_with_zero_degree_48h(hass, config_entry)
-        coordinator = config_entry.runtime_data.forecast_coordinator
-        _file_series(coordinator, {hour + timedelta(hours=48): 2300.0}, now)
-        await hass.async_block_till_done()
-        assert _state(hass, "zero_degree_level_in_48_h") == "2300.0"
-        assert "change" not in hass.states.get(_ZERO_DEGREE_48H_ID).attributes
+        await _setup_48h(hass, config_entry, now, series)
+        assert _attr(hass, "zero_degree_level_in_48_h", "at") == (
+            hour + timedelta(hours=5)
+        )
+
+
+async def test_zero_degree_48h_forecast_starts_at_this_hour(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    now = datetime(2026, 8, 27, 1, 30, tzinfo=UTC)
+    hour = now.replace(minute=0)
+    series = {
+        hour - timedelta(hours=2): 100.0,
+        hour: 2500.0,
+        hour + timedelta(hours=1): 2400.0,
+    }
+    with freeze_time(now):
+        await _setup_48h(hass, config_entry, now, series)
+        forecast = _attr(hass, "zero_degree_level_in_48_h", "forecast")
+        assert [f["level"] for f in forecast] == [2500.0, 2400.0]
+        assert _state(hass, "zero_degree_level_in_48_h") == "2400.0"
+
+
+async def test_zero_degree_48h_forecast_not_recorded(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    from custom_components.meteoswiss_weather.sensor import ZeroDegree48hSensor
+
+    assert ZeroDegree48hSensor._unrecorded_attributes == frozenset({"forecast"})
 
 
 async def test_zero_degree_48h_advances_at_the_top_of_the_hour(
@@ -994,27 +1050,25 @@ async def test_zero_degree_48h_advances_at_the_top_of_the_hour(
 ) -> None:
     start = datetime(2026, 8, 27, 1, 30, tzinfo=UTC)
     hour = start.replace(minute=0)
+    series = {
+        hour: 2500.0,
+        hour + timedelta(hours=1): 1500.0,
+        hour + timedelta(hours=2): 2000.0,
+    }
     with freeze_time(start) as frozen:
-        await _setup_with_zero_degree_48h(hass, config_entry)
-        coordinator = config_entry.runtime_data.forecast_coordinator
-        _file_series(
-            coordinator,
-            {
-                hour: 2500.0,
-                hour + timedelta(hours=1): 2510.0,
-                hour + timedelta(hours=48): 2300.0,
-                hour + timedelta(hours=49): 2250.0,
-            },
-            start,
-        )
-        await hass.async_block_till_done()
-        assert _state(hass, "zero_degree_level_in_48_h") == "2300.0"
+        await _setup_48h(hass, config_entry, start, series)
+        assert _state(hass, "zero_degree_level_in_48_h") == "1500.0"
 
-        frozen.move_to(start + timedelta(minutes=30))
-        async_fire_time_changed(hass, start + timedelta(minutes=30))
+        frozen.move_to(start + timedelta(hours=1))
+        async_fire_time_changed(hass, start + timedelta(hours=1))
         await hass.async_block_till_done()
-        assert _state(hass, "zero_degree_level_in_48_h") == "2250.0"
-        assert _attr(hass, "zero_degree_level_in_48_h", "change") == -260.0
+        assert _state(hass, "zero_degree_level_in_48_h") == "1500.0"
+        assert _attr(hass, "zero_degree_level_in_48_h", "change") == 0.0
+
+        frozen.move_to(start + timedelta(hours=2))
+        async_fire_time_changed(hass, start + timedelta(hours=2))
+        await hass.async_block_till_done()
+        assert _state(hass, "zero_degree_level_in_48_h") == "2000.0"
 
 
 async def test_zero_degree_48h_disabled_by_default(
@@ -1025,7 +1079,9 @@ async def test_zero_degree_48h_disabled_by_default(
     config_entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
-    entry = er.async_get(hass).async_get(_ZERO_DEGREE_48H_ID)
+    entry = er.async_get(hass).async_get(
+        "sensor.koniz_zero_degree_level_lowest_in_48_h"
+    )
     assert entry is not None
     assert entry.disabled
     assert entry.unique_id == "2-309800_zero_degree_level_48h"
