@@ -56,7 +56,7 @@
       "precipitation_today": { "name": "Niederschlag heute" },
       "sunshine_duration_today": { "name": "Sonnenscheindauer heute" },
       "zero_degree_level": { "name": "Nullgradgrenze" },
-      "zero_degree_level_48h": { "name": "Nullgradgrenze in 48 h" },
+      "zero_degree_level_48h": { "name": "Nullgradgrenze, Tiefstwert 48 h" },
       "measurement_time": { "name": "Messzeitpunkt" },
       "snow_height": { "name": "Schneehöhe" },
       "new_snow_24h": { "name": "Neuschnee 24 h (modelliert)" },

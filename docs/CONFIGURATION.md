@@ -242,7 +242,7 @@ toggle *Enable*.
 | Sensor key | Description |
 |---|---|
 | `zero_degree_level` | Altitude of the 0 °C isotherm for the current hour; works without the hourly option |
-| `zero_degree_level_48h` | Altitude of the 0 °C isotherm 48 h from now (disabled by default), with a `change` attribute (m) against the current hour. Needs the hourly option with a horizon of 3 days or more (or the full run): the daily path files only 48 h from the model run, so without it the sensor reads `unknown` for most of the day |
+| `zero_degree_level_48h` | Lowest altitude of the 0 °C isotherm within the next 48 h (disabled by default). Attributes: `at` (hour of the minimum, earliest on a tie), `change` (m, minimum minus the current hour), `max` / `max_at`, `covered_hours` (hours of the 48-h window found in the store) and `forecast` (list of `{datetime, level}` for every stored hour from now on, not recorded). The daily path files only 48 h from the model run, so without the hourly option the window is partly covered for most of the day and the state is the minimum over the covered part; with the hourly option and a horizon of 3 days or more (or the full run) it is always fully covered and `forecast` reaches the horizon. The level at exactly now + 48 h is in `forecast` |
 
 #### Pollen sensors (disabled by default, requires pollen option on)
 

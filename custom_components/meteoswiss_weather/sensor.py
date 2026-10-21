@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from typing import Any
 
 from homeassistant.components.sensor import (
     RestoreSensor,
@@ -357,11 +358,12 @@ _ZERO_DEGREE_DESCRIPTION = SensorEntityDescription(
     entity_registry_enabled_default=False,
 )
 
-# Issue #214: the zero-degree level 48 h from now. The daily path files only
-# 48 h of ``zprfr0hs`` from the model run, so without the hourly option this
-# reads ``unknown`` for most of the day; the hourly option with a horizon of
-# 3 days or more (or the full run) keeps it filled.
-_ZERO_DEGREE_48H_HOURS = 48
+# Issues #214/#225: the lowest zero-degree level in the next 48 h. The daily
+# path files only 48 h of ``zprfr0hs`` from the model run, so without the
+# hourly option the window is only partly covered for most of the day
+# (``covered_hours``); the hourly option with a horizon of 3 days or more (or
+# the full run) covers it always.
+_ZERO_DEGREE_WINDOW_HOURS = 48
 _ZERO_DEGREE_48H_DESCRIPTION = SensorEntityDescription(
     key="zero_degree_level_48h",
     translation_key="zero_degree_level_48h",
@@ -1080,32 +1082,66 @@ class ZeroDegreeSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
 
 
 class ZeroDegree48hSensor(ZeroDegreeSensor):
-    """Zero-degree level 48 h from now (issue #214).
+    """Lowest zero-degree level within the next 48 h (issues #214, #225).
 
     Same store, refresh and top-of-hour mechanism as the current-hour sensor.
-    ``unknown`` while the store does not cover that hour (the daily path files
-    only 48 h from the model run); it never extrapolates. The ``change``
-    attribute is the value minus the current hour's, omitted when either is
-    missing.
+    The state is the minimum over the stored hours ``this_hour`` to
+    ``this_hour + 48 h``; ``unknown`` while the current hour itself is not in
+    the store (no fallback, no extrapolation). The daily path files only 48 h
+    from the model run, so the window can be partly covered: ``covered_hours``
+    says how much of it was found. ``forecast`` is the whole stored curve from
+    the current hour on and is kept out of the recorder.
     """
+
+    _unrecorded_attributes = frozenset({"forecast"})
+
+    def _window(self) -> tuple[datetime, dict[datetime, float]] | None:
+        """Return ``(this_hour, stored hours from this_hour on)``, or ``None``."""
+        this_hour = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
+        series = self.coordinator.store.get(HOURLY_ZERO_DEGREE)
+        if series is None or this_hour not in series.values:
+            return None
+        return this_hour, {
+            when: float(value)
+            for when, value in sorted(series.values.items())
+            if when >= this_hour
+        }
+
+    @staticmethod
+    def _in_window(this_hour: datetime, curve: dict[datetime, float]):
+        end = this_hour + timedelta(hours=_ZERO_DEGREE_WINDOW_HOURS)
+        return {when: v for when, v in curve.items() if when <= end}
 
     @property
     def native_value(self) -> float | None:
-        """Return the level for now + 48 h, or ``None`` when not covered."""
-        this_hour = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
-        return self.coordinator.store.value_at(
-            HOURLY_ZERO_DEGREE, this_hour + timedelta(hours=_ZERO_DEGREE_48H_HOURS)
-        )
+        """Return the lowest level in the window, or ``None`` when unknown."""
+        window = self._window()
+        if window is None:
+            return None
+        return min(self._in_window(*window).values())
 
     @property
-    def extra_state_attributes(self) -> dict[str, float] | None:
-        """Return the change against the current hour (m), when both exist."""
-        later = self.native_value
-        this_hour = dt_util.utcnow().replace(minute=0, second=0, microsecond=0)
-        now = self.coordinator.store.value_at(HOURLY_ZERO_DEGREE, this_hour)
-        if later is None or now is None:
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return where and how far the level dips, plus the hourly curve."""
+        window = self._window()
+        if window is None:
             return None
-        return {"change": later - now}
+        this_hour, curve = window
+        inside = self._in_window(this_hour, curve)
+        # min/max return the first of tied entries, i.e. the earliest hour.
+        low_at = min(inside, key=inside.__getitem__)
+        high_at = max(inside, key=inside.__getitem__)
+        return {
+            "at": low_at,
+            "change": inside[low_at] - curve[this_hour],
+            "max": inside[high_at],
+            "max_at": high_at,
+            "covered_hours": len(inside) - 1,
+            "forecast": [
+                {"datetime": when.isoformat(), "level": level}
+                for when, level in curve.items()
+            ],
+        }
 
 
 class MeasurementTimeSensor(CoordinatorEntity[StationCoordinator], SensorEntity):

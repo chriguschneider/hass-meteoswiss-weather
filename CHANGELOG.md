@@ -9,6 +9,21 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Changed
+
+- The "Zero-degree level in 48 h" sensor now shows the **lowest** zero-degree
+  level within the next 48 hours instead of the level at exactly now + 48 h,
+  so a dip of the snow line is no longer hidden. If you relied on the point
+  value at now + 48 h, read it from the `forecast` attribute (#225).
+
+### Added
+
+- The zero-degree 48 h sensor gains the attributes `at`, `change`, `max`,
+  `max_at`, `covered_hours` and `forecast` (the hourly curve, not recorded),
+  so a dashboard can draw where the snow line goes. Without the hourly
+  option the window is only partly covered for most of the day;
+  `covered_hours` says how much (#225).
+
 ## [v0.9.0] — 2026-10-20
 
 ### Added
