@@ -265,6 +265,23 @@ def test_horizon_winter_cet() -> None:
     assert horizon_end_utc(2, now) == datetime(2026, 1, 17, 23, 0, tzinfo=UTC)
 
 
+def test_horizon_does_not_build_zoneinfo_per_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The zone is a module constant: no tzdata read on each call (issue #233)."""
+    calls: list[str] = []
+    real = H.ZoneInfo
+
+    def spy(key: str) -> object:
+        calls.append(key)
+        return real(key)
+
+    monkeypatch.setattr(H, "ZoneInfo", spy)
+    now = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
+    assert horizon_end_utc(2, now) == datetime(2026, 7, 3, 22, 0, tzinfo=UTC)
+    assert calls == []
+
+
 def test_horizon_late_local_evening_uses_local_today() -> None:
     # 22:30 UTC on 1 Jul is already 00:30 local on 2 Jul: "today" is 2 Jul.
     now = datetime(2026, 7, 1, 22, 30, tzinfo=UTC)

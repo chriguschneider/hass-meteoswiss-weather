@@ -48,6 +48,11 @@ from .models import FileLayout, ForecastPoint
 
 _LOGGER = logging.getLogger(__name__)
 
+# Built once at import time: the first ZoneInfo lookup reads tzdata from disk,
+# which must not happen per call on Home Assistant's event loop. Shared with
+# ogd/forecast.py.
+FORECAST_TZ = ZoneInfo(FORECAST_TIMEZONE)
+
 # Number of evenly spaced byte offsets sampled to classify a file's layout.
 # More than the three the issue floats: the tiny probes are cheap and extra
 # samples make the monotonicity verdict robust on a shuffled/unexpected file.
@@ -1589,8 +1594,7 @@ def horizon_end_utc(horizon_days: int | None, now: datetime) -> datetime | None:
     """
     if horizon_days is None or horizon_days == HOURLY_HORIZON_FULL_RUN:
         return None
-    tz = ZoneInfo(FORECAST_TIMEZONE)
-    now_local = now.astimezone(tz)
+    now_local = now.astimezone(FORECAST_TZ)
     start_of_today = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
     end_local = start_of_today + timedelta(days=horizon_days + 1)
     return end_local.astimezone(UTC)

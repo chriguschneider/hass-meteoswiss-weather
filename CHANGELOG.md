@@ -18,6 +18,11 @@ using the matching section below as release notes.
   and dashboard examples that use `weather.get_forecasts` instead of the
   removed `forecast` attribute (#230).
 
+### Fixed
+
+- The hourly forecast no longer reads the time zone file from disk inside
+  Home Assistant's event loop (reported in the HACS review).
+
 ## [v0.10.0] — 2026-10-21
 
 ### Changed

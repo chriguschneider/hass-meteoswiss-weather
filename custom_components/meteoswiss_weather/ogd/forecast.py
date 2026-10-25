@@ -11,7 +11,6 @@ from __future__ import annotations
 import csv
 import io
 from datetime import UTC, date, datetime
-from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -22,7 +21,6 @@ from .const import (
     DAILY_TEMP_MAX,
     DAILY_TEMP_MIN,
     FORECAST_ENCODING,
-    FORECAST_TIMEZONE,
     HOURLY_CLOUD_HIGH,
     HOURLY_CLOUD_LOW,
     HOURLY_CLOUD_MID,
@@ -43,6 +41,7 @@ from .const import (
     POINT_TYPE_POSTAL_CODE,
 )
 from .geo import haversine_km
+from .hourly import FORECAST_TZ
 from .http import get_text
 from .models import DailyForecast, ForecastPoint, HourlyForecast, OgdParseError
 
@@ -357,7 +356,7 @@ def aggregate_daily_wind(
     - ``wind_bearing``: direction (°) at the hour of maximum wind speed (or
       ``None`` when the direction file had no matching row)
     """
-    tz = ZoneInfo(FORECAST_TIMEZONE)
+    tz = FORECAST_TZ
 
     speed_by_hour: dict[datetime, float] = {}
     gust_by_hour: dict[datetime, float] = {}
@@ -437,7 +436,7 @@ def aggregate_daily_precip_probability(
     a day with no rows is simply absent from the result, and the caller leaves
     ``precipitation_probability`` at ``None`` for it.
     """
-    tz = ZoneInfo(FORECAST_TIMEZONE)
+    tz = FORECAST_TZ
     max_by_day: dict[date, float] = {}
 
     for row in _reader(text):
@@ -485,7 +484,7 @@ def aggregate_daily_sunshine(
     the caller keeps ``sunshine_duration`` at ``None`` for them rather than
     reporting an understated total. A day with no rows is likewise absent.
     """
-    tz = ZoneInfo(FORECAST_TIMEZONE)
+    tz = FORECAST_TZ
     minutes_by_day: dict[date, int] = {}
     rows_by_day: dict[date, int] = {}
 
