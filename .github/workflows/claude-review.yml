@@ -64,7 +64,7 @@ jobs:
       # the list. Start with audit, switch to block once a few runs show the
       # full list (docs/agent-automation.md). Must stay the first step.
       - name: Harden the runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
           allowed-endpoints: >
@@ -145,7 +145,7 @@ jobs:
 
       - name: Review, fix (bounded), decide
         if: steps.token.outputs.present == 'true' && steps.sync.outputs.redo != 'true'
-        uses: anthropics/claude-code-action@aa8a7738e48bf30a40ee499ce818bef081c5ab5e # v1.0.257
+        uses: anthropics/claude-code-action@d70510b174a1244958df0b03166a54912811f3e6 # v1.0.264
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # after-agent-run.sh starts this review with the workflow token
