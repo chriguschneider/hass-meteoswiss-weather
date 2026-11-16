@@ -6,12 +6,12 @@
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
   <a href="https://hacs.xyz/"><img alt="HACS Custom" src="https://img.shields.io/badge/HACS-Custom-orange.svg" /></a>
-  <a href="https://github.com/chriguschneider/hass-meteoswiss-weather/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/chriguschneider/hass-meteoswiss-weather" /></a>
+  <a href="https://github.com/chriguschneider/hass-meteoswiss-weather/releases/latest"><img alt="Latest release" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fchriguschneider%2Fhass-meteoswiss-weather%2Fbadges%2Frelease.json" /></a>
   <a href="https://github.com/chriguschneider/hass-meteoswiss-weather/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/chriguschneider/hass-meteoswiss-weather/ci.yml?branch=master&label=CI" /></a>
   <a href="https://sonarcloud.io/summary/overall?id=chriguschneider_hass-meteoswiss-weather&branch=master"><img alt="Quality Gate Status" src="https://sonarcloud.io/api/project_badges/measure?project=chriguschneider_hass-meteoswiss-weather&metric=alert_status" /></a>
-  <a href="https://github.com/chriguschneider/hass-meteoswiss-weather/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/chriguschneider/hass-meteoswiss-weather/total" /></a>
-  <a href="https://github.com/chriguschneider/hass-meteoswiss-weather/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/chriguschneider/hass-meteoswiss-weather?style=flat&label=stars" /></a>
-  <a href="https://github.com/chriguschneider/hass-meteoswiss-weather/commits/master"><img alt="Last commit" src="https://img.shields.io/github/last-commit/chriguschneider/hass-meteoswiss-weather" /></a>
+  <a href="https://github.com/chriguschneider/hass-meteoswiss-weather/releases"><img alt="Downloads" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fchriguschneider%2Fhass-meteoswiss-weather%2Fbadges%2Fdownloads.json" /></a>
+  <a href="https://github.com/chriguschneider/hass-meteoswiss-weather/stargazers"><img alt="Stars" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fchriguschneider%2Fhass-meteoswiss-weather%2Fbadges%2Fstars.json" /></a>
+  <a href="https://github.com/chriguschneider/hass-meteoswiss-weather/commits/master"><img alt="Last commit" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fchriguschneider%2Fhass-meteoswiss-weather%2Fbadges%2Flastcommit.json" /></a>
   <a href="https://buymeacoffee.com/chriguschneider"><img alt="Buy Me a Coffee" src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00.svg" /></a>
   <a href="#ai-assisted-development"><img alt="AI Assisted" src="https://img.shields.io/badge/AI-assisted-2196F3.svg" /></a>
 </p>
