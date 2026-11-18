@@ -8,14 +8,11 @@ the whole traffic budget and live behind the backend seam (ADR-0002).
 
 from __future__ import annotations
 
-import csv
-import io
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 
 import aiohttp
 
 from .const import (
-    CSV_SEPARATOR,
     DAILY_PRECIPITATION,
     DAILY_SYMBOL,
     DAILY_TEMP_MAX,
@@ -44,6 +41,7 @@ from .geo import haversine_km
 from .hourly import FORECAST_TZ
 from .http import get_text
 from .models import DailyForecast, ForecastPoint, HourlyForecast, OgdParseError
+from .parse import csv_reader, parse_stamp, to_float, to_int
 
 # Header columns of ogd-local-forecasting_meta_point.csv (docs/ogd.md §E4).
 _POINT_ID = "point_id"
@@ -106,20 +104,6 @@ HOURLY_FIELD_BY_PARAM = _HOURLY_FIELDS
 _HOURLY_INT_FIELDS: frozenset[str] = frozenset({"symbol", "sunshine_duration"})
 
 
-def _reader(body: str) -> csv.DictReader:
-    return csv.DictReader(io.StringIO(body), delimiter=CSV_SEPARATOR)
-
-
-def _to_float(value: str | None) -> float | None:
-    """Parse a numeric cell; empty means "not forecast", not zero."""
-    if value is None or value.strip() == "":
-        return None
-    try:
-        return float(value)
-    except ValueError:
-        return None
-
-
 # Cloud-layer fields that may arrive as 0–1 fractions after the 2026-08-31
 # upstream unit change (issue #97).
 _CLOUD_FIELDS: frozenset[str] = frozenset({"cloud_high", "cloud_mid", "cloud_low"})
@@ -148,25 +132,19 @@ def _scale_cloud_fractions(
                     entry[field] = round(entry[field] * 100, 2)  # type: ignore[operator]
 
 
-def _to_int(value: str | None) -> int | None:
-    """Parse an integer cell (point/type ids, symbol codes)."""
-    number = _to_float(value)
-    return int(number) if number is not None else None
-
-
 async def fetch_points(session: aiohttp.ClientSession) -> list[ForecastPoint]:
     """Fetch and parse the local-forecast point metadata (download once)."""
     response = await get_text(session, META_POINT_URL, encoding=FORECAST_ENCODING)
-    reader = _reader(response.body)
+    reader = csv_reader(response.body)
     if reader.fieldnames is None or _POINT_ID not in reader.fieldnames:
         raise OgdParseError("forecast point metadata is missing its header")
 
     points: list[ForecastPoint] = []
     for row in reader:
-        point_id = _to_int(row.get(_POINT_ID))
-        point_type_id = _to_int(row.get(_POINT_TYPE_ID))
-        lat = _to_float(row.get(_LAT))
-        lon = _to_float(row.get(_LON))
+        point_id = to_int(row.get(_POINT_ID))
+        point_type_id = to_int(row.get(_POINT_TYPE_ID))
+        lat = to_float(row.get(_LAT))
+        lon = to_float(row.get(_LON))
         # A point without an identity or coordinates cannot be used or ranked.
         if point_id is None or point_type_id is None or lat is None or lon is None:
             continue
@@ -178,7 +156,7 @@ async def fetch_points(session: aiohttp.ClientSession) -> list[ForecastPoint]:
                 name=(row.get(_POINT_NAME) or "").strip(),
                 lat=lat,
                 lon=lon,
-                height_masl=_to_float(row.get(_HEIGHT)),
+                height_masl=to_float(row.get(_HEIGHT)),
             )
         )
 
@@ -252,11 +230,11 @@ def parse_daily(
         field = _DAILY_FIELDS.get(param)
         if field is None:
             continue  # a parameter this forecast does not model
-        cast = _to_int if field == "symbol" else _to_float
-        for row in _reader(text):
-            if _to_int(row.get(_DATA_POINT_ID)) != point.point_id:
+        cast = to_int if field == "symbol" else to_float
+        for row in csv_reader(text):
+            if to_int(row.get(_DATA_POINT_ID)) != point.point_id:
                 continue
-            if _to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
+            if to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
                 continue
             day = _parse_date(row.get(_DATA_DATE))
             if day is None:
@@ -267,23 +245,6 @@ def parse_daily(
         DailyForecast(date=day, **values)
         for day, values in sorted(by_date.items())
     ]
-
-
-def _parse_datetime(value: str | None) -> datetime | None:
-    """Parse an hourly ``Date`` cell (``YYYYMMDDHHMM`` UTC) into an aware dt."""
-    if value is None:
-        return None
-    digits = value.strip()
-    if len(digits) < 12 or not digits[:12].isdigit():
-        return None
-    return datetime(
-        int(digits[:4]),
-        int(digits[4:6]),
-        int(digits[6:8]),
-        int(digits[8:10]),
-        int(digits[10:12]),
-        tzinfo=UTC,
-    )
 
 
 def parse_hourly(
@@ -316,13 +277,13 @@ def parse_hourly(
         field = _HOURLY_FIELDS.get(param)
         if field is None:
             continue  # a parameter this forecast does not model
-        cast = _to_int if field in _HOURLY_INT_FIELDS else _to_float
-        for row in _reader(text):
-            if _to_int(row.get(_DATA_POINT_ID)) != point.point_id:
+        cast = to_int if field in _HOURLY_INT_FIELDS else to_float
+        for row in csv_reader(text):
+            if to_int(row.get(_DATA_POINT_ID)) != point.point_id:
                 continue
-            if _to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
+            if to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
                 continue
-            when = _parse_datetime(row.get(_DATA_DATE))
+            when = parse_stamp(row.get(_DATA_DATE))
             if when is None:
                 continue
             if horizon_start is not None and when < horizon_start:
@@ -363,7 +324,7 @@ def aggregate_daily_wind(
     dir_by_hour: dict[datetime, float] = {}
 
     for param, text in text_by_param.items():
-        cast = _to_int if param == HOURLY_WIND_DIRECTION else _to_float
+        cast = to_int if param == HOURLY_WIND_DIRECTION else to_float
         target = (
             speed_by_hour if param == HOURLY_WIND_SPEED
             else gust_by_hour if param == HOURLY_GUST
@@ -372,12 +333,12 @@ def aggregate_daily_wind(
         )
         if target is None:
             continue
-        for row in _reader(text):
-            if _to_int(row.get(_DATA_POINT_ID)) != point.point_id:
+        for row in csv_reader(text):
+            if to_int(row.get(_DATA_POINT_ID)) != point.point_id:
                 continue
-            if _to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
+            if to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
                 continue
-            when = _parse_datetime(row.get(_DATA_DATE))
+            when = parse_stamp(row.get(_DATA_DATE))
             if when is None:
                 continue
             val = cast(row.get(param))
@@ -439,15 +400,15 @@ def aggregate_daily_precip_probability(
     tz = FORECAST_TZ
     max_by_day: dict[date, float] = {}
 
-    for row in _reader(text):
-        if _to_int(row.get(_DATA_POINT_ID)) != point.point_id:
+    for row in csv_reader(text):
+        if to_int(row.get(_DATA_POINT_ID)) != point.point_id:
             continue
-        if _to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
+        if to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
             continue
-        when = _parse_datetime(row.get(_DATA_DATE))
+        when = parse_stamp(row.get(_DATA_DATE))
         if when is None:
             continue
-        value = _to_float(row.get(HOURLY_PRECIP_PROBABILITY))
+        value = to_float(row.get(HOURLY_PRECIP_PROBABILITY))
         if value is None:
             continue
         local_day = when.astimezone(tz).date()
@@ -488,15 +449,15 @@ def aggregate_daily_sunshine(
     minutes_by_day: dict[date, int] = {}
     rows_by_day: dict[date, int] = {}
 
-    for row in _reader(text):
-        if _to_int(row.get(_DATA_POINT_ID)) != point.point_id:
+    for row in csv_reader(text):
+        if to_int(row.get(_DATA_POINT_ID)) != point.point_id:
             continue
-        if _to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
+        if to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
             continue
-        when = _parse_datetime(row.get(_DATA_DATE))
+        when = parse_stamp(row.get(_DATA_DATE))
         if when is None:
             continue
-        value = _to_int(row.get(HOURLY_SUNSHINE))
+        value = to_int(row.get(HOURLY_SUNSHINE))
         if value is None:
             continue
         local_day = when.astimezone(tz).date()
