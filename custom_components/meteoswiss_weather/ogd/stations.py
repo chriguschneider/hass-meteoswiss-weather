@@ -23,9 +23,9 @@ from .const import (
     precip_station_now_url,
     station_now_url,
 )
-from .geo import haversine_km
+from .geo import nearest
 from .http import CachedResponse, get_text
-from .models import Observation, OgdParseError, Station
+from .models import Observation, OgdParseError, PollenStation, Station
 from .parse import csv_reader, parse_timestamp, to_float
 
 # Header columns of ogd-smn_meta_datainventory.csv the client depends on.
@@ -82,15 +82,24 @@ _OBSERVATION_CODES: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-async def _fetch_stations_impl(
-    session: aiohttp.ClientSession, url: str, encoding: str
-) -> list[Station]:
+async def _fetch_stations_impl[S: Station | PollenStation](
+    session: aiohttp.ClientSession,
+    url: str,
+    encoding: str,
+    model: type[S] = Station,  # type: ignore[assignment]
+    label: str = "",
+) -> list[S]:
+    """Parse a station metadata CSV into ``model`` objects.
+
+    ``label`` prefixes the error messages (``"pollen "``) so logs name the
+    collection.
+    """
     response = await get_text(session, url, encoding=encoding)
     reader = csv_reader(response.body)
     if reader.fieldnames is None or _ABBR not in reader.fieldnames:
-        raise OgdParseError("station metadata is missing its header")
+        raise OgdParseError(f"{label}station metadata is missing its header")
 
-    stations: list[Station] = []
+    stations: list[S] = []
     for row in reader:
         abbr = (row.get(_ABBR) or "").strip()
         lat = to_float(row.get(_LAT))
@@ -98,7 +107,7 @@ async def _fetch_stations_impl(
         if not abbr or lat is None or lon is None:
             continue
         stations.append(
-            Station(
+            model(
                 abbr=abbr,
                 name=(row.get(_NAME) or "").strip(),
                 canton=(row.get(_CANTON) or "").strip(),
@@ -109,12 +118,14 @@ async def _fetch_stations_impl(
         )
 
     if not stations:
-        raise OgdParseError("station metadata contained no usable stations")
+        raise OgdParseError(
+            f"{label}station metadata contained no usable stations"
+        )
     return stations
 
 
 async def _fetch_datainventory_impl(
-    session: aiohttp.ClientSession, url: str, encoding: str
+    session: aiohttp.ClientSession, url: str, encoding: str, label: str = ""
 ) -> dict[str, frozenset[str]]:
     response = await get_text(session, url, encoding=encoding)
     reader = csv_reader(response.body)
@@ -123,7 +134,7 @@ async def _fetch_datainventory_impl(
         or _INV_ABBR not in reader.fieldnames
         or _INV_PARAM not in reader.fieldnames
     ):
-        raise OgdParseError("data inventory is missing its header")
+        raise OgdParseError(f"{label}data inventory is missing its header")
 
     inventory: dict[str, set[str]] = {}
     for row in reader:
@@ -210,8 +221,7 @@ def nearest_stations(
     stations: list[Station], lat: float, lon: float, *, limit: int = 3
 ) -> list[Station]:
     """The ``limit`` stations closest to ``lat``/``lon``, nearest first."""
-    ordered = sorted(stations, key=lambda s: haversine_km(lat, lon, s.lat, s.lon))
-    return ordered[:limit]
+    return nearest(stations, lat, lon, limit)
 
 
 async def fetch_current(

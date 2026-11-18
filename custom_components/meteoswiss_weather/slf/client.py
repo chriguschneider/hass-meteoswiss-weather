@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 
 import aiohttp
 
-from ..ogd.geo import haversine_km
+from ..ogd.geo import nearest
 from ..ogd.http import DEFAULT_TIMEOUT, CachedResponse, get_text
 from .const import DAILY_SNOW_URL, SNOW_FLAT, STATIONS_URL, measurements_url
 from .models import (
@@ -162,8 +162,7 @@ def nearest_snow_stations(
     When ``limit`` is given, only the closest ``limit`` stations are returned.
     """
     flat = [s for s in stations if s.type == SNOW_FLAT]
-    flat.sort(key=lambda s: haversine_km(lat, lon, s.lat, s.lon))
-    return flat if limit is None else flat[:limit]
+    return nearest(flat, lat, lon, limit)
 
 
 async def fetch_imis_latest(
