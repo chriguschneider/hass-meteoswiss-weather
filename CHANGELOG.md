@@ -9,6 +9,12 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Fixed
+
+- A slow MeteoSwiss or SLF server (request timeout) is now handled like any
+  other connection problem: the entry retries instead of failing to load, and
+  the setup dialog says it cannot connect.
+
 ## [v0.10.1] — 2026-10-26
 
 ### Documentation

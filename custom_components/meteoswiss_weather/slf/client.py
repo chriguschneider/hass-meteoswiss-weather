@@ -64,6 +64,9 @@ async def _fetch_imis_text(
             etag = resp.headers.get("ETag")
     except (ImisNoDataError, SlfConnectionError):
         raise
+    except TimeoutError as err:
+        # aiohttp raises a bare TimeoutError, which is not a ClientError.
+        raise SlfConnectionError(f"GET {url} timed out") from err
     except aiohttp.ClientError as err:
         raise SlfConnectionError(f"GET {url} failed: {err}") from err
     if cache is not None:
