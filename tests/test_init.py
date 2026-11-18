@@ -29,7 +29,7 @@ from custom_components.meteoswiss_weather.const import (
     DOMAIN,
     HOURLY_FAR_MAX_AGE,
 )
-from custom_components.meteoswiss_weather.ogd import OgdError
+from custom_components.meteoswiss_weather.ogd import OgdConnectionError, OgdError
 from custom_components.meteoswiss_weather.ogd.const import (
     DAILY_BLOCK_PARAMS,
     DAILY_REQUIRED_PARAMS,
@@ -644,6 +644,24 @@ async def test_point_height_fetch_failure_does_not_fail_setup(
     assert CONF_POINT_HEIGHT not in config_entry.data
     assert config_entry.runtime_data.point.height_masl is None
     assert not [r for r in caplog.records if r.levelname == "ERROR"]
+
+
+async def test_datainventory_timeout_does_not_fail_setup(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd: AiohttpClientMocker,
+) -> None:
+    """A timed-out data-inventory fetch falls back to all sensors (#243)."""
+    config_entry.add_to_hass(hass)
+
+    with patch(
+        "custom_components.meteoswiss_weather.fetch_datainventory",
+        AsyncMock(side_effect=OgdConnectionError("GET x timed out")),
+    ):
+        assert await hass.config_entries.async_setup(config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    assert config_entry.state is ConfigEntryState.LOADED
 
 
 async def test_stored_none_height_is_not_looked_up_again(

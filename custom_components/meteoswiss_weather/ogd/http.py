@@ -85,6 +85,9 @@ async def get_text(
             body = raw.decode(encoding, errors="replace")
             etag = response.headers.get("ETag")
             last_modified = response.headers.get("Last-Modified")
+    except TimeoutError as err:
+        # aiohttp raises a bare TimeoutError, which is not a ClientError.
+        raise OgdConnectionError(f"GET {url} timed out") from err
     except aiohttp.ClientError as err:
         raise OgdConnectionError(f"GET {url} failed: {err}") from err
 
@@ -168,6 +171,8 @@ async def get_bytes(
             else:
                 length = response.headers.get("Content-Length")
                 total = int(length) if length and length.isdigit() else len(body)
+    except TimeoutError as err:
+        raise OgdConnectionError(f"GET {url} timed out") from err
     except aiohttp.ClientError as err:
         raise OgdConnectionError(f"GET {url} failed: {err}") from err
 

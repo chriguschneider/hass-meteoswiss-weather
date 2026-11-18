@@ -44,6 +44,7 @@ from custom_components.meteoswiss_weather.const import (
 )
 from custom_components.meteoswiss_weather.ogd import (
     ForecastPoint,
+    OgdConnectionError,
     OgdError,
     PollenStation,
     Station,
@@ -320,6 +321,26 @@ async def test_cannot_connect_on_metadata_failure(
 
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "user"
+    assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def test_cannot_connect_on_metadata_timeout(hass: HomeAssistant) -> None:
+    """A timed-out metadata fetch (OgdConnectionError) shows cannot_connect (#243)."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    with (
+        patch(f"{_FLOW}.async_get_clientsession", return_value=object()),
+        patch(
+            f"{_FLOW}.fetch_points",
+            AsyncMock(side_effect=OgdConnectionError("GET x timed out")),
+        ),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
+        )
+
+    assert result["type"] == FlowResultType.FORM
     assert result["errors"] == {"base": "cannot_connect"}
 
 
