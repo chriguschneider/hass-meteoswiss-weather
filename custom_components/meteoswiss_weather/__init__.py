@@ -59,7 +59,7 @@ from .coordinator import (
     PrecipStationCoordinator,
     StationCoordinator,
 )
-from .history import async_backfill
+from .history import async_import_history
 from .ogd import (
     BulkCsvBackend,
     ForecastBackend,
@@ -418,39 +418,16 @@ def _async_register_services(hass: HomeAssistant) -> None:
 
         station_abbr = str(entry.data[CONF_STATION_ABBR])
         try:
-            result = await async_backfill(hass, entry, station_abbr, start, end)
+            await async_import_history(hass, entry, station_abbr, start, end)
         except (OgdError, HomeAssistantError) as err:
-            _async_notify(
-                hass,
-                f"Import for {entry.title} failed: {err}",
-            )
+            # The shared layer already posted the failure notification.
             raise HomeAssistantError(str(err)) from err
-
-        _async_notify(
-            hass,
-            f"Imported {result.rows} hourly history rows for {entry.title} "
-            f"({station_abbr}) across {result.series} statistics, "
-            f"{start.date().isoformat()} to {end.date().isoformat()}.",
-        )
 
     hass.services.async_register(
         DOMAIN,
         SERVICE_IMPORT_HISTORY,
         _async_import_history,
         schema=_IMPORT_HISTORY_SCHEMA,
-    )
-
-
-@callback
-def _async_notify(hass: HomeAssistant, message: str) -> None:
-    """Post the import outcome as a persistent notification."""
-    from homeassistant.components import persistent_notification
-
-    persistent_notification.async_create(
-        hass,
-        message,
-        title="MeteoSwiss Weather history import",
-        notification_id=f"{DOMAIN}_import_history",
     )
 
 

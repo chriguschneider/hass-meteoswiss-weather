@@ -5,8 +5,9 @@ The pure upstream parsing lives in ``ogd/history.py`` (ADR-0001); this module is
 the thin integration layer that touches Home Assistant's recorder. It implements
 the **discard** choice of the reconfigure flow (purge the station sensors'
 recorded states and clear their long-term statistics), the logbook note for the
-**keep** choice, and — via :func:`async_backfill` — the **backfill** path shared
-by the ``import_history`` service and the reconfigure flow's backfill choice.
+**keep** choice, and the **backfill** path: :func:`async_import_history`
+(fetch, import, notify) is the one function the ``import_history`` service and
+the reconfigure flow's backfill choice both call (ADR-0007).
 
 ``async_backfill`` maps the parsed hourly history rows onto Home Assistant's
 long-term statistics under the integration's own sensor statistic ids
@@ -22,9 +23,10 @@ guaranteed to be loaded, so the integration never hard-depends on it.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
@@ -41,7 +43,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import CONF_POINT_ID, CONF_POINT_TYPE_ID, DOMAIN
-from .ogd import HourlyHistoryRow, fetch_station_history
+from .ogd import HourlyHistoryRow, OgdError, fetch_station_history
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -233,6 +235,7 @@ async def async_backfill(
     station_abbr: str,
     start: datetime,
     end: datetime,
+    stat_ids: dict[str, str] | None = None,
 ) -> BackfillResult:
     """Import ``station_abbr``'s official hourly history into long-term statistics.
 
@@ -244,8 +247,11 @@ async def async_backfill(
     recorder is not loaded; propagates :class:`~ogd.OgdError` on a fetch/parse
     failure (its message names the file).
 
-    Shared by the ``import_history`` service and the reconfigure flow's backfill
-    choice (#52).
+    ``stat_ids`` (``sensor_key -> statistic id``) defaults to the entry's
+    registered station sensors; the reconfigure flow passes the ids it resolved
+    before updating the entry, so the reload racing the import cannot change
+    which statistics are rewritten. Callers go through
+    :func:`async_import_history`, which adds the user notification.
     """
     if _RECORDER_DOMAIN not in hass.config.components:
         raise HomeAssistantError(
@@ -258,7 +264,8 @@ async def async_backfill(
     session = async_get_clientsession(hass)
     rows = _dedupe_rows(await fetch_station_history(session, station_abbr, start, end))
 
-    stat_ids = _station_stat_ids(hass, entry)
+    if stat_ids is None:
+        stat_ids = _station_stat_ids(hass, entry)
     series = 0
     for spec in _STAT_MAPS:
         statistic_id = stat_ids.get(spec.sensor_key)
@@ -287,6 +294,144 @@ async def async_backfill(
         end.isoformat(),
     )
     return BackfillResult(rows=len(rows), series=series, start=start, end=end)
+
+
+@callback
+def _async_notify(hass: HomeAssistant, message: str) -> None:
+    """Post the import outcome as a persistent notification."""
+    from homeassistant.components import persistent_notification
+
+    persistent_notification.async_create(
+        hass,
+        message,
+        title="MeteoSwiss Weather history import",
+        notification_id=f"{DOMAIN}_import_history",
+    )
+
+
+async def async_import_history(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    station_abbr: str,
+    start: datetime,
+    end: datetime,
+    stat_ids: dict[str, str] | None = None,
+) -> BackfillResult:
+    """Run :func:`async_backfill` and report the outcome as a notification.
+
+    The one entry point for the ``import_history`` service and the reconfigure
+    flow's backfill choice (ADR-0007). On success the notification names rows,
+    series and the date range; on an :class:`~ogd.OgdError` or
+    :class:`HomeAssistantError` it carries the error text, and the error is
+    re-raised for the caller to handle.
+    """
+    try:
+        result = await async_backfill(
+            hass, entry, station_abbr, start, end, stat_ids=stat_ids
+        )
+    except (OgdError, HomeAssistantError) as err:
+        _async_notify(hass, f"Import for {entry.title} failed: {err}")
+        raise
+
+    _async_notify(
+        hass,
+        f"Imported {result.rows} hourly history rows for {entry.title} "
+        f"({station_abbr}) across {result.series} statistics, "
+        f"{start.date().isoformat()} to {end.date().isoformat()}.",
+    )
+    return result
+
+
+async def async_backfill_station_change(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    station_abbr: str,
+    start: datetime,
+    end: datetime,
+    stat_ids: dict[str, str],
+) -> None:
+    """Background body of the reconfigure flow's backfill choice.
+
+    The reconfigure has already succeeded when this runs, so a failed import
+    only reaches the user through the notification and the log; it is never
+    re-raised into the task.
+    """
+    try:
+        await async_import_history(hass, entry, station_abbr, start, end, stat_ids)
+    except (OgdError, HomeAssistantError) as err:
+        _LOGGER.warning(
+            "History backfill for %s (%s) failed: %s", entry.title, station_abbr, err
+        )
+
+
+async def async_backfill_plan(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> tuple[dict[str, str], datetime] | None:
+    """Statistic ids and start of a station-change backfill, or ``None``.
+
+    The range starts at the earliest long-term statistic recorded for the
+    sensors the backfill writes (:data:`_STAT_MAPS`); with no statistic yet
+    there is nothing to rewrite and the caller treats the choice as keep.
+    Resolve this before the entry is updated: the ids are the ones the recorded
+    statistics live under.
+    """
+    written = {spec.sensor_key for spec in _STAT_MAPS}
+    stat_ids = {
+        key: stat_id
+        for key, stat_id in _station_stat_ids(hass, entry).items()
+        if key in written
+    }
+    start = await async_earliest_statistic(hass, stat_ids.values())
+    if start is None:
+        return None
+    return stat_ids, start
+
+
+# Lower bound for the earliest-statistic lookup: before any recorder database.
+_STATS_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+async def async_earliest_statistic(
+    hass: HomeAssistant, statistic_ids: Iterable[str]
+) -> datetime | None:
+    """Start of the earliest hourly long-term statistic among ``statistic_ids``.
+
+    ``None`` when the recorder is not loaded or none of the ids has a statistic.
+    A monthly query finds the first month cheaply (one row per month and id,
+    not one per recorded hour); an hourly query over that month pins the hour.
+    """
+    ids = set(statistic_ids)
+    if not ids or _RECORDER_DOMAIN not in hass.config.components:
+        return None
+
+    from homeassistant.components.recorder import get_instance
+    from homeassistant.components.recorder.statistics import (
+        statistics_during_period,
+    )
+
+    def _first_start(
+        start: datetime, end: datetime | None, period: Literal["hour", "month"]
+    ) -> float | None:
+        rows = statistics_during_period(
+            hass, start, end, ids, period, None, {"mean", "sum"}
+        )
+        starts = [row["start"] for series in rows.values() for row in series]
+        return min(starts) if starts else None
+
+    def _query() -> datetime | None:
+        first_month = _first_start(_STATS_EPOCH, None, "month")
+        if first_month is None:
+            return None
+        month_start = datetime.fromtimestamp(first_month, UTC)
+        # 32 days covers any calendar month, whatever its time-zone alignment.
+        first_hour = _first_start(
+            month_start, month_start + timedelta(days=32), "hour"
+        )
+        return datetime.fromtimestamp(
+            first_hour if first_hour is not None else first_month, UTC
+        )
+
+    return await get_instance(hass).async_add_executor_job(_query)
 
 
 @callback

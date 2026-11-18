@@ -27,9 +27,9 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
     SelectSelectorMode,
 )
+from homeassistant.util import dt as dt_util
 
 from .const import (
-    BACKFILL_AVAILABLE,
     CONF_ENTRY_TYPE,
     CONF_HISTORY_ACTION,
     CONF_HOURLY_CLOUD_LAYERS,
@@ -60,7 +60,12 @@ from .const import (
     HOURLY_HORIZON_FULL_RUN,
 )
 from .demand import TrafficEstimate, estimate_traffic
-from .history import async_discard_station_history, async_log_station_switch
+from .history import (
+    async_backfill_plan,
+    async_backfill_station_change,
+    async_discard_station_history,
+    async_log_station_switch,
+)
 from .ogd import (
     POINT_TYPE_MOUNTAIN,
     ForecastPoint,
@@ -688,8 +693,10 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """History choice on a station change: keep, discard or backfill (A9).
 
-        The backfill choice is only offered once the recorder-import layer lands
-        (``BACKFILL_AVAILABLE``); until then keep/discard ship.
+        Backfill updates the entry, then rewrites the station sensors' long-term
+        statistics from the new station's official history (ADR-0007) in a
+        background task, from the earliest recorded statistic until now. With no
+        statistic recorded yet there is nothing to rewrite: it behaves like keep.
         """
         assert self._new_station is not None
         assert self._pending_data is not None
@@ -697,6 +704,13 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             choice = user_input[CONF_HISTORY_ACTION]
+            plan = None
+            if choice == HISTORY_BACKFILL:
+                # Resolved before the update: the recorded statistics live under
+                # the ids of the entities as they are now.
+                plan = await async_backfill_plan(self.hass, entry)
+                if plan is None:
+                    choice = HISTORY_KEEP
             if choice == HISTORY_DISCARD:
                 await async_discard_station_history(self.hass, entry)
             elif choice == HISTORY_KEEP:
@@ -706,18 +720,30 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
                     self._old_station_name,
                     self._new_station.name,
                 )
-            # HISTORY_BACKFILL is unreachable while BACKFILL_AVAILABLE is False;
-            # its recorder-import path is wired with issue #51's follow-up.
             self.hass.config_entries.async_update_entry(
                 entry,
                 unique_id=self._pending_unique_id,
                 data=self._pending_data,
             )
+            if plan is not None:
+                stat_ids, start = plan
+                # A Home Assistant task, not the entry's: the update above
+                # reloads the entry, and unloading cancels the entry's
+                # background tasks. The flow does not wait for the download.
+                self.hass.async_create_background_task(
+                    async_backfill_station_change(
+                        self.hass,
+                        entry,
+                        self._new_station.abbr,
+                        start,
+                        dt_util.utcnow(),
+                        stat_ids,
+                    ),
+                    name=f"{DOMAIN} history backfill {entry.entry_id}",
+                )
             return self.async_abort(reason="reconfigure_successful")
 
-        actions = [HISTORY_KEEP, HISTORY_DISCARD]
-        if BACKFILL_AVAILABLE:
-            actions.append(HISTORY_BACKFILL)
+        actions = [HISTORY_KEEP, HISTORY_DISCARD, HISTORY_BACKFILL]
         return self.async_show_form(
             step_id="history",
             data_schema=vol.Schema(
