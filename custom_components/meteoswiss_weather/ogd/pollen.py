@@ -20,25 +20,15 @@ from .const import (
     POLLEN_ENCODING,
     pollen_now_url,
 )
-from .geo import haversine_km
+from .geo import nearest
 from .http import CachedResponse, get_text
 from .models import OgdParseError, PollenObservation, PollenStation
 from .parse import csv_reader, parse_timestamp, to_float
+from .stations import _fetch_datainventory_impl, _fetch_stations_impl
 
-# Header columns of ogd-pollen_meta_stations.csv the client depends on.
-# The pollen meta CSV follows the same shape as the SwissMetNet A1 meta CSV
-# (docs/ogd.md §Pollen).
+# Station metadata and data inventory share the SwissMetNet A1 shape
+# (docs/ogd.md §Pollen) and are parsed by ``stations``.
 _ABBR = "station_abbr"
-_NAME = "station_name"
-_CANTON = "station_canton"
-_HEIGHT = "station_height_masl"
-_LAT = "station_coordinates_wgs84_lat"
-_LON = "station_coordinates_wgs84_lon"
-
-# Header columns of ogd-pollen_meta_datainventory.csv (same shape as A1 inv).
-_INV_ABBR = "station_abbr"
-_INV_PARAM = "parameter_shortname"
-_INV_TILL = "data_till"
 
 # Header columns of ogd-pollen_meta_parameters.csv.
 _PARAM_CODE = "parameter_shortname"
@@ -53,34 +43,13 @@ async def fetch_pollen_stations(
     session: aiohttp.ClientSession,
 ) -> list[PollenStation]:
     """Fetch and parse the pollen station metadata list."""
-    response = await get_text(
-        session, META_POLLEN_STATIONS_URL, encoding=POLLEN_ENCODING
+    return await _fetch_stations_impl(
+        session,
+        META_POLLEN_STATIONS_URL,
+        POLLEN_ENCODING,
+        PollenStation,
+        "pollen ",
     )
-    reader = csv_reader(response.body)
-    if reader.fieldnames is None or _ABBR not in reader.fieldnames:
-        raise OgdParseError("pollen station metadata is missing its header")
-
-    stations: list[PollenStation] = []
-    for row in reader:
-        abbr = (row.get(_ABBR) or "").strip()
-        lat = to_float(row.get(_LAT))
-        lon = to_float(row.get(_LON))
-        if not abbr or lat is None or lon is None:
-            continue
-        stations.append(
-            PollenStation(
-                abbr=abbr,
-                name=(row.get(_NAME) or "").strip(),
-                canton=(row.get(_CANTON) or "").strip(),
-                lat=lat,
-                lon=lon,
-                height_masl=to_float(row.get(_HEIGHT)),
-            )
-        )
-
-    if not stations:
-        raise OgdParseError("pollen station metadata contained no usable stations")
-    return stations
 
 
 async def fetch_pollen_parameters(
@@ -123,26 +92,9 @@ async def fetch_pollen_datainventory(
     not in the returned dict; callers should treat that as "unknown". Only
     parameters without a ``data_till`` value (i.e. still active) are included.
     """
-    response = await get_text(
-        session, META_POLLEN_DATAINVENTORY_URL, encoding=POLLEN_ENCODING
+    return await _fetch_datainventory_impl(
+        session, META_POLLEN_DATAINVENTORY_URL, POLLEN_ENCODING, "pollen "
     )
-    reader = csv_reader(response.body)
-    if (
-        reader.fieldnames is None
-        or _INV_ABBR not in reader.fieldnames
-        or _INV_PARAM not in reader.fieldnames
-    ):
-        raise OgdParseError("pollen data inventory is missing its header")
-
-    inventory: dict[str, set[str]] = {}
-    for row in reader:
-        abbr = (row.get(_INV_ABBR) or "").strip().upper()
-        param = (row.get(_INV_PARAM) or "").strip()
-        ended = (row.get(_INV_TILL) or "").strip()
-        if abbr and param and not ended:
-            inventory.setdefault(abbr, set()).add(param)
-
-    return {abbr: frozenset(params) for abbr, params in inventory.items()}
 
 
 def nearest_pollen_station(
@@ -151,7 +103,7 @@ def nearest_pollen_station(
     lon: float,
 ) -> PollenStation:
     """The pollen station closest to ``lat``/``lon``."""
-    return min(stations, key=lambda s: haversine_km(lat, lon, s.lat, s.lon))
+    return nearest(stations, lat, lon, 1)[0]
 
 
 def nearest_pollen_stations(
@@ -161,7 +113,7 @@ def nearest_pollen_stations(
     limit: int = 3,
 ) -> list[PollenStation]:
     """The ``limit`` pollen stations closest to ``lat``/``lon``, nearest first."""
-    return sorted(stations, key=lambda s: haversine_km(lat, lon, s.lat, s.lon))[:limit]
+    return nearest(stations, lat, lon, limit)
 
 
 async def fetch_pollen_current(

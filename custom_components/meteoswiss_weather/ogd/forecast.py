@@ -37,7 +37,7 @@ from .const import (
     POINT_TYPE_MOUNTAIN,
     POINT_TYPE_POSTAL_CODE,
 )
-from .geo import haversine_km
+from .geo import nearest
 from .hourly import FORECAST_TZ
 from .http import get_text
 from .models import DailyForecast, ForecastPoint, HourlyForecast, OgdParseError
@@ -201,7 +201,7 @@ def nearest_point(
     candidates = [p for p in points if p.point_type_id == point_type]
     if not candidates:
         raise OgdParseError(f"no forecast point of type {point_type} to choose from")
-    return min(candidates, key=lambda p: haversine_km(lat, lon, p.lat, p.lon))
+    return nearest(candidates, lat, lon, 1)[0]
 
 
 def _parse_date(value: str | None) -> date | None:
