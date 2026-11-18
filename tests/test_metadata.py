@@ -104,6 +104,21 @@ def test_hacs_json_is_valid() -> None:
     assert hacs.get("country") == "CH"
 
 
+def test_readme_reflects_hacs_default_store() -> None:
+    """The integration is in the HACS default store, so the README says so.
+
+    A README that still tells users to add a custom repository sends them
+    down a route that is no longer the normal one.
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8").lower()
+    assert "hacs-default" in readme, "README badge must read HACS-Default"
+    assert "hacs-custom" not in readme, "README still has the HACS-Custom badge"
+    assert "search hacs" in readme, "README must tell users to search HACS"
+    assert "custom repository" not in readme, (
+        "README still describes the custom-repository install route"
+    )
+
+
 def test_zip_release_asset_is_wired_end_to_end() -> None:
     """The zip must be requested, named, and actually built (radar ADR-0008).
 
