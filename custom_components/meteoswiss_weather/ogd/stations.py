@@ -12,14 +12,9 @@ collection-specific arguments.
 
 from __future__ import annotations
 
-import csv
-import io
-from datetime import UTC, datetime
-
 import aiohttp
 
 from .const import (
-    CSV_SEPARATOR,
     META_DATAINVENTORY_URL,
     META_PRECIP_DATAINVENTORY_URL,
     META_PRECIP_STATIONS_URL,
@@ -31,6 +26,7 @@ from .const import (
 from .geo import haversine_km
 from .http import CachedResponse, get_text
 from .models import Observation, OgdParseError, Station
+from .parse import csv_reader, parse_timestamp, to_float
 
 # Header columns of ogd-smn_meta_datainventory.csv the client depends on.
 # The upstream file names the parameter column ``parameter_shortname`` and marks
@@ -81,20 +77,6 @@ _OBSERVATION_CODES: dict[str, str] = {
 }
 
 
-def _reader(body: str) -> csv.DictReader:
-    return csv.DictReader(io.StringIO(body), delimiter=CSV_SEPARATOR)
-
-
-def _to_float(value: str | None) -> float | None:
-    """Parse a numeric cell; empty means "not measured", not zero."""
-    if value is None or value.strip() == "":
-        return None
-    try:
-        return float(value)
-    except ValueError:
-        return None
-
-
 # ---------------------------------------------------------------------------
 # Private helpers — shared parser logic parameterised by collection.
 # ---------------------------------------------------------------------------
@@ -104,15 +86,15 @@ async def _fetch_stations_impl(
     session: aiohttp.ClientSession, url: str, encoding: str
 ) -> list[Station]:
     response = await get_text(session, url, encoding=encoding)
-    reader = _reader(response.body)
+    reader = csv_reader(response.body)
     if reader.fieldnames is None or _ABBR not in reader.fieldnames:
         raise OgdParseError("station metadata is missing its header")
 
     stations: list[Station] = []
     for row in reader:
         abbr = (row.get(_ABBR) or "").strip()
-        lat = _to_float(row.get(_LAT))
-        lon = _to_float(row.get(_LON))
+        lat = to_float(row.get(_LAT))
+        lon = to_float(row.get(_LON))
         if not abbr or lat is None or lon is None:
             continue
         stations.append(
@@ -122,7 +104,7 @@ async def _fetch_stations_impl(
                 canton=(row.get(_CANTON) or "").strip(),
                 lat=lat,
                 lon=lon,
-                height_masl=_to_float(row.get(_HEIGHT)),
+                height_masl=to_float(row.get(_HEIGHT)),
             )
         )
 
@@ -135,7 +117,7 @@ async def _fetch_datainventory_impl(
     session: aiohttp.ClientSession, url: str, encoding: str
 ) -> dict[str, frozenset[str]]:
     response = await get_text(session, url, encoding=encoding)
-    reader = _reader(response.body)
+    reader = csv_reader(response.body)
     if (
         reader.fieldnames is None
         or _INV_ABBR not in reader.fieldnames
@@ -174,7 +156,7 @@ async def _fetch_current_impl(
     ``None`` in the returned :class:`~.models.Observation`.
     """
     response = await get_text(session, url, cache=cache, encoding=encoding)
-    reader = _reader(response.body)
+    reader = csv_reader(response.body)
     if reader.fieldnames is None or validity_field not in reader.fieldnames:
         raise OgdParseError(f"{abbr}: current-values file is missing its header")
 
@@ -187,9 +169,9 @@ async def _fetch_current_impl(
             f"{abbr}: no row carried a non-empty {validity_field!r} value"
         )
 
-    timestamp = _parse_timestamp(latest.get(_TIMESTAMP), abbr)
+    timestamp = parse_timestamp(latest.get(_TIMESTAMP), abbr)
     values = {
-        field: _to_float(latest.get(code))
+        field: to_float(latest.get(code))
         for field, code in _OBSERVATION_CODES.items()
     }
     return Observation(
@@ -301,14 +283,3 @@ async def fetch_precip_current(
         STATION_ENCODING,
         cache=cache,
     )
-
-
-def _parse_timestamp(value: str | None, abbr: str) -> datetime:
-    """Parse ``dd.mm.yyyy HH:MM`` (UTC) into an aware datetime."""
-    if not value or value.strip() == "":
-        raise OgdParseError(f"{abbr}: observation row has no timestamp")
-    try:
-        naive = datetime.strptime(value.strip(), "%d.%m.%Y %H:%M")
-    except ValueError as err:
-        raise OgdParseError(f"{abbr}: bad timestamp {value!r}") from err
-    return naive.replace(tzinfo=UTC)

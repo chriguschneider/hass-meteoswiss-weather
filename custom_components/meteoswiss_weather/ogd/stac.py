@@ -48,7 +48,7 @@ class Run:
         return self.assets[param]
 
 
-def _parse_timestamp(ts: str) -> datetime:
+def _parse_iso_timestamp(ts: str) -> datetime:
     """Parse a ``YYYYMMDDHHMM`` run stamp (UTC) into an aware datetime."""
     return datetime.strptime(ts, "%Y%m%d%H%M").replace(tzinfo=UTC)
 
@@ -73,7 +73,7 @@ def _best_complete_run(
     if not complete:
         return None
     newest = max(complete)
-    return Run(timestamp=_parse_timestamp(newest), assets=complete[newest])
+    return Run(timestamp=_parse_iso_timestamp(newest), assets=complete[newest])
 
 
 async def latest_run(

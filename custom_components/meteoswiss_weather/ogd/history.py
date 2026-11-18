@@ -16,8 +16,6 @@ because this is a one-off, user-triggered operation (ADR-0007).
 from __future__ import annotations
 
 import asyncio
-import csv
-import io
 import json
 import re
 from datetime import UTC, datetime
@@ -25,12 +23,12 @@ from datetime import UTC, datetime
 import aiohttp
 
 from .const import (
-    CSV_SEPARATOR,
     STATION_ENCODING,
     station_stac_item_url,
 )
 from .http import get_text
 from .models import HourlyHistoryRow, OgdParseError
+from .parse import TIMESTAMP_FORMAT, csv_reader, to_float
 
 # Matches ``_h_recent.csv`` at the end of an asset key or href.
 _RECENT_RE = re.compile(r"_h_recent\.csv$")
@@ -38,7 +36,6 @@ _RECENT_RE = re.compile(r"_h_recent\.csv$")
 _HISTORICAL_RE = re.compile(r"_h_historical_(\d{4})-(\d{4})\.csv$")
 
 _TS_COL = "reference_timestamp"
-_TS_FORMAT = "%d.%m.%Y %H:%M"
 
 # Hourly history parameter codes (docs/ogd.md §A1, "History files").
 _HISTORY_CODES: dict[str, str] = {
@@ -115,15 +112,6 @@ def select_history_files(
     return [href for _, href in selected]
 
 
-def _to_float(value: str | None) -> float | None:
-    if value is None or value.strip() == "":
-        return None
-    try:
-        return float(value)
-    except ValueError:
-        return None
-
-
 def _parse_body(body: str, start: datetime, end: datetime) -> list[HourlyHistoryRow]:
     """Parse a history CSV body; return rows within ``[start, end]``.
 
@@ -131,7 +119,7 @@ def _parse_body(body: str, start: datetime, end: datetime) -> list[HourlyHistory
     never materialised — only the matching subset is. Intended to run inside
     ``loop.run_in_executor`` to avoid blocking the event loop.
     """
-    reader = csv.DictReader(io.StringIO(body), delimiter=CSV_SEPARATOR)
+    reader = csv_reader(body)
     if reader.fieldnames is None or _TS_COL not in reader.fieldnames:
         raise OgdParseError("history file is missing its header or timestamp column")
 
@@ -141,13 +129,13 @@ def _parse_body(body: str, start: datetime, end: datetime) -> list[HourlyHistory
         if not ts_str:
             continue
         try:
-            ts = datetime.strptime(ts_str, _TS_FORMAT).replace(tzinfo=UTC)
+            ts = datetime.strptime(ts_str, TIMESTAMP_FORMAT).replace(tzinfo=UTC)
         except ValueError:
             continue
         if ts < start or ts > end:
             continue
         values = {
-            field: _to_float(row.get(code)) for field, code in _HISTORY_CODES.items()
+            field: to_float(row.get(code)) for field, code in _HISTORY_CODES.items()
         }
         rows.append(HourlyHistoryRow(ts_utc=ts, **values))
     return rows
