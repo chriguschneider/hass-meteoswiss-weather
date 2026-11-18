@@ -2,13 +2,16 @@
 
 The pure upstream parser lives in ``ogd/history.py`` (tested in
 ``test_ogd_history.py``); this module covers the thin Home Assistant layer:
-the discard path (purge states + clear statistics) and the keep logbook note.
-The recorder is mocked — the tests never touch a real database.
+the discard path (purge states + clear statistics), the keep logbook note and
+the reconfigure flow's backfill (range from the earliest recorded statistic,
+background import with its notification). The recorder and the history fetch
+are mocked — the tests never touch a real database or the network.
 """
 
 from __future__ import annotations
 
-from unittest.mock import Mock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, Mock, patch
 
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import entity_registry as er
@@ -24,9 +27,12 @@ from custom_components.meteoswiss_weather.const import (
     DOMAIN,
 )
 from custom_components.meteoswiss_weather.history import (
+    async_backfill_plan,
+    async_backfill_station_change,
     async_discard_station_history,
     async_log_station_switch,
 )
+from custom_components.meteoswiss_weather.ogd import OgdConnectionError
 
 _DEVICE_UID = "2-800100"
 
@@ -157,3 +163,198 @@ async def test_log_station_switch_without_logbook(hass: HomeAssistant) -> None:
         async_log_station_switch(hass, entry, "A", "B")
 
     log_entry.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Backfill on a station change (#245)
+# ---------------------------------------------------------------------------
+
+
+def _ts(*args: int) -> float:
+    return datetime(*args, tzinfo=UTC).timestamp()
+
+
+def _recorder_instance(hass: HomeAssistant) -> Mock:
+    """A recorder stand-in whose executor runs the job in HA's executor."""
+    instance = Mock()
+    instance.async_add_executor_job = hass.async_add_executor_job
+    return instance
+
+
+async def test_backfill_plan_starts_at_earliest_statistic(hass: HomeAssistant) -> None:
+    """The range starts at the earliest hourly statistic of the written sensors.
+
+    The monthly query locates the first month; the hourly query over that month
+    pins the hour. Only sensors the backfill writes are queried (not the
+    forecast-derived ``*_today`` ones).
+    """
+    entry = _entry()
+    entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    temp = registry.async_get_or_create(
+        "sensor", DOMAIN, f"{_DEVICE_UID}_temperature", config_entry=entry
+    )
+    rain = registry.async_get_or_create(
+        "sensor", DOMAIN, f"{_DEVICE_UID}_precipitation", config_entry=entry
+    )
+    registry.async_get_or_create(
+        "sensor", DOMAIN, f"{_DEVICE_UID}_temp_max_today", config_entry=entry
+    )
+    hass.config.components.add("recorder")
+
+    calls: list[tuple] = []
+
+    def _stats(_hass, start, end, ids, period, units, types):
+        calls.append((start, end, set(ids), period))
+        if period == "month":
+            return {
+                temp.entity_id: [{"start": _ts(2025, 3, 1)}],
+                rain.entity_id: [{"start": _ts(2025, 4, 1)}],
+            }
+        return {
+            temp.entity_id: [{"start": _ts(2025, 3, 4, 7)}],
+            rain.entity_id: [{"start": _ts(2025, 3, 4, 5)}],
+        }
+
+    with (
+        patch(
+            "homeassistant.components.recorder.get_instance",
+            return_value=_recorder_instance(hass),
+        ),
+        patch(
+            "homeassistant.components.recorder.statistics.statistics_during_period",
+            side_effect=_stats,
+        ),
+    ):
+        plan = await async_backfill_plan(hass, entry)
+
+    assert plan is not None
+    stat_ids, start = plan
+    assert stat_ids == {
+        "temperature": temp.entity_id,
+        "precipitation": rain.entity_id,
+    }
+    assert start == datetime(2025, 3, 4, 5, tzinfo=UTC)
+    assert [c[3] for c in calls] == ["month", "hour"]
+    assert calls[1][0] == datetime(2025, 3, 1, tzinfo=UTC)
+    assert all(c[2] == {temp.entity_id, rain.entity_id} for c in calls)
+
+
+async def test_backfill_plan_none_without_statistics(hass: HomeAssistant) -> None:
+    """No statistic recorded yet → no plan, so no fetch and no import."""
+    entry = _entry()
+    entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        "sensor", DOMAIN, f"{_DEVICE_UID}_temperature", config_entry=entry
+    )
+    hass.config.components.add("recorder")
+
+    with (
+        patch(
+            "homeassistant.components.recorder.get_instance",
+            return_value=_recorder_instance(hass),
+        ),
+        patch(
+            "homeassistant.components.recorder.statistics.statistics_during_period",
+            return_value={},
+        ),
+        patch(
+            "custom_components.meteoswiss_weather.history.fetch_station_history",
+            AsyncMock(),
+        ) as fetch,
+    ):
+        assert await async_backfill_plan(hass, entry) is None
+    fetch.assert_not_called()
+
+
+async def test_backfill_plan_none_without_recorder(hass: HomeAssistant) -> None:
+    """With the recorder unloaded there is nothing to look up."""
+    entry = _entry()
+    entry.add_to_hass(hass)
+    er.async_get(hass).async_get_or_create(
+        "sensor", DOMAIN, f"{_DEVICE_UID}_temperature", config_entry=entry
+    )
+    with patch("homeassistant.components.recorder.get_instance") as get_instance:
+        assert await async_backfill_plan(hass, entry) is None
+    get_instance.assert_not_called()
+
+
+async def test_backfill_station_change_notifies_success(hass: HomeAssistant) -> None:
+    """The background import reports rows, series and range like the service."""
+    entry = _entry()
+    entry.add_to_hass(hass)
+    temp = er.async_get(hass).async_get_or_create(
+        "sensor", DOMAIN, f"{_DEVICE_UID}_temperature", config_entry=entry
+    )
+    hass.config.components.add("recorder")
+    from custom_components.meteoswiss_weather.ogd import HourlyHistoryRow
+
+    rows = [HourlyHistoryRow(ts_utc=datetime(2025, 3, 4, 5, tzinfo=UTC), temp_mean=3.0)]
+    with (
+        patch(
+            "custom_components.meteoswiss_weather.history.async_get_clientsession",
+            return_value=object(),
+        ),
+        patch(
+            "custom_components.meteoswiss_weather.history.fetch_station_history",
+            AsyncMock(return_value=rows),
+        ) as fetch,
+        patch(
+            "homeassistant.components.recorder.statistics.async_import_statistics"
+        ) as import_stats,
+        patch(
+            "homeassistant.components.persistent_notification.async_create"
+        ) as notify,
+    ):
+        await async_backfill_station_change(
+            hass,
+            entry,
+            "KLO",
+            datetime(2025, 3, 4, 5, tzinfo=UTC),
+            datetime(2026, 11, 18, tzinfo=UTC),
+            {"temperature": temp.entity_id},
+        )
+
+    assert fetch.call_args.args[1] == "KLO"
+    import_stats.assert_called_once()
+    assert import_stats.call_args.args[1]["statistic_id"] == temp.entity_id
+    message = notify.call_args.args[1]
+    assert "Imported 1 hourly history rows" in message
+    assert "(KLO) across 1 statistics" in message
+    assert "2025-03-04 to 2026-11-18" in message
+
+
+async def test_backfill_station_change_error_notifies_and_does_not_raise(
+    hass: HomeAssistant,
+) -> None:
+    """An OgdError in the background import posts the failure, never raises."""
+    entry = _entry()
+    entry.add_to_hass(hass)
+    hass.config.components.add("recorder")
+
+    with (
+        patch(
+            "custom_components.meteoswiss_weather.history.async_get_clientsession",
+            return_value=object(),
+        ),
+        patch(
+            "custom_components.meteoswiss_weather.history.fetch_station_history",
+            AsyncMock(side_effect=OgdConnectionError("boom: some_file.csv")),
+        ),
+        patch(
+            "homeassistant.components.persistent_notification.async_create"
+        ) as notify,
+    ):
+        await async_backfill_station_change(
+            hass,
+            entry,
+            "KLO",
+            datetime(2025, 3, 4, tzinfo=UTC),
+            datetime(2026, 11, 18, tzinfo=UTC),
+            {"temperature": "sensor.zurich_temperature"},
+        )
+
+    notify.assert_called_once()
+    assert "failed" in notify.call_args.args[1]
+    assert "some_file.csv" in notify.call_args.args[1]
