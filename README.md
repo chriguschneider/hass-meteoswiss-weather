@@ -5,7 +5,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
-  <a href="https://hacs.xyz/"><img alt="HACS Custom" src="https://img.shields.io/badge/HACS-Custom-orange.svg" /></a>
+  <a href="https://hacs.xyz/"><img alt="HACS Default" src="https://img.shields.io/badge/HACS-Default-orange.svg" /></a>
   <a href="https://github.com/chriguschneider/hass-meteoswiss-weather/releases/latest"><img alt="Latest release" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fchriguschneider%2Fhass-meteoswiss-weather%2Fbadges%2Frelease.json" /></a>
   <a href="https://github.com/chriguschneider/hass-meteoswiss-weather/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/chriguschneider/hass-meteoswiss-weather/ci.yml?branch=master&label=CI" /></a>
   <a href="https://sonarcloud.io/summary/overall?id=chriguschneider_hass-meteoswiss-weather&branch=master"><img alt="Quality Gate Status" src="https://sonarcloud.io/api/project_badges/measure?project=chriguschneider_hass-meteoswiss-weather&metric=alert_status" /></a>
@@ -91,18 +91,16 @@ does ([why](#why-another-meteoswiss-integration)).
 
 ## Install
 
-The integration is installed through [HACS](https://hacs.xyz/) as a custom
-repository. The button does the first two steps for you:
+The integration is installed through [HACS](https://hacs.xyz/), the Home
+Assistant Community Store. The button opens it in HACS for you:
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chriguschneider&repository=hass-meteoswiss-weather&category=integration)
 
 Or by hand:
 
-1. In Home Assistant, open **HACS → ⋮ → Custom repositories**.
-2. Add `https://github.com/chriguschneider/hass-meteoswiss-weather` as an **Integration**.
-3. Search for **MeteoSwiss Weather** and download it.
-4. Restart Home Assistant.
-5. Go to **Settings → Devices & Services → Add integration** and search for
+1. In Home Assistant, search HACS for **MeteoSwiss Weather** and download it.
+2. Restart Home Assistant.
+3. Go to **Settings → Devices & Services → Add integration** and search for
    **MeteoSwiss Weather**.
 
 Setup first asks what kind of entry to add: a postal code, a mountain point, or
