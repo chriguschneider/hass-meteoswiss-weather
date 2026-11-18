@@ -92,7 +92,7 @@ does ([why](#why-another-meteoswiss-integration)).
 ## Install
 
 The integration is installed through [HACS](https://hacs.xyz/), the Home
-Assistant Community Store. The button does the first two steps for you:
+Assistant Community Store. The button opens it in HACS for you:
 
 [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chriguschneider&repository=hass-meteoswiss-weather&category=integration)
 
