@@ -1136,6 +1136,26 @@ def test_aggregate_daily_sunshine_empty_input() -> None:
     assert aggregate_daily_sunshine(text, _koeniz_point()) == {}
 
 
+def test_point_rows_skips_other_points_and_bad_dates() -> None:
+    """Only the configured point's rows with a parseable Date are yielded."""
+    from custom_components.meteoswiss_weather.ogd.forecast import _point_rows
+
+    text = (
+        f"point_id;point_type_id;Date;{HOURLY_SUNSHINE}\n"
+        "309800;2;202608271200;5\n"  # kept
+        "309800;1;202608271200;6\n"  # same id, other type
+        "999999;2;202608271200;7\n"  # other point
+        "309800;2;garbage;8\n"  # bad Date
+        "309800;2;;9\n"  # empty Date
+        "309800;2;202608271300;10\n"  # kept
+    )
+    rows = list(_point_rows(text, _koeniz_point()))
+    assert [(when, row[HOURLY_SUNSHINE]) for when, row in rows] == [
+        (datetime(2026, 8, 27, 12, 0, tzinfo=UTC), "5"),
+        (datetime(2026, 8, 27, 13, 0, tzinfo=UTC), "10"),
+    ]
+
+
 # --- backend daily wind (point-major fixture) ----------------------------------
 
 

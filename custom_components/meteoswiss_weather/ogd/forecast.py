@@ -8,6 +8,7 @@ the whole traffic budget and live behind the backend seam (ADR-0002).
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from datetime import date, datetime
 
 import aiohttp
@@ -247,6 +248,27 @@ def parse_daily(
     ]
 
 
+_Cast = Callable[[str | None], float | None]
+
+
+def _point_rows(
+    text: str, point: ForecastPoint
+) -> Iterator[tuple[datetime, dict[str, str | None]]]:
+    """Yield ``(when, row)`` for the configured point's rows with a valid ``Date``.
+
+    Other points' rows and rows whose ``Date`` does not parse are skipped.
+    """
+    for row in csv_reader(text):
+        if to_int(row.get(_DATA_POINT_ID)) != point.point_id:
+            continue
+        if to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
+            continue
+        when = parse_stamp(row.get(_DATA_DATE))
+        if when is None:
+            continue
+        yield when, row
+
+
 def parse_hourly(
     text_by_param: dict[str, str],
     point: ForecastPoint,
@@ -278,14 +300,7 @@ def parse_hourly(
         if field is None:
             continue  # a parameter this forecast does not model
         cast = to_int if field in _HOURLY_INT_FIELDS else to_float
-        for row in csv_reader(text):
-            if to_int(row.get(_DATA_POINT_ID)) != point.point_id:
-                continue
-            if to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
-                continue
-            when = parse_stamp(row.get(_DATA_DATE))
-            if when is None:
-                continue
+        for when, row in _point_rows(text, point):
             if horizon_start is not None and when < horizon_start:
                 continue
             if horizon_end is not None and when >= horizon_end:
@@ -323,27 +338,20 @@ def aggregate_daily_wind(
     gust_by_hour: dict[datetime, float] = {}
     dir_by_hour: dict[datetime, float] = {}
 
+    targets: dict[str, tuple[dict[datetime, float], _Cast]] = {
+        HOURLY_WIND_SPEED: (speed_by_hour, to_float),
+        HOURLY_GUST: (gust_by_hour, to_float),
+        HOURLY_WIND_DIRECTION: (dir_by_hour, to_int),
+    }
+
     for param, text in text_by_param.items():
-        cast = to_int if param == HOURLY_WIND_DIRECTION else to_float
-        target = (
-            speed_by_hour if param == HOURLY_WIND_SPEED
-            else gust_by_hour if param == HOURLY_GUST
-            else dir_by_hour if param == HOURLY_WIND_DIRECTION
-            else None
-        )
-        if target is None:
+        if param not in targets:
             continue
-        for row in csv_reader(text):
-            if to_int(row.get(_DATA_POINT_ID)) != point.point_id:
-                continue
-            if to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
-                continue
-            when = parse_stamp(row.get(_DATA_DATE))
-            if when is None:
-                continue
+        target, cast = targets[param]
+        for when, row in _point_rows(text, point):
             val = cast(row.get(param))
             if val is not None:
-                target[when] = val  # type: ignore[assignment]
+                target[when] = val
 
     if not speed_by_hour:
         return {}
@@ -400,14 +408,7 @@ def aggregate_daily_precip_probability(
     tz = FORECAST_TZ
     max_by_day: dict[date, float] = {}
 
-    for row in csv_reader(text):
-        if to_int(row.get(_DATA_POINT_ID)) != point.point_id:
-            continue
-        if to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
-            continue
-        when = parse_stamp(row.get(_DATA_DATE))
-        if when is None:
-            continue
+    for when, row in _point_rows(text, point):
         value = to_float(row.get(HOURLY_PRECIP_PROBABILITY))
         if value is None:
             continue
@@ -449,14 +450,7 @@ def aggregate_daily_sunshine(
     minutes_by_day: dict[date, int] = {}
     rows_by_day: dict[date, int] = {}
 
-    for row in csv_reader(text):
-        if to_int(row.get(_DATA_POINT_ID)) != point.point_id:
-            continue
-        if to_int(row.get(_DATA_POINT_TYPE_ID)) != point.point_type_id:
-            continue
-        when = parse_stamp(row.get(_DATA_DATE))
-        if when is None:
-            continue
+    for when, row in _point_rows(text, point):
         value = to_int(row.get(HOURLY_SUNSHINE))
         if value is None:
             continue
