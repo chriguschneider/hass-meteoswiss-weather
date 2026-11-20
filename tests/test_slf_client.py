@@ -378,6 +378,17 @@ async def test_fetch_latest_404_without_no_data_body_raises_connection_error(
 
 
 @pytest.mark.asyncio
+async def test_fetch_latest_timeout_raises_connection_error(session) -> None:
+    """A request timeout surfaces as SlfConnectionError, not NoData."""
+    url = measurements_url("SCH2")
+    with aioresponses() as mock:
+        mock.get(url, exception=TimeoutError())
+        with pytest.raises(SlfConnectionError) as info:
+            await fetch_imis_latest(session, "SCH2")
+    assert not isinstance(info.value, ImisNoDataError)
+
+
+@pytest.mark.asyncio
 async def test_fetch_latest_404_empty_body_raises_connection_error(
     session,
 ) -> None:
