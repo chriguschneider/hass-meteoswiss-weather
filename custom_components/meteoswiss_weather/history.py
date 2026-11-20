@@ -10,9 +10,10 @@ by the ``import_history`` service and the reconfigure flow's backfill choice.
 
 ``async_backfill`` maps the parsed hourly history rows onto Home Assistant's
 long-term statistics under the integration's own sensor statistic ids
-(temperature mean/min/max, mean for the other continuous quantities, hourly sum
-for precipitation) and imports them through the recorder. The recorder's import
-upserts on ``(statistic_id, start)``, so re-running over an overlapping range
+(temperature mean/min/max, mean for the other continuous quantities, including
+the hourly mean of the 10-minute precipitation amount, like the live sensor)
+and imports them through the recorder. The recorder's import upserts on
+``(statistic_id, start)``, so re-running over an overlapping range
 **replaces** those hours rather than duplicating them (ADR-0007).
 
 Every recorder call is guarded: the recorder is a default component but not
@@ -23,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -115,14 +116,14 @@ class _StatMap:
     ``sensor_key`` is the :class:`~sensor.MeteoSwissSensorDescription` key that
     forms the sensor's unique-id suffix, hence its statistic id. ``value_field``
     is the :class:`~ogd.HourlyHistoryRow` attribute carrying the hourly value.
-    A ``has_sum`` map imports a cumulative sum (precipitation); otherwise the
-    value is a mean, optionally with per-hour ``min``/``max`` (temperature).
+    The value is a mean, optionally with per-hour ``min``/``max`` (temperature).
+    ``divisor`` rescales the file value into the sensor's unit.
     """
 
     sensor_key: str
     unit: str
     value_field: str
-    has_sum: bool = False
+    divisor: float = 1.0
     min_field: str | None = None
     max_field: str | None = None
 
@@ -152,7 +153,9 @@ _STAT_MAPS: tuple[_StatMap, ...] = (
         "precipitation",
         UnitOfPrecipitationDepth.MILLIMETERS,
         "precipitation_sum",
-        has_sum=True,
+        # The file's hourly sum (rre150h0) -> mean of the sensor's 10-minute
+        # amount, so the series stays a mean like the live statistic (ADR-0007).
+        divisor=6.0,
     ),
 )
 
@@ -171,16 +174,16 @@ def _station_stat_ids(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, str]
     """Map ``sensor_key -> statistic id`` for this entry's station sensors.
 
     A sensor's statistic id is its entity id; the entity's unique id is
-    ``{point_type_id}-{point_id}_{sensor_key}``. Only registered station sensors
-    appear (a station that does not carry a parameter has no entity, so no
-    statistic is written for it).
+    ``{point_type_id}-{point_id}_{sensor_key}``. Only registered, enabled station
+    sensors appear: a station without a parameter has no entity, and a disabled
+    sensor (dew point, radiation by default) never had a statistic.
     """
     device_unique_id = f"{entry.data[CONF_POINT_TYPE_ID]}-{entry.data[CONF_POINT_ID]}"
     prefix = f"{device_unique_id}_"
     registry = er.async_get(hass)
     stat_ids: dict[str, str] = {}
     for ent in er.async_entries_for_config_entry(registry, entry.entry_id):
-        if ent.unique_id.startswith(prefix):
+        if ent.unique_id.startswith(prefix) and ent.disabled_by is None:
             stat_ids[ent.unique_id[len(prefix):]] = ent.entity_id
     return stat_ids
 
@@ -201,20 +204,19 @@ def _build_statistics(
     """Build the recorder ``StatisticData`` rows for one statistic.
 
     Rows are ``StatisticData`` TypedDicts at runtime (plain dicts), built here
-    to keep the recorder import lazy. Hours whose value is missing are skipped;
-    for a sum the running total simply carries across the gap.
+    to keep the recorder import lazy. Hours whose value is missing are skipped.
     """
     stats: list[dict[str, Any]] = []
-    running_sum = 0.0
     for row in rows:
         value = getattr(row, spec.value_field)
         if value is None:
             continue
-        if spec.has_sum:
-            running_sum += value
-            stats.append({"start": row.ts_utc, "state": value, "sum": running_sum})
-            continue
-        data: dict[str, Any] = {"start": row.ts_utc, "mean": value}
+        # The file's reference timestamp is the END of the hour (opendatadocs
+        # .meteoswiss.ch/general/download); a statistic's start is its beginning.
+        data: dict[str, Any] = {
+            "start": row.ts_utc - timedelta(hours=1),
+            "mean": value / spec.divisor,
+        }
         if spec.min_field is not None:
             mn = getattr(row, spec.min_field)
             if mn is not None:
@@ -225,6 +227,43 @@ def _build_statistics(
                 data["max"] = mx
         stats.append(data)
     return stats
+
+
+def _metadata(statistic_id: str, unit: str) -> dict[str, Any]:
+    """Recorder metadata for a mean series, with ``mean_type``/``unit_class``.
+
+    Current Home Assistant logs a deprecation warning when either is missing;
+    older versions do not know them, so they are only added when the recorder
+    offers them. Each key is gated on the recorder's own ``StatisticMetaData``:
+    a new metadata row is built from the dict's keys, so a key the installed
+    recorder has no column for would fail the import (``mean_type`` and
+    ``unit_class`` arrived in different releases).
+    """
+    metadata: dict[str, Any] = {
+        "has_mean": True,
+        "has_sum": False,
+        "name": None,
+        "source": _RECORDER_DOMAIN,
+        "statistic_id": statistic_id,
+        "unit_of_measurement": unit,
+    }
+    try:
+        from homeassistant.components.recorder.models import (
+            StatisticMeanType,
+            StatisticMetaData,
+        )
+        from homeassistant.components.recorder.statistics import (
+            STATISTIC_UNIT_TO_UNIT_CONVERTER,
+        )
+    except ImportError:
+        return metadata
+    known = getattr(StatisticMetaData, "__annotations__", {})
+    if "mean_type" in known:
+        metadata["mean_type"] = StatisticMeanType.ARITHMETIC
+    if "unit_class" in known:
+        converter = STATISTIC_UNIT_TO_UNIT_CONVERTER.get(unit)
+        metadata["unit_class"] = converter.UNIT_CLASS if converter else None
+    return metadata
 
 
 async def async_backfill(
@@ -267,14 +306,7 @@ async def async_backfill(
         stats = _build_statistics(spec, rows)
         if not stats:
             continue
-        metadata = {
-            "has_mean": not spec.has_sum,
-            "has_sum": spec.has_sum,
-            "name": None,
-            "source": _RECORDER_DOMAIN,
-            "statistic_id": statistic_id,
-            "unit_of_measurement": spec.unit,
-        }
+        metadata = _metadata(statistic_id, spec.unit)
         async_import_statistics(hass, metadata, stats)
         series += 1
 
