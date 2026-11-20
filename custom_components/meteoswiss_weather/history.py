@@ -234,7 +234,10 @@ def _metadata(statistic_id: str, unit: str) -> dict[str, Any]:
 
     Current Home Assistant logs a deprecation warning when either is missing;
     older versions do not know them, so they are only added when the recorder
-    offers them.
+    offers them. Each key is gated on the recorder's own ``StatisticMetaData``:
+    a new metadata row is built from the dict's keys, so a key the installed
+    recorder has no column for would fail the import (``mean_type`` and
+    ``unit_class`` arrived in different releases).
     """
     metadata: dict[str, Any] = {
         "has_mean": True,
@@ -245,15 +248,21 @@ def _metadata(statistic_id: str, unit: str) -> dict[str, Any]:
         "unit_of_measurement": unit,
     }
     try:
-        from homeassistant.components.recorder.models import StatisticMeanType
+        from homeassistant.components.recorder.models import (
+            StatisticMeanType,
+            StatisticMetaData,
+        )
         from homeassistant.components.recorder.statistics import (
             STATISTIC_UNIT_TO_UNIT_CONVERTER,
         )
     except ImportError:
         return metadata
-    metadata["mean_type"] = StatisticMeanType.ARITHMETIC
-    converter = STATISTIC_UNIT_TO_UNIT_CONVERTER.get(unit)
-    metadata["unit_class"] = converter.UNIT_CLASS if converter else None
+    known = getattr(StatisticMetaData, "__annotations__", {})
+    if "mean_type" in known:
+        metadata["mean_type"] = StatisticMeanType.ARITHMETIC
+    if "unit_class" in known:
+        converter = STATISTIC_UNIT_TO_UNIT_CONVERTER.get(unit)
+        metadata["unit_class"] = converter.UNIT_CLASS if converter else None
     return metadata
 
 
