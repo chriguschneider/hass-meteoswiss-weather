@@ -51,3 +51,13 @@ recorded history.
   backfilled by the same code later.
 - Implementation: #51 (parser) and its follow-up (service + recorder
   import); the reconfigure choice is #52.
+
+## Amendment 2026-11-20 (#268)
+
+Precipitation is imported as the **hourly mean of the 10-minute amount**
+(`rre150h0 / 6`, `has_mean: true`, `has_sum: false`), not as an hourly sum.
+The precipitation sensor is a `measurement` with a mean statistic; a sum
+series would turn the live series into a mixed one. The statement above is
+superseded for precipitation only. Also: the file's reference timestamp is the
+end of the hour, so a statistic starts one hour earlier; only enabled sensors
+get a statistic; the metadata carries `mean_type` and `unit_class`.
