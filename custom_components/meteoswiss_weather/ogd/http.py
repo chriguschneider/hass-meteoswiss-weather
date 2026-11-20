@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import aiohttp
@@ -53,8 +54,13 @@ async def get_text(
     timeout: aiohttp.ClientTimeout = DEFAULT_TIMEOUT,
     encoding: str = "utf-8",
     limiter: asyncio.Semaphore | None = None,
+    on_error_status: Callable[[int, bytes], Exception | None] | None = None,
 ) -> CachedResponse:
     """Fetch ``url`` as text, revalidating against ``cache`` when given.
+
+    ``on_error_status`` is an optional hook called with the status and raw
+    body of a non-200/304 response; when it returns an exception, that one is
+    raised instead of the generic :class:`OgdConnectionError`.
 
     Returns a :class:`CachedResponse`. When ``cache`` is supplied its
     validators are sent as ``If-None-Match`` / ``If-Modified-Since``; on a
@@ -78,6 +84,10 @@ async def get_text(
             if cache is not None and response.status == 304:
                 return cache
             if response.status != 200:
+                if on_error_status is not None:
+                    custom = on_error_status(response.status, await response.read())
+                    if custom is not None:
+                        raise custom
                 raise OgdConnectionError(f"GET {url} returned HTTP {response.status}")
             # MeteoSwiss serves Latin-family encodings, not the charset the
             # response header claims; decode with the caller's encoding.
