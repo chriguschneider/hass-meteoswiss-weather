@@ -1,23 +1,23 @@
 {
   "issues": {
     "parse_error_station": {
-      "title": "MeteoSwiss : format du fichier de station modifié",
+      "title": "MeteoSwiss : format du fichier de station modifié ({location})",
       "description": "Le fichier d'observations de la station SwissMetNet n'a pas pu être analysé. Le format en amont a peut-être changé. Consultez `docs/ogd.md` dans le dépôt de l'intégration pour le format actuel et ouvrez un issue de dérive si la structure ne correspond plus."
     },
     "parse_error_forecast": {
-      "title": "MeteoSwiss : format du fichier de prévision modifié",
+      "title": "MeteoSwiss : format du fichier de prévision modifié ({location})",
       "description": "Le fichier de prévisions locales n'a pas pu être analysé. Le format en amont a peut-être changé. Consultez `docs/ogd.md` dans le dépôt de l'intégration pour le format actuel et ouvrez un issue de dérive si la structure ne correspond plus."
     },
     "parse_error_pollen": {
-      "title": "MeteoSwiss : format du fichier pollen modifié",
+      "title": "MeteoSwiss : format du fichier pollen modifié ({location})",
       "description": "Le fichier d'observations de pollen n'a pas pu être analysé. Le format en amont a peut-être changé. Consultez `docs/ogd.md` dans le dépôt de l'intégration pour le format actuel et ouvrez un issue de dérive si la structure ne correspond plus."
     },
     "parse_error_precip": {
-      "title": "Le format du fichier de la station de précipitations MeteoSwiss a changé",
+      "title": "Le format du fichier de la station de précipitations MeteoSwiss a changé ({location})",
       "description": "Le fichier d'observation de la station de précipitations n'a pas pu être analysé. Le format des données source a peut-être changé. Consultez `docs/ogd.md` dans le dépôt de l'intégration pour le format actuel et ouvrez un ticket de dérive si la structure ne correspond plus."
     },
     "parse_error_imis": {
-      "title": "Le format de la réponse de la station de neige SLF IMIS a changé",
+      "title": "Le format de la réponse de la station de neige SLF IMIS a changé ({location})",
       "description": "La réponse de la station de neige SLF IMIS n'a pas pu être analysée. Le format des données source a peut-être changé. Consultez `docs/slf.md` dans le dépôt de l'intégration pour le format actuel et ouvrez un ticket de dérive s'il ne correspond plus."
     },
     "imis_no_data": {
