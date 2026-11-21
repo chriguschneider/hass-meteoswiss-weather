@@ -20,13 +20,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from .const import HOURLY_FAR_MAX_AGE
 from .ogd.const import (
     DAILY_BLOCK_PARAMS,
     DAILY_REQUIRED_PARAMS,
     HOURLY_HORIZON_FULL_RUN,
     HOURLY_POINT_MAJOR_PARAMS,
     HOURLY_ZERO_DEGREE,
-    SERIES_REQUEST_CAP,
     hourly_date_major_params,
 )
 
@@ -113,6 +113,9 @@ _FULL_RUN_HOURS = 220
 # The canary makes most ticks cheap (ADR-0008 section 3), so a per-day figure of
 # per-refresh × this is an honest upper bound. Matches "~24 refreshes a day".
 REFRESHES_PER_DAY = 24
+# The far tail (hours beyond the near tier) is refreshed at most every
+# ``HOURLY_FAR_MAX_AGE`` (6 h), so 4 times a day.
+FAR_REFRESHES_PER_DAY = round(24 / (HOURLY_FAR_MAX_AGE.total_seconds() / 3600))
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,15 +124,15 @@ class FileEstimate:
 
     param: str
     kind: str
-    # Bytes one fetch of this file costs; 0 when ``unbounded`` (no fixed number).
+    # Bytes one near-tier fetch of this file costs (every refresh).
     bytes: int
     # True when the figure is the file's last measured fetch (store provenance,
     # ADR-0008 §5), False when it is the table estimate for the kind.
     measured: bool
-    # True for a date-major file whose horizon no longer fits row addressing
-    # under the request cap: it falls to a large prefix of the ~30 MB file, so
-    # there is no fixed number to quote (issue #145; the long-horizon issue).
-    unbounded: bool = False
+    # Bytes one far-tail fetch costs: the hours beyond the near tier, fetched in
+    # row-addressed windows at most every ``HOURLY_FAR_MAX_AGE`` (issue #143,
+    # #246). 0 for a file without a far tail.
+    far_bytes: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,21 +141,21 @@ class TrafficEstimate:
 
     files: tuple[FileEstimate, ...]
     refreshes_per_day: int = REFRESHES_PER_DAY
+    far_refreshes_per_day: int = FAR_REFRESHES_PER_DAY
 
     @property
     def bytes_per_refresh(self) -> int:
-        """Bytes one full refresh of the demanded files costs (unbounded = 0)."""
+        """Bytes one refresh of the near tier of the demanded files costs."""
         return sum(f.bytes for f in self.files)
 
     @property
     def bytes_per_day(self) -> int:
-        """The per-refresh figure across a day's refreshes (upper bound)."""
-        return self.bytes_per_refresh * self.refreshes_per_day
-
-    @property
-    def has_unbounded(self) -> bool:
-        """Whether any date-major file exceeds row addressing at this horizon."""
-        return any(f.unbounded for f in self.files)
+        """Near refreshes plus the far-tail refreshes across a day (upper bound)."""
+        far = sum(f.far_bytes for f in self.files)
+        return (
+            self.bytes_per_refresh * self.refreshes_per_day
+            + far * self.far_refreshes_per_day
+        )
 
     @property
     def any_measured(self) -> bool:
@@ -174,17 +177,6 @@ def _horizon_hours(horizon_days: int) -> int:
     if horizon_days == HOURLY_HORIZON_FULL_RUN:
         return _FULL_RUN_HOURS
     return (horizon_days + 1) * 24
-
-
-def _fits_row_addressing(horizon_days: int) -> bool:
-    """Whether a date-major file's horizon stays on row addressing.
-
-    A window wider than :data:`SERIES_REQUEST_CAP` hours needs more than one
-    request per hour beyond the cap and the ladder falls to a prefix of the
-    ~30 MB file (ADR-0008 section 4). 72 h (the default) fits; the full run and
-    the long horizons do not.
-    """
-    return _horizon_hours(horizon_days) <= SERIES_REQUEST_CAP
 
 
 def _demanded_files(
@@ -230,14 +222,29 @@ def _kind_of(param: str, *, date_major: bool) -> str:
     return KIND_POINT_MAJOR
 
 
-def _kind_bytes(kind: str, *, horizon_days: int) -> int:
-    """Table bytes for a file ``kind``; date-major scales with the horizon."""
+def _near_far_hours(horizon_days: int) -> tuple[int, int]:
+    """Split a horizon into the near-tier hours and the far-tail hours.
+
+    The near tier (``HOURLY_NEAR_HORIZON_DAYS``, 72 h) is fetched on every
+    refresh; whatever lies beyond it is the far tail, fetched row-addressed in
+    cap-sized windows on the slower far cadence (issue #143).
+    """
+    hours = _horizon_hours(horizon_days)
+    near = min(hours, _DATE_MAJOR_ANCHOR_HOURS)
+    return near, hours - near
+
+
+def _kind_bytes(kind: str, *, horizon_days: int) -> tuple[int, int]:
+    """Table ``(near, far)`` bytes for a file ``kind``.
+
+    A date-major file costs the same per hour at any depth, so the near tier and
+    the far tail both use the per-hour cost the table anchors at 72 h.
+    """
     if kind == KIND_HOURLY_DATE_MAJOR:
-        hours = _horizon_hours(horizon_days)
-        return round(
-            _KIND_BYTES[KIND_HOURLY_DATE_MAJOR] * hours / _DATE_MAJOR_ANCHOR_HOURS
-        )
-    return _KIND_BYTES[kind]
+        near, far = _near_far_hours(horizon_days)
+        per_hour = _KIND_BYTES[KIND_HOURLY_DATE_MAJOR] / _DATE_MAJOR_ANCHOR_HOURS
+        return round(per_hour * near), round(per_hour * far)
+    return _KIND_BYTES[kind], 0
 
 
 def estimate_traffic(
@@ -254,32 +261,23 @@ def estimate_traffic(
     bytes: the last **measured** fetch of a file already active (from the store's
     provenance, ADR-0008 §5) beats the table estimate for its kind, so an
     instance quotes its own numbers as they warm up. Date-major files scale with
-    the horizon and, past the row-addressing cap, become an unbounded prefix
-    with no fixed number (:data:`FileEstimate.unbounded`).
+    the horizon: the near tier every refresh plus a row-addressed far tail on the
+    slower far cadence (issue #143, #246). A measured figure replaces the near
+    cost only; the far tail stays the table estimate.
     """
     measured = measured_bytes or {}
-    fits = _fits_row_addressing(horizon_days)
     files: list[FileEstimate] = []
     for param, kind in _demanded_files(
         hourly=hourly, cloud_layers=cloud_layers, temp_percentiles=temp_percentiles
     ).items():
+        near, far = _kind_bytes(kind, horizon_days=horizon_days)
         if param in measured:
-            # A measured fetch is a real number for the file's actual horizon, so
-            # it is never treated as unbounded even past the cap.
-            files.append(FileEstimate(param, kind, measured[param], measured=True))
-            continue
-        if kind == KIND_HOURLY_DATE_MAJOR and not fits:
             files.append(
-                FileEstimate(param, kind, 0, measured=False, unbounded=True)
+                FileEstimate(
+                    param, kind, measured[param], measured=True, far_bytes=far
+                )
             )
             continue
-        files.append(
-            FileEstimate(
-                param,
-                kind,
-                _kind_bytes(kind, horizon_days=horizon_days),
-                measured=False,
-            )
-        )
+        files.append(FileEstimate(param, kind, near, measured=False, far_bytes=far))
     files.sort(key=lambda f: f.param)
     return TrafficEstimate(files=tuple(files))
