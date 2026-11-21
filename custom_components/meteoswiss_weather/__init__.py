@@ -290,6 +290,7 @@ async def async_setup_entry(
     # Restore today's traffic totals so the diagnostic sensors survive a restart
     # within the day without resetting to zero (issue #146).
     await forecast_coordinator.async_load_traffic()
+    entry.async_on_unload(forecast_coordinator.async_start_daily_reset())
 
     # A first-refresh failure raises ConfigEntryNotReady so HA retries setup.
     await station_coordinator.async_config_entry_first_refresh()

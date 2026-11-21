@@ -43,8 +43,9 @@ from datetime import date, datetime
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.issue_registry import (
     IssueSeverity,
     async_create_issue,
@@ -1079,6 +1080,23 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
             self.traffic.bytes_today,
             self.traffic.requests_today,
         )
+
+    @callback
+    def async_start_daily_reset(self) -> CALLBACK_TYPE:
+        """Reset, save and announce the traffic counters at local midnight.
+
+        The coordinator owns the reset so it happens once, whichever traffic
+        sensors are enabled; the sensors only read. Returns the unsubscribe.
+        """
+        return async_track_time_change(
+            self.hass, self._handle_midnight, hour=0, minute=0, second=0
+        )
+
+    @callback
+    def _handle_midnight(self, _now: datetime) -> None:
+        self.traffic.record(0, 0, dt_util.now().date())
+        self._save_traffic()
+        self.async_update_listeners()
 
     def _save_traffic(self) -> None:
         """Persist the daily traffic totals immediately (issue #146).

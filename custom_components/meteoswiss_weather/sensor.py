@@ -10,9 +10,10 @@ keyed on the forecast point, not the station abbreviation).
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, TypeVar
 
 from homeassistant.components.sensor import (
     RestoreSensor,
@@ -39,17 +40,22 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.update_coordinator import (
+    CoordinatorEntity,
+    DataUpdateCoordinator,
+)
 from homeassistant.util import dt as dt_util
 
 from . import MeteoSwissConfigEntry, SnowStationRuntimeData
 from .const import ATTRIBUTION, ATTRIBUTION_SLF, DOMAIN, SLF_DATA_SERVICE_URL
 from .coordinator import (
+    DailyTrafficAccumulator,
     ForecastCoordinator,
     ImisCoordinator,
     PollenCoordinator,
     StationCoordinator,
 )
+from .entity import point_device_info, point_device_unique_id
 from .ogd import DailyForecast, Observation, PollenObservation
 from .ogd.const import HOURLY_ZERO_DEGREE
 
@@ -684,6 +690,28 @@ _IMIS_SENSORS: tuple[ImisSensorDescription, ...] = (
 )
 
 
+_C = TypeVar("_C", bound=DataUpdateCoordinator[Any])
+
+
+class MeteoSwissCoordinatorSensor(CoordinatorEntity[_C], SensorEntity):
+    """Base of the MeteoSwiss-fed coordinator sensors of one point device."""
+
+    _attr_has_entity_name = True
+    _attr_attribution = ATTRIBUTION
+
+    def __init__(
+        self,
+        coordinator: _C,
+        description: SensorEntityDescription,
+        device_unique_id: str,
+        device_info: DeviceInfo,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{device_unique_id}_{description.key}"
+        self._attr_device_info = device_info
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: MeteoSwissConfigEntry,
@@ -696,14 +724,8 @@ async def async_setup_entry(
         return
 
     point = runtime.point
-    device_unique_id = f"{point.point_type_id}-{point.point_id}"
-    device_info = DeviceInfo(
-        identifiers={(DOMAIN, device_unique_id)},
-        name=point.name,
-        manufacturer="MeteoSwiss",
-        entry_type=DeviceEntryType.SERVICE,
-        configuration_url="https://opendatadocs.meteoswiss.ch",
-    )
+    device_unique_id = point_device_unique_id(point)
+    device_info = point_device_info(point)
 
     station_params = runtime.station_parameters
     precip_coordinator = runtime.precip_coordinator
@@ -818,11 +840,11 @@ async def async_setup_entry(
             for description in supported_pollen
         )
     async_add_entities([
-        DataFetchedTodaySensor(
+        TrafficSensor(
             runtime.forecast_coordinator, _DATA_FETCHED_DESCRIPTION,
             device_unique_id, device_info,
         ),
-        RequestsTodaySensor(
+        TrafficSensor(
             runtime.forecast_coordinator, _REQUESTS_TODAY_DESCRIPTION,
             device_unique_id, device_info,
         ),
@@ -888,7 +910,7 @@ def _async_setup_snow_station(
     )
 
 
-class MeteoSwissSensor(CoordinatorEntity[StationCoordinator], SensorEntity):
+class MeteoSwissSensor(MeteoSwissCoordinatorSensor[StationCoordinator]):
     """One observation field from the configured SwissMetNet station.
 
     When ``station_name`` is given the sensor reads from a different station
@@ -896,9 +918,6 @@ class MeteoSwissSensor(CoordinatorEntity[StationCoordinator], SensorEntity):
     the attribution then names that station and it is exposed as a ``station``
     state attribute, so a dashboard shows where the value comes from.
     """
-
-    _attr_has_entity_name = True
-    _attr_attribution = ATTRIBUTION
 
     def __init__(
         self,
@@ -909,11 +928,8 @@ class MeteoSwissSensor(CoordinatorEntity[StationCoordinator], SensorEntity):
         *,
         station_name: str | None = None,
     ) -> None:
-        super().__init__(coordinator)
-        self.entity_description = description
+        super().__init__(coordinator, description, device_unique_id, device_info)
         self._observation_key = description.observation_key
-        self._attr_unique_id = f"{device_unique_id}_{description.key}"
-        self._attr_device_info = device_info
         if station_name:
             self._attr_attribution = f"{ATTRIBUTION} ({station_name})"
             self._attr_extra_state_attributes = {"station": station_name}
@@ -927,16 +943,13 @@ class MeteoSwissSensor(CoordinatorEntity[StationCoordinator], SensorEntity):
         return getattr(obs, self._observation_key, None)
 
 
-class ForecastSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
+class ForecastSensor(MeteoSwissCoordinatorSensor[ForecastCoordinator]):
     """A sensor whose value comes from today's row of the daily forecast.
 
     Updates on every forecast coordinator refresh and also at local midnight
     so the "today" values flip to the new day without waiting for the next
     fetch (issue #48).
     """
-
-    _attr_has_entity_name = True
-    _attr_attribution = ATTRIBUTION
 
     def __init__(
         self,
@@ -945,12 +958,9 @@ class ForecastSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
         device_unique_id: str,
         device_info: DeviceInfo,
     ) -> None:
-        super().__init__(coordinator)
-        self.entity_description = description
+        super().__init__(coordinator, description, device_unique_id, device_info)
         self._forecast_key: str = description.forecast_key
         self._divisor: float = description.divisor
-        self._attr_unique_id = f"{device_unique_id}_{description.key}"
-        self._attr_device_info = device_info
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to local midnight so today's date rolls over promptly."""
@@ -993,7 +1003,7 @@ class ForecastSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
         return value if self._divisor == 1 else round(value / self._divisor, 2)
 
 
-class PollenSensor(CoordinatorEntity[PollenCoordinator], SensorEntity):
+class PollenSensor(MeteoSwissCoordinatorSensor[PollenCoordinator]):
     """One hourly pollen concentration from the configured pollen station.
 
     One entity per taxon the station actually measures (ADR-0005, issue #67).
@@ -1002,9 +1012,6 @@ class PollenSensor(CoordinatorEntity[PollenCoordinator], SensorEntity):
     pollen station file had no complete measurement rows).
     """
 
-    _attr_has_entity_name = True
-    _attr_attribution = ATTRIBUTION
-
     def __init__(
         self,
         coordinator: PollenCoordinator,
@@ -1012,11 +1019,8 @@ class PollenSensor(CoordinatorEntity[PollenCoordinator], SensorEntity):
         device_unique_id: str,
         device_info: DeviceInfo,
     ) -> None:
-        super().__init__(coordinator)
-        self.entity_description = description
+        super().__init__(coordinator, description, device_unique_id, device_info)
         self._taxon_code = description.taxon_code
-        self._attr_unique_id = f"{device_unique_id}_{description.key}"
-        self._attr_device_info = device_info
 
     @property
     def native_value(self) -> float | None:
@@ -1027,7 +1031,7 @@ class PollenSensor(CoordinatorEntity[PollenCoordinator], SensorEntity):
         return obs.values.get(self._taxon_code)
 
 
-class ZeroDegreeSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
+class ZeroDegreeSensor(MeteoSwissCoordinatorSensor[ForecastCoordinator]):
     """Current hour's zero-degree level (B8, issue #55).
 
     Reads the ``zprfr0hs`` series from the coordinator's forecast store
@@ -1042,9 +1046,6 @@ class ZeroDegreeSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
     the value advances to the new hour without waiting for the next tick.
     """
 
-    _attr_has_entity_name = True
-    _attr_attribution = ATTRIBUTION
-
     def __init__(
         self,
         coordinator: ForecastCoordinator,
@@ -1053,10 +1054,7 @@ class ZeroDegreeSensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
         device_info: DeviceInfo,
         elevation: float | None = None,
     ) -> None:
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._attr_unique_id = f"{device_unique_id}_{description.key}"
-        self._attr_device_info = device_info
+        super().__init__(coordinator, description, device_unique_id, device_info)
         self._elevation = elevation
 
     @property
@@ -1154,7 +1152,7 @@ class ZeroDegree48hSensor(ZeroDegreeSensor):
         }
 
 
-class MeasurementTimeSensor(CoordinatorEntity[StationCoordinator], SensorEntity):
+class MeasurementTimeSensor(MeteoSwissCoordinatorSensor[StationCoordinator]):
     """The reference_timestamp of the latest station observation (issue #105).
 
     Returns the observation timestamp as an aware UTC datetime, giving users a
@@ -1167,9 +1165,6 @@ class MeasurementTimeSensor(CoordinatorEntity[StationCoordinator], SensorEntity)
     entity list.
     """
 
-    _attr_has_entity_name = True
-    _attr_attribution = ATTRIBUTION
-
     def __init__(
         self,
         coordinator: StationCoordinator,
@@ -1177,10 +1172,7 @@ class MeasurementTimeSensor(CoordinatorEntity[StationCoordinator], SensorEntity)
         device_unique_id: str,
         device_info: DeviceInfo,
     ) -> None:
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._attr_unique_id = f"{device_unique_id}_{description.key}"
-        self._attr_device_info = device_info
+        super().__init__(coordinator, description, device_unique_id, device_info)
 
     @property
     def native_value(self) -> datetime | None:
@@ -1195,7 +1187,14 @@ class MeasurementTimeSensor(CoordinatorEntity[StationCoordinator], SensorEntity)
 # fetched from the forecast backend today.  Both are entity_category: DIAGNOSTIC
 # and state_class: total_increasing (reset at local midnight).
 
-_DATA_FETCHED_DESCRIPTION = SensorEntityDescription(
+@dataclass(frozen=True, kw_only=True)
+class TrafficSensorDescription(SensorEntityDescription):
+    """A daily traffic counter: ``value_fn`` reads today's total."""
+
+    value_fn: Callable[[DailyTrafficAccumulator], float | int]
+
+
+_DATA_FETCHED_DESCRIPTION = TrafficSensorDescription(
     key="data_fetched_today",
     translation_key="data_fetched_today",
     device_class=SensorDeviceClass.DATA_SIZE,
@@ -1203,127 +1202,38 @@ _DATA_FETCHED_DESCRIPTION = SensorEntityDescription(
     state_class=SensorStateClass.TOTAL_INCREASING,
     suggested_display_precision=3,
     entity_category=EntityCategory.DIAGNOSTIC,
+    value_fn=lambda traffic: round(traffic.bytes_today / 1_000_000, 6),
 )
 
-_REQUESTS_TODAY_DESCRIPTION = SensorEntityDescription(
+# Disabled by default: most users do not need the raw request count; the bytes
+# sensor is the more useful feedback signal.
+_REQUESTS_TODAY_DESCRIPTION = TrafficSensorDescription(
     key="requests_today",
     translation_key="requests_today",
     state_class=SensorStateClass.TOTAL_INCREASING,
     entity_category=EntityCategory.DIAGNOSTIC,
     entity_registry_enabled_default=False,
+    value_fn=lambda traffic: traffic.requests_today,
 )
 
 
-class DataFetchedTodaySensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
-    """Bytes fetched from the forecast backend today (issue #146).
+class TrafficSensor(MeteoSwissCoordinatorSensor[ForecastCoordinator]):
+    """Bytes or requests fetched from the forecast backend today (issue #146).
 
-    Accumulates every real HTTP fetch — daily files, blocks, hourly files,
-    canaries — that the backend executed since local midnight.  Resets to zero
-    at local midnight so HA long-term statistics show a daily total.  Enabled
-    by default: it is the feedback loop for the traffic-cost options (issue #144).
-    Restored after a restart within the same day via the coordinator's persisted
-    store (issue #133 pattern, issue #146 requirement 3).
+    Counts every real HTTP fetch since local midnight. The forecast coordinator
+    owns the midnight reset and announces it to its listeners; this sensor only
+    reads, and reads zero while the counter still covers an earlier day.
     """
 
-    _attr_has_entity_name = True
-    _attr_attribution = ATTRIBUTION
-
-    def __init__(
-        self,
-        coordinator: ForecastCoordinator,
-        description: SensorEntityDescription,
-        device_unique_id: str,
-        device_info: DeviceInfo,
-    ) -> None:
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._attr_unique_id = f"{device_unique_id}_{description.key}"
-        self._attr_device_info = device_info
-
-    async def async_added_to_hass(self) -> None:
-        """Subscribe to local midnight so the displayed value resets promptly."""
-        await super().async_added_to_hass()
-        self.async_on_remove(
-            async_track_time_change(
-                self.hass,
-                self._handle_midnight,
-                hour=0,
-                minute=0,
-                second=0,
-            )
-        )
-
-    @callback
-    def _handle_midnight(self, _now: datetime) -> None:
-        """Reset the daily counter at local midnight and re-write state."""
-        today = dt_util.now().date()
-        self.coordinator.traffic.record(0, 0, today)
-        self.coordinator._save_traffic()  # noqa: SLF001
-        self.async_write_ha_state()
+    entity_description: TrafficSensorDescription
 
     @property
-    def native_value(self) -> float:
-        """Return bytes fetched today in MB, or 0 when none recorded yet."""
+    def native_value(self) -> float | int:
+        """Return today's total, or 0 when none recorded yet."""
         traffic = self.coordinator.traffic
-        today = dt_util.now().date()
-        if traffic.reset_date != today:
-            return 0.0
-        return round(traffic.bytes_today / 1_000_000, 6)
-
-
-class RequestsTodaySensor(CoordinatorEntity[ForecastCoordinator], SensorEntity):
-    """HTTP requests made to the forecast backend today (issue #146).
-
-    Counts every real HTTP request — daily files, blocks, hourly files,
-    canaries — that the backend executed since local midnight.  Resets to zero
-    at local midnight.  Disabled by default (most users do not need the raw
-    request count; the bytes sensor is the more useful feedback signal).
-    """
-
-    _attr_has_entity_name = True
-    _attr_attribution = ATTRIBUTION
-
-    def __init__(
-        self,
-        coordinator: ForecastCoordinator,
-        description: SensorEntityDescription,
-        device_unique_id: str,
-        device_info: DeviceInfo,
-    ) -> None:
-        super().__init__(coordinator)
-        self.entity_description = description
-        self._attr_unique_id = f"{device_unique_id}_{description.key}"
-        self._attr_device_info = device_info
-
-    async def async_added_to_hass(self) -> None:
-        """Subscribe to local midnight so the displayed value resets promptly."""
-        await super().async_added_to_hass()
-        self.async_on_remove(
-            async_track_time_change(
-                self.hass,
-                self._handle_midnight,
-                hour=0,
-                minute=0,
-                second=0,
-            )
-        )
-
-    @callback
-    def _handle_midnight(self, _now: datetime) -> None:
-        """Reset the daily counter at local midnight and re-write state."""
-        today = dt_util.now().date()
-        self.coordinator.traffic.record(0, 0, today)
-        self.coordinator._save_traffic()  # noqa: SLF001
-        self.async_write_ha_state()
-
-    @property
-    def native_value(self) -> int:
-        """Return requests made today, or 0 when none recorded yet."""
-        traffic = self.coordinator.traffic
-        today = dt_util.now().date()
-        if traffic.reset_date != today:
+        if traffic.reset_date != dt_util.now().date():
             return 0
-        return traffic.requests_today
+        return self.entity_description.value_fn(traffic)
 
 
 class ImisSnowSensor(CoordinatorEntity[ImisCoordinator], RestoreSensor):
