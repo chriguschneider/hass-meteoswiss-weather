@@ -28,6 +28,7 @@ from custom_components.meteoswiss_weather.const import (
     CONF_STATION_NAME,
     DOMAIN,
 )
+from custom_components.meteoswiss_weather.coordinator import parse_issue_id
 from custom_components.meteoswiss_weather.ogd import OgdConnectionError, OgdParseError
 from custom_components.meteoswiss_weather.ogd.const import station_now_url
 
@@ -303,6 +304,12 @@ async def test_sensor_recovers_after_station_failure(
 # ---------------------------------------------------------------------------
 
 
+def _has_parse_issue(hass: HomeAssistant, key: str, entry: MockConfigEntry) -> bool:
+    """Whether ``entry``'s parse-error repair issue ``key`` is posted (#251)."""
+    issue_id = parse_issue_id(key, entry.entry_id)
+    return ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+
 async def test_station_parse_error_creates_repair_issue(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
@@ -320,8 +327,7 @@ async def test_station_parse_error_creates_repair_issue(
         await coordinator.async_refresh()
         await hass.async_block_till_done()
 
-    issue_reg = ir.async_get(hass)
-    assert issue_reg.async_get_issue(DOMAIN, "parse_error_station") is not None
+    assert _has_parse_issue(hass, "parse_error_station", config_entry)
 
 
 async def test_station_parse_error_repair_issue_cleared_on_success(
@@ -342,14 +348,13 @@ async def test_station_parse_error_repair_issue_cleared_on_success(
         await coordinator.async_refresh()
         await hass.async_block_till_done()
 
-    issue_reg = ir.async_get(hass)
-    assert issue_reg.async_get_issue(DOMAIN, "parse_error_station") is not None
+    assert _has_parse_issue(hass, "parse_error_station", config_entry)
 
     # A successful refresh clears it.
     await coordinator.async_refresh()
     await hass.async_block_till_done()
 
-    assert issue_reg.async_get_issue(DOMAIN, "parse_error_station") is None
+    assert not _has_parse_issue(hass, "parse_error_station", config_entry)
 
 
 async def test_forecast_parse_error_creates_repair_issue(
@@ -369,8 +374,7 @@ async def test_forecast_parse_error_creates_repair_issue(
         await coordinator.async_refresh()
         await hass.async_block_till_done()
 
-    issue_reg = ir.async_get(hass)
-    assert issue_reg.async_get_issue(DOMAIN, "parse_error_forecast") is not None
+    assert _has_parse_issue(hass, "parse_error_forecast", config_entry)
 
 
 async def test_forecast_parse_error_repair_issue_cleared_on_success(
@@ -390,14 +394,13 @@ async def test_forecast_parse_error_repair_issue_cleared_on_success(
         await coordinator.async_refresh()
         await hass.async_block_till_done()
 
-    issue_reg = ir.async_get(hass)
-    assert issue_reg.async_get_issue(DOMAIN, "parse_error_forecast") is not None
+    assert _has_parse_issue(hass, "parse_error_forecast", config_entry)
 
     # A successful refresh clears it.
     await coordinator.async_refresh()
     await hass.async_block_till_done()
 
-    assert issue_reg.async_get_issue(DOMAIN, "parse_error_forecast") is None
+    assert not _has_parse_issue(hass, "parse_error_forecast", config_entry)
 
 
 async def test_forecast_connection_error_creates_no_repair_issue(
@@ -422,8 +425,7 @@ async def test_forecast_connection_error_creates_no_repair_issue(
         await hass.async_block_till_done()
 
     assert coordinator.last_update_success is False
-    issue_reg = ir.async_get(hass)
-    assert issue_reg.async_get_issue(DOMAIN, "parse_error_forecast") is None
+    assert not _has_parse_issue(hass, "parse_error_forecast", config_entry)
 
 
 async def test_forecast_daily_parse_error_creates_repair_issue(
@@ -444,8 +446,7 @@ async def test_forecast_daily_parse_error_creates_repair_issue(
         await coordinator.async_refresh()
         await hass.async_block_till_done()
 
-    issue_reg = ir.async_get(hass)
-    assert issue_reg.async_get_issue(DOMAIN, "parse_error_forecast") is not None
+    assert _has_parse_issue(hass, "parse_error_forecast", config_entry)
 
 
 async def test_forecast_daily_connection_error_creates_no_repair_issue(
@@ -468,8 +469,7 @@ async def test_forecast_daily_connection_error_creates_no_repair_issue(
         await hass.async_block_till_done()
 
     assert coordinator.last_update_success is False
-    issue_reg = ir.async_get(hass)
-    assert issue_reg.async_get_issue(DOMAIN, "parse_error_forecast") is None
+    assert not _has_parse_issue(hass, "parse_error_forecast", config_entry)
 
 
 async def test_forecast_hourly_parse_error_creates_repair_issue(
@@ -498,8 +498,7 @@ async def test_forecast_hourly_parse_error_creates_repair_issue(
         assert await refresher.async_refresh(run) is False
         await hass.async_block_till_done()
 
-    issue_reg = ir.async_get(hass)
-    assert issue_reg.async_get_issue(DOMAIN, "parse_error_forecast") is not None
+    assert _has_parse_issue(hass, "parse_error_forecast", config_entry)
 
 
 async def test_forecast_hourly_connection_error_creates_no_repair_issue(
@@ -529,8 +528,7 @@ async def test_forecast_hourly_connection_error_creates_no_repair_issue(
         assert await refresher.async_refresh(run) is False
         await hass.async_block_till_done()
 
-    issue_reg = ir.async_get(hass)
-    assert issue_reg.async_get_issue(DOMAIN, "parse_error_forecast") is None
+    assert not _has_parse_issue(hass, "parse_error_forecast", config_entry)
 
 
 # ---------------------------------------------------------------------------

@@ -1,23 +1,23 @@
 {
   "issues": {
     "parse_error_station": {
-      "title": "MeteoSwiss station file format changed",
+      "title": "MeteoSwiss station file format changed ({location})",
       "description": "The SwissMetNet station observation file could not be parsed. The upstream format may have changed. Check `docs/ogd.md` in the integration repository for the current format and open a drift issue if the layout no longer matches."
     },
     "parse_error_forecast": {
-      "title": "MeteoSwiss forecast file format changed",
+      "title": "MeteoSwiss forecast file format changed ({location})",
       "description": "The local forecast file could not be parsed. The upstream format may have changed. Check `docs/ogd.md` in the integration repository for the current format and open a drift issue if the layout no longer matches."
     },
     "parse_error_pollen": {
-      "title": "MeteoSwiss pollen file format changed",
+      "title": "MeteoSwiss pollen file format changed ({location})",
       "description": "The pollen observation file could not be parsed. The upstream format may have changed. Check `docs/ogd.md` in the integration repository for the current format and open a drift issue if the layout no longer matches."
     },
     "parse_error_precip": {
-      "title": "MeteoSwiss precipitation-station file format changed",
+      "title": "MeteoSwiss precipitation-station file format changed ({location})",
       "description": "The precipitation-station observation file could not be parsed. The upstream format may have changed. Check `docs/ogd.md` in the integration repository for the current format and open a drift issue if the layout no longer matches."
     },
     "parse_error_imis": {
-      "title": "SLF IMIS snow-station response format changed",
+      "title": "SLF IMIS snow-station response format changed ({location})",
       "description": "The SLF IMIS snow-station response could not be parsed. The upstream format may have changed. Check `docs/slf.md` in the integration repository for the current format and open a drift issue if it no longer matches."
     },
     "imis_no_data": {
