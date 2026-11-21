@@ -26,19 +26,19 @@ from homeassistant.const import (
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from . import MeteoSwissConfigEntry
-from .const import ATTRIBUTION, CONF_HOURLY_FORECAST, DOMAIN
+from .const import ATTRIBUTION, CONF_HOURLY_FORECAST
 from .coordinator import (
     ForecastCoordinator,
     PrecipStationCoordinator,
     StationCoordinator,
 )
+from .entity import point_device_info, point_device_unique_id
 from .ogd import DailyForecast, ForecastPoint, HourlyForecast
 from .ogd.const import HOURLY_SYMBOL
 from .symbols import condition_for_symbol
@@ -95,15 +95,8 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
             features |= WeatherEntityFeature.FORECAST_HOURLY
         self._attr_supported_features = features
 
-        unique_id = f"{point.point_type_id}-{point.point_id}"
-        self._attr_unique_id = unique_id
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, unique_id)},
-            name=point.name,
-            manufacturer="MeteoSwiss",
-            entry_type=DeviceEntryType.SERVICE,
-            configuration_url="https://opendatadocs.meteoswiss.ch",
-        )
+        self._attr_unique_id = point_device_unique_id(point)
+        self._attr_device_info = point_device_info(point)
 
     async def async_added_to_hass(self) -> None:
         """Subscribe to the forecast coordinator in addition to the station one."""

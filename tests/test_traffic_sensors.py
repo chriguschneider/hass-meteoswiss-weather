@@ -11,7 +11,7 @@ Unit tests for DailyTrafficAccumulator run without Home Assistant.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from unittest.mock import patch
 
 import pytest
@@ -19,7 +19,11 @@ from freezegun import freeze_time
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 
 from custom_components.meteoswiss_weather.const import (
     CONF_POINT_ID,
@@ -268,15 +272,45 @@ async def test_midnight_resets_sensor_to_zero(
 
     assert float(_state(hass, "data_fetched_today")) == pytest.approx(0.5, rel=1e-4)
 
-    # Advance to the next day and reset the accumulator as _handle_midnight does.
-    with freeze_time("2026-08-28 00:00:00"):
-        coordinator = config_entry.runtime_data.forecast_coordinator
-        tomorrow = datetime(2026, 8, 28, tzinfo=UTC).date()
-        coordinator.traffic.record(0, 0, tomorrow)
-        # Re-write state exactly like _handle_midnight does.
-        coordinator.async_set_updated_data(coordinator.data)
+    # Local midnight: the coordinator resets, saves once and notifies; the
+    # request-count sensor is disabled by default, so only the bytes sensor reads.
+    coordinator = config_entry.runtime_data.forecast_coordinator
+    midnight = dt_util.start_of_local_day(date(2026, 8, 28))
+    with (
+        freeze_time(midnight),
+        patch.object(
+            coordinator, "_save_traffic", wraps=coordinator._save_traffic
+        ) as save,
+    ):
+        async_fire_time_changed(hass, midnight)
         await hass.async_block_till_done()
 
+    assert save.call_count == 1
+    assert coordinator.traffic.bytes_today == 0
+    assert coordinator.traffic.requests_today == 0
+    assert coordinator.traffic.reset_date == date(2026, 8, 28)
+    assert float(_state(hass, "data_fetched_today")) == 0.0
+
+
+@freeze_time("2026-08-27 10:00:00")
+async def test_restart_on_new_day_starts_from_zero(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_ogd,
+) -> None:
+    """Totals persisted on an earlier day are discarded at setup."""
+    stale = DailyTrafficAccumulator()
+    stale.record(900_000, 30, date(2026, 8, 26))
+    fake = FakeBackendWithTraffic(bytes_per_tick=0, requests_per_tick=0)
+    with patch(
+        "homeassistant.helpers.storage.Store.async_load",
+        return_value=stale.to_dict(),
+    ):
+        await _setup(hass, config_entry, fake, mock_ogd)
+
+    traffic = config_entry.runtime_data.forecast_coordinator.traffic
+    assert traffic.bytes_today == 0
+    assert traffic.requests_today == 0
     assert float(_state(hass, "data_fetched_today")) == 0.0
 
 
