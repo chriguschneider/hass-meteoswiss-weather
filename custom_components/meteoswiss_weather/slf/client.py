@@ -13,8 +13,9 @@ from datetime import UTC, datetime
 
 import aiohttp
 
-from ..ogd.geo import haversine_km
-from ..ogd.http import DEFAULT_TIMEOUT, CachedResponse, get_text
+from ..ogd.geo import nearest
+from ..ogd.http import CachedResponse, get_text
+from ..ogd.models import OgdConnectionError
 from .const import DAILY_SNOW_URL, SNOW_FLAT, STATIONS_URL, measurements_url
 from .models import (
     ImisDailySnow,
@@ -34,46 +35,28 @@ async def _fetch_imis_text(
 ) -> CachedResponse:
     """Fetch one SLF IMIS URL, raising ImisNoDataError on 404+NO_DATA body.
 
-    Mirrors the behaviour of ``ogd.http.get_text`` but inspects the body of
+    Delegates to ``ogd.http.get_text`` with a hook that inspects the body of
     a 404 response: if the JSON body carries ``"code": "NO_DATA"`` the
     station is temporarily silent (ADR-0009 amendment); any other 404 and
-    all other non-200/304 statuses raise SlfConnectionError as before.
+    all other non-200/304 statuses raise SlfConnectionError.
     """
-    headers: dict[str, str] = {}
-    if cache is not None and cache.etag:
-        headers["If-None-Match"] = cache.etag
+    def _no_data(status: int, raw: bytes) -> Exception | None:
+        if status != 404:
+            return None
+        try:
+            body_json = json.loads(raw.decode("utf-8", errors="replace"))
+        except ValueError:
+            return None
+        if isinstance(body_json, dict) and body_json.get("code") == "NO_DATA":
+            return ImisNoDataError(f"station at {url!r} has no data in the last 7 days")
+        return None
+
     try:
-        async with session.get(url, headers=headers, timeout=DEFAULT_TIMEOUT) as resp:
-            if cache is not None and resp.status == 304:
-                return cache
-            if resp.status == 404:
-                raw = await resp.read()
-                try:
-                    body_json = json.loads(raw.decode("utf-8", errors="replace"))
-                except ValueError:
-                    body_json = {}
-                if isinstance(body_json, dict) and body_json.get("code") == "NO_DATA":
-                    raise ImisNoDataError(
-                        f"station at {url!r} has no data in the last 7 days"
-                    )
-                raise SlfConnectionError(f"GET {url} returned HTTP 404")
-            if resp.status != 200:
-                raise SlfConnectionError(f"GET {url} returned HTTP {resp.status}")
-            raw = await resp.read()
-            body = raw.decode("utf-8", errors="replace")
-            etag = resp.headers.get("ETag")
-    except (ImisNoDataError, SlfConnectionError):
+        return await get_text(session, url, cache=cache, on_error_status=_no_data)
+    except ImisNoDataError:
         raise
-    except TimeoutError as err:
-        # aiohttp raises a bare TimeoutError, which is not a ClientError.
-        raise SlfConnectionError(f"GET {url} timed out") from err
-    except aiohttp.ClientError as err:
-        raise SlfConnectionError(f"GET {url} failed: {err}") from err
-    if cache is not None:
-        cache.body = body
-        cache.etag = etag
-        return cache
-    return CachedResponse(body=body, etag=etag)
+    except OgdConnectionError as err:
+        raise SlfConnectionError(str(err)) from err
 
 
 def _opt_float(value: object) -> float | None:
@@ -162,8 +145,7 @@ def nearest_snow_stations(
     When ``limit`` is given, only the closest ``limit`` stations are returned.
     """
     flat = [s for s in stations if s.type == SNOW_FLAT]
-    flat.sort(key=lambda s: haversine_km(lat, lon, s.lat, s.lon))
-    return flat if limit is None else flat[:limit]
+    return nearest(flat, lat, lon, limit)
 
 
 async def fetch_imis_latest(

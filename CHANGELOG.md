@@ -16,9 +16,16 @@ using the matching section below as release notes.
 
 ### Fixed
 
+- Importing station history (service `import_history`) now puts each hourly
+  value at the right hour (it landed one hour late), keeps precipitation in the
+  same form as the live sensor so its graph stays readable, and no longer
+  creates statistics for disabled sensors.
 - A slow MeteoSwiss or SLF server (request timeout) is now handled like any
   other connection problem: the entry retries instead of failing to load, and
   the setup dialog says it cannot connect.
+- With several locations set up, a repair notice about one location is no
+  longer cleared by another location's successful update; the notice now names
+  the location.
 
 ## [v0.10.1] — 2026-10-26
 

@@ -107,12 +107,21 @@ from .slf import (
 )
 from .store import ForecastStore
 
-# Issue IDs used in the HA repair-issue registry.
+# Parse-error repair-issue keys. Each is both the translation key and the
+# prefix of the per-entry issue id ``f"{key}_{entry_id}"`` (issue #251), so a
+# successful poll of one entry never clears another entry's notice.
 _ISSUE_STATION_PARSE = "parse_error_station"
 _ISSUE_PRECIP_PARSE = "parse_error_precip"
 _ISSUE_FORECAST_PARSE = "parse_error_forecast"
 _ISSUE_POLLEN_PARSE = "parse_error_pollen"
 _ISSUE_IMIS_PARSE = "parse_error_imis"
+PARSE_ISSUE_KEYS: tuple[str, ...] = (
+    _ISSUE_STATION_PARSE,
+    _ISSUE_PRECIP_PARSE,
+    _ISSUE_FORECAST_PARSE,
+    _ISSUE_POLLEN_PARSE,
+    _ISSUE_IMIS_PARSE,
+)
 # Prefix for the per-entry "station silent" repair issue (ADR-0009 amendment,
 # #187). Full ID: f"{_ISSUE_IMIS_NO_DATA_PREFIX}{entry_id}" so two entries on
 # different silent stations each get their own issue.
@@ -124,6 +133,43 @@ _ISSUE_ESCALATED_PREFIX = "forecast_fetch_escalated_"
 _ESCALATION_THRESHOLD = 3
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def parse_issue_id(key: str, entry_id: str) -> str:
+    """The repair-issue id of parse-error ``key`` for one config entry."""
+    return f"{key}_{entry_id}"
+
+
+class ParseIssue:
+    """Raise and clear one entry's parse-error repair issue (issue #251).
+
+    A structural parse error recurs on every poll until the integration is
+    updated, so it is surfaced as a repair issue and cleared on the next
+    successful parse. The id is per entry and the entry title is passed as the
+    ``location`` placeholder so the notice names the location it is about.
+    """
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, key: str) -> None:
+        self._hass = hass
+        self._key = key
+        self._title = entry.title
+        self.issue_id = parse_issue_id(key, entry.entry_id)
+
+    def raise_issue(self) -> None:
+        """Post (or keep) the repair issue."""
+        async_create_issue(
+            self._hass,
+            DOMAIN,
+            self.issue_id,
+            is_fixable=False,
+            severity=IssueSeverity.WARNING,
+            translation_key=self._key,
+            translation_placeholders={"location": self._title},
+        )
+
+    def clear(self) -> None:
+        """Delete the repair issue; a no-op when none is posted."""
+        async_delete_issue(self._hass, DOMAIN, self.issue_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,8 +311,12 @@ class HourlyRefresher:
         horizon_days: int,
         cloud_layers: bool = False,
         temp_percentiles: bool = False,
+        parse_issue: ParseIssue | None = None,
     ) -> None:
         self._hass = hass
+        # The owning coordinator's forecast parse-error issue; ``None`` (tests
+        # that drive the refresher alone) only logs a parse error.
+        self._parse_issue = parse_issue
         self._backend = backend
         self._point = point
         self._store = store
@@ -366,21 +416,16 @@ class HourlyRefresher:
                 or changed
             )
         except OgdParseError as err:
-            async_create_issue(
-                self._hass,
-                DOMAIN,
-                _ISSUE_FORECAST_PARSE,
-                is_fixable=False,
-                severity=IssueSeverity.WARNING,
-                translation_key="parse_error_forecast",
-            )
+            if self._parse_issue is not None:
+                self._parse_issue.raise_issue()
             _LOGGER.warning("hourly forecast parse failed: %s", err)
             return False
         except OgdConnectionError as err:
             _LOGGER.warning("hourly forecast fetch failed: %s", err)
             return False
 
-        async_delete_issue(self._hass, DOMAIN, _ISSUE_FORECAST_PARSE)
+        if self._parse_issue is not None:
+            self._parse_issue.clear()
         return changed
 
     def _grouped_params(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -659,19 +704,20 @@ def hourly_from_store(
     return result
 
 
-class StationCoordinator(DataUpdateCoordinator[Observation]):
-    """Poll one station's latest 10-minute observation.
+class _StationPollCoordinator[T](DataUpdateCoordinator[T]):
+    """Poll one station file conditionally; the shared base of the station polls.
 
-    :class:`PrecipStationCoordinator` reuses this by overriding
-    :meth:`_fetch`, the repair-issue key and the log label (ADR-0006); the
-    conditional-request cache and the parse/connection handling are shared.
+    Subclasses override :meth:`_fetch`, the poll interval, the repair-issue key,
+    the coordinator-name label and the error-message noun; the conditional-
+    request cache and the parse/connection handling are shared.
     """
 
-    # Repair-issue key posted on a structural parse failure and the label used
-    # in the coordinator name; overridden by the precipitation subclass.
-    _issue_id = _ISSUE_STATION_PARSE
-    _translation_key = "parse_error_station"
+    # Repair-issue key posted on a structural parse failure, the label used in
+    # the coordinator name and the noun used in ``UpdateFailed`` messages.
+    _issue_key = _ISSUE_STATION_PARSE
     _label = "observations"
+    _kind = "station"
+    _update_interval = STATION_UPDATE_INTERVAL
 
     def __init__(
         self,
@@ -685,45 +731,50 @@ class StationCoordinator(DataUpdateCoordinator[Observation]):
             _LOGGER,
             config_entry=entry,
             name=f"{station_abbr} {self._label}",
-            update_interval=STATION_UPDATE_INTERVAL,
+            update_interval=self._update_interval,
         )
         self._session = session
         self._station_abbr = station_abbr
+        self._parse_issue = ParseIssue(hass, entry, self._issue_key)
         # Reused across polls so the station file is revalidated conditionally
         # (If-None-Match / If-Modified-Since); get_text mutates it in place.
         self._cache = CachedResponse(body="")
         # Timestamp of the last successful update; exposed for diagnostics.
         self.last_success: datetime | None = None
 
+    async def _fetch(self) -> T:
+        raise NotImplementedError
+
+    async def _async_update_data(self) -> T:
+        try:
+            obs = await self._fetch()
+        except OgdParseError as err:
+            self._parse_issue.raise_issue()
+            raise UpdateFailed(
+                f"{self._kind} {self._station_abbr} parse failed: {err}"
+            ) from err
+        except OgdConnectionError as err:
+            raise UpdateFailed(
+                f"{self._kind} {self._station_abbr} update failed: {err}"
+            ) from err
+
+        self._parse_issue.clear()
+        self.last_success = dt_util.utcnow()
+        return obs
+
+
+class StationCoordinator(_StationPollCoordinator[Observation]):
+    """Poll one station's latest 10-minute observation.
+
+    :class:`PrecipStationCoordinator` reuses this by overriding
+    :meth:`_fetch`, the repair-issue key and the log label (ADR-0006).
+    """
+
     async def _fetch(self) -> Observation:
         """Fetch the latest observation for the configured station."""
         return await fetch_current(
             self._session, self._station_abbr, cache=self._cache
         )
-
-    async def _async_update_data(self) -> Observation:
-        try:
-            obs = await self._fetch()
-        except OgdParseError as err:
-            async_create_issue(
-                self.hass,
-                DOMAIN,
-                self._issue_id,
-                is_fixable=False,
-                severity=IssueSeverity.WARNING,
-                translation_key=self._translation_key,
-            )
-            raise UpdateFailed(
-                f"station {self._station_abbr} parse failed: {err}"
-            ) from err
-        except OgdConnectionError as err:
-            raise UpdateFailed(
-                f"station {self._station_abbr} update failed: {err}"
-            ) from err
-
-        async_delete_issue(self.hass, DOMAIN, self._issue_id)
-        self.last_success = dt_util.utcnow()
-        return obs
 
 
 class PrecipStationCoordinator(StationCoordinator):
@@ -737,8 +788,7 @@ class PrecipStationCoordinator(StationCoordinator):
     from it.
     """
 
-    _issue_id = _ISSUE_PRECIP_PARSE
-    _translation_key = "parse_error_precip"
+    _issue_key = _ISSUE_PRECIP_PARSE
     _label = "precipitation"
 
     async def _fetch(self) -> Observation:
@@ -821,6 +871,8 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         # Parameters that currently have an active escalation repair issue, so
         # the issue can be cleared when the streak drops below the threshold.
         self._escalation_issue_params: set[str] = set()
+        # One forecast parse-error issue for the daily and the hourly path.
+        self._parse_issue = ParseIssue(hass, entry, _ISSUE_FORECAST_PARSE)
         # The eager hourly refresh: the coordinator drives it once per tick from
         # its own refresh, so the demanded files are fetched whenever the option
         # is on, with no dependency on a subscriber (ADR-0008).
@@ -833,6 +885,7 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
             horizon_days=hourly_horizon_days,
             cloud_layers=hourly_cloud_layers,
             temp_percentiles=hourly_temp_percentiles,
+            parse_issue=self._parse_issue,
         )
 
     async def _async_update_data(self) -> ForecastData:
@@ -859,14 +912,7 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
                 self._yesterday_item_cache,
             )
         except OgdParseError as err:
-            async_create_issue(
-                self.hass,
-                DOMAIN,
-                _ISSUE_FORECAST_PARSE,
-                is_fixable=False,
-                severity=IssueSeverity.WARNING,
-                translation_key="parse_error_forecast",
-            )
+            self._parse_issue.raise_issue()
             raise UpdateFailed(f"forecast run discovery parse failed: {err}") from err
         except OgdConnectionError as err:
             raise UpdateFailed(f"forecast run discovery failed: {err}") from err
@@ -898,14 +944,7 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
                     ),
                 )
             except OgdParseError as err:
-                async_create_issue(
-                    self.hass,
-                    DOMAIN,
-                    _ISSUE_FORECAST_PARSE,
-                    is_fixable=False,
-                    severity=IssueSeverity.WARNING,
-                    translation_key="parse_error_forecast",
-                )
+                self._parse_issue.raise_issue()
                 raise UpdateFailed(f"daily forecast parse failed: {err}") from err
             except OgdConnectionError as err:
                 raise UpdateFailed(f"daily forecast fetch failed: {err}") from err
@@ -943,7 +982,7 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
             _file_block(HOURLY_SUNSHINE, bundle.sunshine_duration)
             self.last_run = run.timestamp
 
-        async_delete_issue(self.hass, DOMAIN, _ISSUE_FORECAST_PARSE)
+        self._parse_issue.clear()
         # With the hourly option on, refresh the demanded hourly series into the
         # store as part of the coordinator's own tick (ADR-0008): no card,
         # subscription or service call is needed. It swallows its own errors, so
@@ -1116,7 +1155,7 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         return hourly or None
 
 
-class PollenCoordinator(DataUpdateCoordinator[PollenObservation]):
+class PollenCoordinator(_StationPollCoordinator[PollenObservation]):
     """Poll one pollen station's latest hourly observation (ADR-0005).
 
     Fetches ``_h_now.csv`` at most once per hour, conditional on the ETag so an
@@ -1124,50 +1163,15 @@ class PollenCoordinator(DataUpdateCoordinator[PollenObservation]):
     parse failure and clears it as soon as parsing succeeds again.
     """
 
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        entry: ConfigEntry,
-        session: aiohttp.ClientSession,
-        station_abbr: str,
-    ) -> None:
-        super().__init__(
-            hass,
-            _LOGGER,
-            config_entry=entry,
-            name=f"{station_abbr} pollen",
-            update_interval=POLLEN_UPDATE_INTERVAL,
+    _issue_key = _ISSUE_POLLEN_PARSE
+    _label = "pollen"
+    _kind = "pollen"
+    _update_interval = POLLEN_UPDATE_INTERVAL
+
+    async def _fetch(self) -> PollenObservation:
+        return await fetch_pollen_current(
+            self._session, self._station_abbr, cache=self._cache
         )
-        self._session = session
-        self._station_abbr = station_abbr
-        self._cache = CachedResponse(body="")
-        self.last_success: datetime | None = None
-
-    async def _async_update_data(self) -> PollenObservation:
-        try:
-            obs = await fetch_pollen_current(
-                self._session, self._station_abbr, cache=self._cache
-            )
-        except OgdParseError as err:
-            async_create_issue(
-                self.hass,
-                DOMAIN,
-                _ISSUE_POLLEN_PARSE,
-                is_fixable=False,
-                severity=IssueSeverity.WARNING,
-                translation_key="parse_error_pollen",
-            )
-            raise UpdateFailed(
-                f"pollen {self._station_abbr} parse failed: {err}"
-            ) from err
-        except OgdConnectionError as err:
-            raise UpdateFailed(
-                f"pollen {self._station_abbr} update failed: {err}"
-            ) from err
-
-        async_delete_issue(self.hass, DOMAIN, _ISSUE_POLLEN_PARSE)
-        self.last_success = dt_util.utcnow()
-        return obs
 
 
 @dataclass(frozen=True, slots=True)
@@ -1244,6 +1248,7 @@ class ImisCoordinator(DataUpdateCoordinator[ImisData]):
         # once-a-day silent-station warning was last logged, so a silent station
         # is warned about once per day, not every poll.
         self._no_data_issue_id = f"{_ISSUE_IMIS_NO_DATA_PREFIX}{entry.entry_id}"
+        self._parse_issue = ParseIssue(hass, entry, _ISSUE_IMIS_PARSE)
         self._last_real_time: datetime | None = None
         self._no_data_warned_date: date | None = None
 
@@ -1261,14 +1266,7 @@ class ImisCoordinator(DataUpdateCoordinator[ImisData]):
             no_data = True
             self._handle_no_data()
         except SlfParseError as err:
-            async_create_issue(
-                self.hass,
-                DOMAIN,
-                _ISSUE_IMIS_PARSE,
-                is_fixable=False,
-                severity=IssueSeverity.WARNING,
-                translation_key="parse_error_imis",
-            )
+            self._parse_issue.raise_issue()
             raise UpdateFailed(
                 f"IMIS {self._code} measurement parse failed: {err}"
             ) from err
@@ -1296,14 +1294,7 @@ class ImisCoordinator(DataUpdateCoordinator[ImisData]):
                 self._daily_date = today
             except SlfParseError as err:
                 daily_parse_error = True
-                async_create_issue(
-                    self.hass,
-                    DOMAIN,
-                    _ISSUE_IMIS_PARSE,
-                    is_fixable=False,
-                    severity=IssueSeverity.WARNING,
-                    translation_key="parse_error_imis",
-                )
+                self._parse_issue.raise_issue()
                 _LOGGER.warning("IMIS %s daily-snow parse failed: %s", self._code, err)
             except SlfConnectionError as err:
                 _LOGGER.warning("IMIS %s daily-snow fetch failed: %s", self._code, err)
@@ -1311,7 +1302,7 @@ class ImisCoordinator(DataUpdateCoordinator[ImisData]):
         # Clear the repair issue only when nothing failed structurally this tick;
         # a daily parse error keeps it posted without failing the measurement.
         if not daily_parse_error:
-            async_delete_issue(self.hass, DOMAIN, _ISSUE_IMIS_PARSE)
+            self._parse_issue.clear()
         self.last_success = dt_util.utcnow()
         return ImisData(measurement=measurement, daily_snow=self._daily_snow)
 

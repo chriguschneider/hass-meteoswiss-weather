@@ -1,23 +1,23 @@
 {
   "issues": {
     "parse_error_station": {
-      "title": "MeteoSwiss: formato del file di stazione modificato",
+      "title": "MeteoSwiss: formato del file di stazione modificato ({location})",
       "description": "Il file di osservazioni della stazione SwissMetNet non è stato possibile analizzare. Il formato a monte potrebbe essere cambiato. Consultare `docs/ogd.md` nel repository dell'integrazione per il formato attuale e aprire un issue di deriva se il layout non corrisponde più."
     },
     "parse_error_forecast": {
-      "title": "MeteoSwiss: formato del file di previsione modificato",
+      "title": "MeteoSwiss: formato del file di previsione modificato ({location})",
       "description": "Il file di previsioni locali non è stato possibile analizzare. Il formato a monte potrebbe essere cambiato. Consultare `docs/ogd.md` nel repository dell'integrazione per il formato attuale e aprire un issue di deriva se il layout non corrisponde più."
     },
     "parse_error_pollen": {
-      "title": "MeteoSwiss: formato del file pollinico modificato",
+      "title": "MeteoSwiss: formato del file pollinico modificato ({location})",
       "description": "Il file di osservazioni polliniche non è stato possibile analizzare. Il formato a monte potrebbe essere cambiato. Consultare `docs/ogd.md` nel repository dell'integrazione per il formato attuale e aprire un issue di deriva se il layout non corrisponde più."
     },
     "parse_error_precip": {
-      "title": "MeteoSwiss: formato del file della stazione di precipitazione modificato",
+      "title": "MeteoSwiss: formato del file della stazione di precipitazione modificato ({location})",
       "description": "Il file di osservazione della stazione di precipitazione non è stato possibile analizzare. Il formato a monte potrebbe essere cambiato. Consultare `docs/ogd.md` nel repository dell'integrazione per il formato attuale e aprire un issue di deriva se il layout non corrisponde più."
     },
     "parse_error_imis": {
-      "title": "SLF IMIS: formato della risposta della stazione di neve modificato",
+      "title": "SLF IMIS: formato della risposta della stazione di neve modificato ({location})",
       "description": "La risposta della stazione di neve SLF IMIS non è stato possibile analizzare. Il formato a monte potrebbe essere cambiato. Consultare `docs/slf.md` nel repository dell'integrazione per il formato attuale e aprire un issue di deriva se non corrisponde più."
     },
     "imis_no_data": {

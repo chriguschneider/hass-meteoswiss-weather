@@ -45,6 +45,7 @@ from .const import (
 )
 from .http import get_bytes
 from .models import FileLayout, ForecastPoint
+from .parse import parse_stamp
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -468,21 +469,6 @@ async def _fetch_point_major(
 # Date-major: horizon prefix
 # ---------------------------------------------------------------------------
 
-
-def _dt_from_stamp(stamp: str) -> datetime | None:
-    digits = stamp.strip()
-    if len(digits) < 12 or not digits[:12].isdigit():
-        return None
-    return datetime(
-        int(digits[:4]),
-        int(digits[4:6]),
-        int(digits[6:8]),
-        int(digits[8:10]),
-        int(digits[10:12]),
-        tzinfo=UTC,
-    )
-
-
 def _last_complete_date(data: bytes, at_eof: bool) -> datetime | None:
     """Date of the last *complete* row in ``data`` (its max, date-major)."""
     end = len(data)
@@ -494,7 +480,7 @@ def _last_complete_date(data: bytes, at_eof: bool) -> datetime | None:
     nl = seg.rfind(b"\n")
     line = seg[nl + 1 :] if nl != -1 else seg
     row = _parse_row(0, line)
-    return _dt_from_stamp(row.date) if row is not None else None
+    return parse_stamp(row.date) if row is not None else None
 
 
 async def _fetch_date_major(
@@ -506,7 +492,7 @@ async def _fetch_date_major(
         return (await reader.read_all()).decode(FORECAST_ENCODING)
 
     first = await _read_row_after(reader, 0)
-    start_dt = _dt_from_stamp(first.date) if first is not None else None
+    start_dt = parse_stamp(first.date) if first is not None else None
     if start_dt is None:
         return (await reader.read_all()).decode(FORECAST_ENCODING)
 
@@ -940,15 +926,15 @@ async def _fetch_rows_date_major(
         header = hint.header.encode(FORECAST_ENCODING)
         first_start = len(header)
         first_stamp, last_stamp = hint.first_stamp, hint.last_stamp
-        first_dt = _dt_from_stamp(first_stamp)
-        last_dt = _dt_from_stamp(last_stamp)
+        first_dt = parse_stamp(first_stamp)
+        last_dt = parse_stamp(last_stamp)
     else:
         header = await _read_header(reader)
         size = await reader.size()
         first = await _read_row_after(reader, 0)
         last = await _read_row_before(reader, size)
-        first_dt = _dt_from_stamp(first.date) if first is not None else None
-        last_dt = _dt_from_stamp(last.date) if last is not None else None
+        first_dt = parse_stamp(first.date) if first is not None else None
+        last_dt = parse_stamp(last.date) if last is not None else None
         if first is None or first_dt is None or last_dt is None:
             raise _NotProven("could not read the file's first/last row")
         first_start = first.start
@@ -993,7 +979,7 @@ async def _fetch_rows_date_major(
     # it is out of range. The rows found below verify it either way.
     anchor_idx, anchor_off = 0, first_start + geometry.row_offset
     anchor_dt = (
-        _dt_from_stamp(geometry.anchor_stamp) if geometry.anchor_stamp else None
+        parse_stamp(geometry.anchor_stamp) if geometry.anchor_stamp else None
     )
     if (
         anchor_dt is not None
@@ -1065,7 +1051,7 @@ def _window_complete(
     stamps = _point_stamps(text)
     if not stamps:
         return False
-    first_dt, last_dt = _dt_from_stamp(stamps[0]), _dt_from_stamp(stamps[-1])
+    first_dt, last_dt = parse_stamp(stamps[0]), parse_stamp(stamps[-1])
     if first_dt is None or last_dt is None:
         return False
     have = set(stamps)
@@ -1440,7 +1426,7 @@ async def _resolve_run_end(
     a stamp, so the caller falls back to a single whole-run fetch.
     """
     if hint is not None and hint.last_stamp and _hint_is_current(hint, utc_day):
-        last = _dt_from_stamp(hint.last_stamp)
+        last = parse_stamp(hint.last_stamp)
         if last is not None:
             return last + step
     reader = make_reader()
@@ -1448,7 +1434,7 @@ async def _resolve_run_end(
     last_row = await _read_row_before(reader, size)
     if last_row is None:
         return None
-    last = _dt_from_stamp(last_row.date)
+    last = parse_stamp(last_row.date)
     return last + step if last is not None else None
 
 

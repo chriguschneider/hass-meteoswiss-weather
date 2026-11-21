@@ -21,6 +21,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.issue_registry import async_delete_issue
 from homeassistant.helpers.selector import ConfigEntrySelector
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -53,11 +54,13 @@ from .const import (
     TRAFFIC_STORAGE_VERSION,
 )
 from .coordinator import (
+    PARSE_ISSUE_KEYS,
     ForecastCoordinator,
     ImisCoordinator,
     PollenCoordinator,
     PrecipStationCoordinator,
     StationCoordinator,
+    parse_issue_id,
 )
 from .history import async_import_history
 from .ogd import (
@@ -238,6 +241,12 @@ async def async_setup_entry(
     made. A point entry (postal code / mountain) is set up as before, and
     ignores any ``imis_station_*`` keys left in its data by v0.5.0–v0.6.2.
     """
+    # Parse-error issues used domain-wide ids (the bare key) up to v0.10.1;
+    # they are per entry now (issue #251). Drop any left over so no orphan
+    # survives the update. Idempotent, so running it per entry is harmless.
+    for key in PARSE_ISSUE_KEYS:
+        async_delete_issue(hass, DOMAIN, key)
+
     if entry.data.get(CONF_ENTRY_TYPE) == ENTRY_TYPE_SNOW_STATION:
         return await _async_setup_snow_station_entry(hass, entry)
 
@@ -441,11 +450,18 @@ async def _async_reload_entry(
 async def async_unload_entry(
     hass: HomeAssistant, entry: MeteoSwissConfigEntry
 ) -> bool:
-    """Unload a config entry, dropping the service once the last entry goes."""
+    """Unload a config entry, dropping the service once the last entry goes.
+
+    The entry's parse-error repair issues go with it: nothing polls for it any
+    more, so nothing would clear them. A reload re-raises them on the next poll
+    if the file is still unparsable.
+    """
     unloaded = await hass.config_entries.async_unload_platforms(
         entry, _platforms_for(entry)
     )
     if unloaded:
+        for key in PARSE_ISSUE_KEYS:
+            async_delete_issue(hass, DOMAIN, parse_issue_id(key, entry.entry_id))
         remaining = [
             other
             for other in hass.config_entries.async_entries(DOMAIN)

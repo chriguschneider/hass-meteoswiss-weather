@@ -11,38 +11,24 @@ come from the parameter metadata file, not from a hard-coded mapping.
 
 from __future__ import annotations
 
-import csv
-import io
-from datetime import UTC, datetime
-
 import aiohttp
 
 from .const import (
-    CSV_SEPARATOR,
     META_POLLEN_DATAINVENTORY_URL,
     META_POLLEN_PARAMETERS_URL,
     META_POLLEN_STATIONS_URL,
     POLLEN_ENCODING,
     pollen_now_url,
 )
-from .geo import haversine_km
+from .geo import nearest
 from .http import CachedResponse, get_text
 from .models import OgdParseError, PollenObservation, PollenStation
+from .parse import csv_reader, parse_timestamp, to_float
+from .stations import _fetch_datainventory_impl, _fetch_stations_impl
 
-# Header columns of ogd-pollen_meta_stations.csv the client depends on.
-# The pollen meta CSV follows the same shape as the SwissMetNet A1 meta CSV
-# (docs/ogd.md §Pollen).
+# Station metadata and data inventory share the SwissMetNet A1 shape
+# (docs/ogd.md §Pollen) and are parsed by ``stations``.
 _ABBR = "station_abbr"
-_NAME = "station_name"
-_CANTON = "station_canton"
-_HEIGHT = "station_height_masl"
-_LAT = "station_coordinates_wgs84_lat"
-_LON = "station_coordinates_wgs84_lon"
-
-# Header columns of ogd-pollen_meta_datainventory.csv (same shape as A1 inv).
-_INV_ABBR = "station_abbr"
-_INV_PARAM = "parameter_shortname"
-_INV_TILL = "data_till"
 
 # Header columns of ogd-pollen_meta_parameters.csv.
 _PARAM_CODE = "parameter_shortname"
@@ -53,52 +39,17 @@ _NON_TAXON_FIELDS = frozenset({"station_abbr", "reference_timestamp"})
 _TIMESTAMP = "reference_timestamp"
 
 
-def _reader(body: str) -> csv.DictReader:
-    return csv.DictReader(io.StringIO(body), delimiter=CSV_SEPARATOR)
-
-
-def _to_float(value: str | None) -> float | None:
-    """Parse a numeric cell; empty means "not measured", not zero."""
-    if value is None or value.strip() == "":
-        return None
-    try:
-        return float(value)
-    except ValueError:
-        return None
-
-
 async def fetch_pollen_stations(
     session: aiohttp.ClientSession,
 ) -> list[PollenStation]:
     """Fetch and parse the pollen station metadata list."""
-    response = await get_text(
-        session, META_POLLEN_STATIONS_URL, encoding=POLLEN_ENCODING
+    return await _fetch_stations_impl(
+        session,
+        META_POLLEN_STATIONS_URL,
+        POLLEN_ENCODING,
+        PollenStation,
+        "pollen ",
     )
-    reader = _reader(response.body)
-    if reader.fieldnames is None or _ABBR not in reader.fieldnames:
-        raise OgdParseError("pollen station metadata is missing its header")
-
-    stations: list[PollenStation] = []
-    for row in reader:
-        abbr = (row.get(_ABBR) or "").strip()
-        lat = _to_float(row.get(_LAT))
-        lon = _to_float(row.get(_LON))
-        if not abbr or lat is None or lon is None:
-            continue
-        stations.append(
-            PollenStation(
-                abbr=abbr,
-                name=(row.get(_NAME) or "").strip(),
-                canton=(row.get(_CANTON) or "").strip(),
-                lat=lat,
-                lon=lon,
-                height_masl=_to_float(row.get(_HEIGHT)),
-            )
-        )
-
-    if not stations:
-        raise OgdParseError("pollen station metadata contained no usable stations")
-    return stations
 
 
 async def fetch_pollen_parameters(
@@ -114,7 +65,7 @@ async def fetch_pollen_parameters(
     response = await get_text(
         session, META_POLLEN_PARAMETERS_URL, encoding=POLLEN_ENCODING
     )
-    reader = _reader(response.body)
+    reader = csv_reader(response.body)
     if (
         reader.fieldnames is None
         or _PARAM_CODE not in reader.fieldnames
@@ -141,26 +92,9 @@ async def fetch_pollen_datainventory(
     not in the returned dict; callers should treat that as "unknown". Only
     parameters without a ``data_till`` value (i.e. still active) are included.
     """
-    response = await get_text(
-        session, META_POLLEN_DATAINVENTORY_URL, encoding=POLLEN_ENCODING
+    return await _fetch_datainventory_impl(
+        session, META_POLLEN_DATAINVENTORY_URL, POLLEN_ENCODING, "pollen "
     )
-    reader = _reader(response.body)
-    if (
-        reader.fieldnames is None
-        or _INV_ABBR not in reader.fieldnames
-        or _INV_PARAM not in reader.fieldnames
-    ):
-        raise OgdParseError("pollen data inventory is missing its header")
-
-    inventory: dict[str, set[str]] = {}
-    for row in reader:
-        abbr = (row.get(_INV_ABBR) or "").strip().upper()
-        param = (row.get(_INV_PARAM) or "").strip()
-        ended = (row.get(_INV_TILL) or "").strip()
-        if abbr and param and not ended:
-            inventory.setdefault(abbr, set()).add(param)
-
-    return {abbr: frozenset(params) for abbr, params in inventory.items()}
 
 
 def nearest_pollen_station(
@@ -169,7 +103,7 @@ def nearest_pollen_station(
     lon: float,
 ) -> PollenStation:
     """The pollen station closest to ``lat``/``lon``."""
-    return min(stations, key=lambda s: haversine_km(lat, lon, s.lat, s.lon))
+    return nearest(stations, lat, lon, 1)[0]
 
 
 def nearest_pollen_stations(
@@ -179,7 +113,7 @@ def nearest_pollen_stations(
     limit: int = 3,
 ) -> list[PollenStation]:
     """The ``limit`` pollen stations closest to ``lat``/``lon``, nearest first."""
-    return sorted(stations, key=lambda s: haversine_km(lat, lon, s.lat, s.lon))[:limit]
+    return nearest(stations, lat, lon, limit)
 
 
 async def fetch_pollen_current(
@@ -200,7 +134,7 @@ async def fetch_pollen_current(
     response = await get_text(
         session, pollen_now_url(abbr), cache=cache, encoding=POLLEN_ENCODING
     )
-    reader = _reader(response.body)
+    reader = csv_reader(response.body)
     if reader.fieldnames is None or _TIMESTAMP not in reader.fieldnames:
         raise OgdParseError(f"{abbr}: pollen now file is missing its header")
 
@@ -219,21 +153,10 @@ async def fetch_pollen_current(
     if latest is None:
         raise OgdParseError(f"{abbr}: pollen now file has no row with measurements")
 
-    ts = _parse_timestamp(latest.get(_TIMESTAMP), abbr)
-    values = {col: _to_float(latest.get(col)) for col in taxon_cols}
+    ts = parse_timestamp(latest.get(_TIMESTAMP), abbr, subject="pollen observation")
+    values = {col: to_float(latest.get(col)) for col in taxon_cols}
     return PollenObservation(
         station_abbr=(latest.get(_ABBR) or abbr).strip().upper(),
         ts_utc=ts,
         values=values,
     )
-
-
-def _parse_timestamp(value: str | None, abbr: str) -> datetime:
-    """Parse ``dd.mm.yyyy HH:MM`` (UTC) into an aware datetime."""
-    if not value or value.strip() == "":
-        raise OgdParseError(f"{abbr}: pollen observation row has no timestamp")
-    try:
-        naive = datetime.strptime(value.strip(), "%d.%m.%Y %H:%M")
-    except ValueError as err:
-        raise OgdParseError(f"{abbr}: bad timestamp {value!r}") from err
-    return naive.replace(tzinfo=UTC)

@@ -10,10 +10,11 @@ of any history fetch until the service is called.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from homeassistant.components.recorder.models import StatisticMeanType
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
@@ -134,7 +135,10 @@ def _spec(key: str):
 
 def test_temperature_statistics_carry_mean_min_max() -> None:
     stats = _build_statistics(_spec("temperature"), _ROWS)
-    assert [s["start"] for s in stats] == [r.ts_utc for r in _ROWS]
+    # reference timestamp is the END of the hour -> start is one hour earlier
+    assert [s["start"] for s in stats] == [
+        r.ts_utc - timedelta(hours=1) for r in _ROWS
+    ]
     assert stats[0]["mean"] == pytest.approx(2.3)
     assert stats[0]["min"] == pytest.approx(1.8)
     assert stats[0]["max"] == pytest.approx(2.5)
@@ -150,14 +154,18 @@ def test_mean_statistic_skips_missing_hours() -> None:
     assert all("mean" in s and "sum" not in s for s in stats)
 
 
-def test_precipitation_statistics_are_cumulative_sum() -> None:
+def test_reference_timestamp_16_utc_becomes_start_15_utc() -> None:
+    rows = [_row(datetime(2026, 1, 1, 16, 0, tzinfo=UTC), temp_mean=1.0)]
+    stats = _build_statistics(_spec("temperature"), rows)
+    assert stats[0]["start"] == datetime(2026, 1, 1, 15, 0, tzinfo=UTC)
+
+
+def test_precipitation_is_hourly_mean_of_ten_minute_amount() -> None:
     stats = _build_statistics(_spec("precipitation"), _ROWS)
-    # Third row's cell is empty → skipped; the sum runs over the present hours.
-    assert len(stats) == 2
-    assert stats[0]["state"] == pytest.approx(0.1)
-    assert stats[0]["sum"] == pytest.approx(0.1)
-    assert stats[1]["state"] == pytest.approx(0.4)
-    assert stats[1]["sum"] == pytest.approx(0.5)
+    assert len(stats) == 2  # the empty cell is skipped
+    assert stats[0]["mean"] == pytest.approx(0.1 / 6)
+    assert stats[1]["mean"] == pytest.approx(0.4 / 6)
+    assert all("sum" not in s and "state" not in s for s in stats)
 
 
 def test_units_match_the_sensor_native_units() -> None:
@@ -166,8 +174,6 @@ def test_units_match_the_sensor_native_units() -> None:
     assert units["humidity"] == "%"
     assert units["precipitation"] == "mm"
     assert units["wind_speed"] == "km/h"
-    # Precipitation is the only sum; everything else is a mean.
-    assert [s.sensor_key for s in _STAT_MAPS if s.has_sum] == ["precipitation"]
 
 
 # ---------------------------------------------------------------------------
@@ -213,8 +219,11 @@ async def test_backfill_imports_under_sensor_statistic_ids(
     assert temp_meta["source"] == "recorder"
 
     precip_meta = by_id[ids["precipitation"]][1]
-    assert precip_meta["has_mean"] is False
-    assert precip_meta["has_sum"] is True
+    assert precip_meta["has_mean"] is True
+    assert precip_meta["has_sum"] is False
+    for meta in (temp_meta, precip_meta):
+        assert meta["mean_type"] is StatisticMeanType.ARITHMETIC
+        assert "unit_class" in meta
     assert precip_meta["unit_of_measurement"] == "mm"
 
 
@@ -241,6 +250,33 @@ async def test_backfill_skips_sensors_without_an_entity(hass: HomeAssistant) -> 
 
     assert result.series == 1
     assert import_stats.call_count == 1
+
+
+async def test_backfill_skips_disabled_sensors(hass: HomeAssistant) -> None:
+    entry = _entry()
+    entry.add_to_hass(hass)
+    ids = _register_station_sensors(hass, entry, "temperature", "dew_point")
+    er.async_get(hass).async_update_entity(
+        ids["dew_point"], disabled_by=er.RegistryEntryDisabler.INTEGRATION
+    )
+    hass.config.components.add("recorder")
+
+    with (
+        patch(
+            "custom_components.meteoswiss_weather.history.fetch_station_history",
+            AsyncMock(return_value=list(_ROWS)),
+        ),
+        patch(
+            "homeassistant.components.recorder.statistics.async_import_statistics"
+        ) as import_stats,
+    ):
+        result = await async_backfill(
+            hass, entry, "BER",
+            datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 12, 31, tzinfo=UTC),
+        )
+
+    assert result.series == 1
+    assert import_stats.call_args.args[1]["statistic_id"] == ids["temperature"]
 
 
 async def test_backfill_replaces_not_duplicates_on_overlap(
