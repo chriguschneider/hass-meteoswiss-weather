@@ -475,7 +475,7 @@ When you change the **weather station** (but not when you only change the foreca
 
 - **Keep** (default): the entities and their history stay as they are. The values recorded before the switch came from the old station; a logbook entry records the moment of the switch so the seam is findable later.
 - **Discard**: the station sensors' recorded states are purged and their long-term statistics are cleared — a clean start at the new station.
-- **Backfill** *(when available)*: the long-term statistics are cleared and then rewritten from the new station's official historical files. Backfill affects **long-term statistics only**, not the raw short-term states. This choice appears once the statistics-import machinery ([ADR-0007](adr/0007-station-history-backfill.md)) ships; keep and discard are available now.
+- **Backfill**: the long-term statistics are rewritten from the new station's official historical files ([ADR-0007](adr/0007-station-history-backfill.md)), from the earliest statistic recorded so far until now. Each hour the new station has data for replaces the old value. Backfill affects **long-term statistics only**, not the raw short-term states. The import runs in the background after the dialog closes; a notification reports the rows imported or the error. A failed import leaves the new station configured. If no statistics have been recorded yet there is nothing to rewrite, and backfill behaves like keep.
 
 Changing only the **forecast point** never touches history — forecast entities carry no meaningful measurement history.
 

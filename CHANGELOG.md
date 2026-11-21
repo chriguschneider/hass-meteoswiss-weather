@@ -9,6 +9,11 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Changing the station can now rewrite the long-term statistics from the new
+  station's official history (Backfill), next to Keep and Discard.
+
 ### Fixed
 
 - Importing station history (service `import_history`) now puts each hourly

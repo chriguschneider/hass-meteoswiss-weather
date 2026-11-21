@@ -12,6 +12,7 @@ pure-OGD tests and these flow tests share the same reference data.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -950,7 +951,7 @@ def _history_options(result: dict) -> list[str]:
 async def test_reconfigure_station_change_keep(
     hass: HomeAssistant, mock_ogd_functions, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A station change offers keep/discard; keep updates data and logs the switch."""
+    """A station change offers keep/discard/backfill; keep updates and logs."""
     entry = _configured_entry()
     entry.add_to_hass(hass)
 
@@ -983,7 +984,11 @@ async def test_reconfigure_station_change_keep(
         result["flow_id"], user_input={CONF_STATION_ABBR: "KLO"}
     )
     assert result["step_id"] == "history"
-    assert _history_options(result) == [HISTORY_KEEP, HISTORY_DISCARD]
+    assert _history_options(result) == [
+        HISTORY_KEEP,
+        HISTORY_DISCARD,
+        HISTORY_BACKFILL,
+    ]
     assert result["description_placeholders"] == {
         "old_station": "Zürich / Fluntern",
         "new_station": "Zürich / Kloten",
@@ -1144,13 +1149,8 @@ async def test_reconfigure_onto_existing_point_aborts(
     assert result["reason"] == "already_configured"
 
 
-async def test_reconfigure_backfill_hidden_without_b12(
-    hass: HomeAssistant, mock_ogd_functions
-) -> None:
-    """The backfill choice is hidden until the recorder-import layer lands."""
-    entry = _configured_entry()
-    entry.add_to_hass(hass)
-
+async def _to_history_step(hass: HomeAssistant, entry: MockConfigEntry) -> dict:
+    """Drive a reconfigure flow from SMA to KLO up to the history step."""
     result = await entry.start_reconfigure_flow(hass)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
@@ -1162,33 +1162,131 @@ async def test_reconfigure_backfill_hidden_without_b12(
         result["flow_id"], user_input={CONF_STATION_ABBR: "KLO"}
     )
     assert result["step_id"] == "history"
-    assert HISTORY_BACKFILL not in _history_options(result)
+    return result
 
 
-async def test_reconfigure_backfill_shown_when_available(
-    hass: HomeAssistant, mock_ogd_functions
+async def test_reconfigure_station_change_backfill(
+    hass: HomeAssistant, mock_ogd_functions, freezer
 ) -> None:
-    """When the machinery is present the backfill choice is offered."""
+    """Backfill updates the entry and schedules the import for the new station.
+
+    The range runs from the earliest recorded statistic until now; the flow
+    finishes without waiting for the import.
+    """
+    freezer.move_to("2026-11-18 12:00:00+00:00")
     entry = _configured_entry()
     entry.add_to_hass(hass)
 
-    result = await entry.start_reconfigure_flow(hass)
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={_CONF_MODE: _MODE_POSTAL_CODE}
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], user_input={CONF_POSTAL_CODE: 8001}
-    )
-    with patch(f"{_FLOW}.BACKFILL_AVAILABLE", True):
+    async def _reload_listener(h: HomeAssistant, e: MockConfigEntry) -> None:
+        await h.config_entries.async_reload(e.entry_id)
+
+    entry.add_update_listener(_reload_listener)
+    result = await _to_history_step(hass, entry)
+
+    earliest = datetime(2025, 3, 4, 5, 0, tzinfo=UTC)
+    stat_ids = {"temperature": "sensor.zurich_temperature"}
+    with (
+        patch(
+            f"{_FLOW}.async_backfill_plan",
+            AsyncMock(return_value=(stat_ids, earliest)),
+        ),
+        patch(
+            f"{_FLOW}.async_backfill_station_change", new=AsyncMock()
+        ) as backfill_mock,
+        patch(f"{_FLOW}.async_log_station_switch") as log_switch,
+        patch(f"{_FLOW}.async_discard_station_history", new=AsyncMock()) as discard,
+        patch.object(hass.config_entries, "async_reload") as reload_mock,
+    ):
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], user_input={CONF_STATION_ABBR: "KLO"}
+            result["flow_id"], user_input={CONF_HISTORY_ACTION: HISTORY_BACKFILL}
         )
-    assert result["step_id"] == "history"
-    assert _history_options(result) == [
-        HISTORY_KEEP,
-        HISTORY_DISCARD,
-        HISTORY_BACKFILL,
-    ]
+        await hass.async_block_till_done()
+
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_STATION_ABBR] == "KLO"
+    reload_mock.assert_called_once_with(entry.entry_id)
+    log_switch.assert_not_called()
+    discard.assert_not_awaited()
+
+    backfill_mock.assert_awaited_once()
+    _hass, called_entry, abbr, start, end, ids = backfill_mock.await_args.args
+    assert called_entry is entry
+    assert abbr == "KLO"  # the new station, not the old one
+    assert start == earliest
+    assert end == datetime(2026, 11, 18, 12, 0, tzinfo=UTC)
+    assert ids == stat_ids
+
+
+async def test_reconfigure_backfill_import_error_keeps_reconfigure(
+    hass: HomeAssistant, mock_ogd_functions
+) -> None:
+    """A failing background import notifies; the entry stays reconfigured."""
+    entry = _configured_entry()
+    entry.add_to_hass(hass)
+    hass.config.components.add("recorder")
+    result = await _to_history_step(hass, entry)
+
+    with (
+        patch(
+            f"{_FLOW}.async_backfill_plan",
+            AsyncMock(
+                return_value=(
+                    {"temperature": "sensor.zurich_temperature"},
+                    datetime(2025, 3, 4, tzinfo=UTC),
+                )
+            ),
+        ),
+        patch(
+            "custom_components.meteoswiss_weather.history.async_get_clientsession",
+            return_value=object(),
+        ),
+        patch(
+            "custom_components.meteoswiss_weather.history.fetch_station_history",
+            AsyncMock(side_effect=OgdConnectionError("boom: some_file.csv")),
+        ),
+        patch(
+            "homeassistant.components.persistent_notification.async_create"
+        ) as notify,
+        patch.object(hass.config_entries, "async_reload"),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={CONF_HISTORY_ACTION: HISTORY_BACKFILL}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_STATION_ABBR] == "KLO"
+    notify.assert_called_once()
+    assert "some_file.csv" in notify.call_args.args[1]
+
+
+async def test_reconfigure_backfill_without_statistics_behaves_like_keep(
+    hass: HomeAssistant, mock_ogd_functions
+) -> None:
+    """With no statistic recorded yet, backfill imports nothing and logs the switch."""
+    entry = _configured_entry()
+    entry.add_to_hass(hass)
+    result = await _to_history_step(hass, entry)
+
+    with (
+        patch(f"{_FLOW}.async_backfill_plan", AsyncMock(return_value=None)),
+        patch(
+            f"{_FLOW}.async_backfill_station_change", new=AsyncMock()
+        ) as backfill_mock,
+        patch(f"{_FLOW}.async_log_station_switch") as log_switch,
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input={CONF_HISTORY_ACTION: HISTORY_BACKFILL}
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_STATION_ABBR] == "KLO"
+    backfill_mock.assert_not_called()
+    log_switch.assert_called_once()
 
 
 async def test_reconfigure_cannot_connect(hass: HomeAssistant) -> None:

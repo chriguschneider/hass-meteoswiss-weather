@@ -50,16 +50,11 @@ ENTRY_TYPE_SNOW_STATION = "snow_station"
 # the station changes. ``keep`` leaves values and statistics untouched and logs
 # the switch; ``discard`` purges the station sensors' states and clears their
 # long-term statistics; ``backfill`` rewrites the statistics from the new
-# station's official history (ADR-0007) — gated behind ``BACKFILL_AVAILABLE``.
+# station's official history (ADR-0007).
 CONF_HISTORY_ACTION = "history_action"
 HISTORY_KEEP = "keep"
 HISTORY_DISCARD = "discard"
 HISTORY_BACKFILL = "backfill"
-# The backfill choice needs the recorder-import layer that follows ADR-0007's
-# parser (issue #51 shipped the parser only; the import layer is its follow-up).
-# Keep/discard ship now; flip this to ``True`` when the import layer lands so the
-# backfill option lights up in the reconfigure flow — no other flow change needed.
-BACKFILL_AVAILABLE = False
 
 # Options-entry keys (ADR-0002: hourly is off by default; ~1 GB/day when on).
 CONF_HOURLY_FORECAST = "hourly_forecast"

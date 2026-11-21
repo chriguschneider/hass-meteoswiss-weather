@@ -152,8 +152,9 @@ menu). The current picks are preselected and the entities are kept. When you
 switch the weather station you choose what happens to the recorded history:
 *keep* it (default, a logbook entry marks the switch), *discard* it (the station
 sensors' states and long-term statistics are cleared), or *backfill* it
-(statistics rewritten from the new station's official history; offered once the
-import layer of [ADR-0007](docs/adr/0007-station-history-backfill.md) ships).
+(statistics rewritten from the new station's official history,
+[ADR-0007](docs/adr/0007-station-history-backfill.md); the import runs in the
+background and reports through a notification).
 
 Measured in September 2026 for one place. MeteoSwiss adjusts the coming hours
 about once an hour, so with everything switched on expect around **1.2 MB per
