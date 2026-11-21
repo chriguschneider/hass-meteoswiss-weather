@@ -301,7 +301,13 @@ async def async_backfill(
     from homeassistant.components.recorder.statistics import async_import_statistics
 
     session = async_get_clientsession(hass)
-    rows = _dedupe_rows(await fetch_station_history(session, station_abbr, start, end))
+    # ``start``/``end`` are statistic-hour starts, but the file's reference
+    # timestamp is the end of its hour (see _build_statistics): the statistic
+    # starting at ``h`` comes from the row stamped ``h + 1 h``.
+    shift = timedelta(hours=1)
+    rows = _dedupe_rows(
+        await fetch_station_history(session, station_abbr, start + shift, end + shift)
+    )
 
     if stat_ids is None:
         stat_ids = _station_stat_ids(hass, entry)

@@ -325,6 +325,58 @@ async def test_backfill_station_change_notifies_success(hass: HomeAssistant) -> 
     assert "2025-03-04 to 2026-11-18" in message
 
 
+async def test_backfill_range_is_statistic_hours_not_reference_timestamps(
+    hass: HomeAssistant,
+) -> None:
+    """Earliest statistic 05:00 → first imported statistic starts 05:00, none at 04:00.
+
+    A row stamped ``ts`` becomes the statistic starting at ``ts - 1 h``, so the
+    fetch must ask for ``[start + 1 h, end + 1 h]``. The fake fetch filters on
+    the reference timestamp like ``ogd/history.py`` does.
+    """
+    from datetime import timedelta
+
+    from custom_components.meteoswiss_weather.ogd import HourlyHistoryRow
+
+    entry = _entry()
+    entry.add_to_hass(hass)
+    temp = er.async_get(hass).async_get_or_create(
+        "sensor", DOMAIN, f"{_DEVICE_UID}_temperature", config_entry=entry
+    )
+    hass.config.components.add("recorder")
+    first = datetime(2026, 10, 31, 5, tzinfo=UTC)
+    all_rows = [
+        HourlyHistoryRow(ts_utc=first + timedelta(hours=h), temp_mean=float(h))
+        for h in range(-1, 4)  # reference timestamps 04:00 .. 08:00
+    ]
+
+    async def _fetch(_session, _abbr, start, end):
+        return [r for r in all_rows if start <= r.ts_utc <= end]
+
+    end = first + timedelta(hours=2)  # last statistic hour: 07:00
+    with (
+        patch(
+            "custom_components.meteoswiss_weather.history.async_get_clientsession",
+            return_value=object(),
+        ),
+        patch(
+            "custom_components.meteoswiss_weather.history.fetch_station_history",
+            AsyncMock(side_effect=_fetch),
+        ),
+        patch(
+            "homeassistant.components.recorder.statistics.async_import_statistics"
+        ) as import_stats,
+        patch("homeassistant.components.persistent_notification.async_create"),
+    ):
+        await async_backfill_station_change(
+            hass, entry, "KLO", first, end, {"temperature": temp.entity_id}
+        )
+
+    starts = [s["start"] for s in import_stats.call_args.args[2]]
+    assert starts == [first + timedelta(hours=h) for h in range(3)]
+    assert first - timedelta(hours=1) not in starts
+
+
 async def test_backfill_station_change_error_notifies_and_does_not_raise(
     hass: HomeAssistant,
 ) -> None:

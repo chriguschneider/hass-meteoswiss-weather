@@ -368,7 +368,9 @@ async def test_service_defaults_to_current_year(hass: HomeAssistant, freezer) ->
 
     fetch.assert_called_once()
     _, _abbr, start, end = fetch.call_args.args
-    assert start == datetime(2026, 1, 1, tzinfo=UTC)
+    # Requested statistic hours start 2026-01-01 00:00; the file stamps the end
+    # of each hour, so the fetch range is shifted by one hour.
+    assert start == datetime(2026, 1, 1, 1, tzinfo=UTC)
     assert end.year == 2026 and end.month == 8
 
 
