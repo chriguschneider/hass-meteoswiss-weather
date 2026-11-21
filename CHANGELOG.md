@@ -16,6 +16,8 @@ using the matching section below as release notes.
 
 ### Fixed
 
+- The options summary no longer warns that long hourly horizons download large
+  parts of 30 MB files; it now shows the real, much smaller cost.
 - Importing station history (service `import_history`) now puts each hourly
   value at the right hour (it landed one hour late), keeps precipitation in the
   same form as the live sensor so its graph stays readable, and no longer

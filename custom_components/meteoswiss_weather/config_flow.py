@@ -844,17 +844,6 @@ def _traffic_text(estimate: TrafficEstimate) -> str:
     confidence = _confidence_label(estimate)
     per_refresh = _format_bytes(estimate.bytes_per_refresh)
     per_day = _format_bytes(estimate.bytes_per_day)
-    if estimate.has_unbounded:
-        # At this horizon the date-major files no longer fit row addressing and
-        # fall to a large prefix of the ~30 MB files (ADR-0008 §4): there is no
-        # fixed number to quote, so state the consequence honestly (issue #145).
-        return (
-            f"about {per_refresh} per refresh for the row-addressed files "
-            f"(~{per_day} per day, {confidence}), plus the temperature and any "
-            "cloud or percentile files, which at this horizon no longer fit row "
-            "addressing and are fetched as a large prefix of the ~30 MB source "
-            "files — not a fixed number."
-        )
     return (
         f"about {per_refresh} per refresh, roughly {per_day} per day "
         f"(~{estimate.refreshes_per_day} refreshes; {confidence})."

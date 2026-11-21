@@ -43,7 +43,6 @@ def test_hourly_off_is_only_the_daily_baseline() -> None:
     # Nothing measured, so the whole estimate is from the table.
     assert not est.any_measured
     assert not est.all_measured
-    assert not est.has_unbounded
 
 
 def test_zero_degree_has_its_own_kind() -> None:
@@ -91,15 +90,19 @@ def test_per_day_is_per_refresh_times_the_refresh_count() -> None:
     assert est.bytes_per_day == est.bytes_per_refresh * REFRESHES_PER_DAY
 
 
-def test_long_horizon_date_major_files_are_unbounded() -> None:
-    """A horizon past the row-addressing cap has no fixed date-major number."""
-    est = estimate_traffic(hourly=True, horizon_days=HOURLY_HORIZON_FULL_RUN)
-    temp = _by_param(est)[HOURLY_TEMPERATURE]
-    assert temp.unbounded
-    assert temp.bytes == 0
-    assert est.has_unbounded
-    # The point-major/daily files still carry fixed numbers.
-    assert est.bytes_per_refresh > 0
+def test_long_horizons_have_a_finite_growing_per_day_figure() -> None:
+    """Horizons 3, 4, 8 and the full run each cost a finite, growing amount."""
+    per_day = [
+        estimate_traffic(hourly=True, horizon_days=d).bytes_per_day
+        for d in (3, 4, 8, HOURLY_HORIZON_FULL_RUN)
+    ]
+    assert all(0 < b < 50_000_000 for b in per_day)
+    assert per_day == sorted(set(per_day))
+    # The near tier stays what the default horizon costs; the tail is extra.
+    near = estimate_traffic(hourly=True, horizon_days=2)
+    far = estimate_traffic(hourly=True, horizon_days=8)
+    assert far.bytes_per_refresh == near.bytes_per_refresh
+    assert _by_param(far)[HOURLY_TEMPERATURE].far_bytes > 0
 
 
 def test_measured_beats_estimated_for_active_files() -> None:
@@ -116,7 +119,7 @@ def test_measured_beats_estimated_for_active_files() -> None:
 
 
 def test_measured_beats_estimated_even_past_the_cap() -> None:
-    """A measured fetch is a real number, so it is never treated as unbounded."""
+    """A measured fetch replaces the near figure at any horizon."""
     measured = {HOURLY_TEMPERATURE: 9_000_000}
     est = estimate_traffic(
         hourly=True,
@@ -125,7 +128,6 @@ def test_measured_beats_estimated_even_past_the_cap() -> None:
     )
     temp = _by_param(est)[HOURLY_TEMPERATURE]
     assert temp.measured
-    assert not temp.unbounded
     assert temp.bytes == 9_000_000
 
 
@@ -136,3 +138,13 @@ def test_all_measured_when_every_file_has_a_measurement() -> None:
     est = estimate_traffic(hourly=True, horizon_days=2, measured_bytes=measured)
     assert est.all_measured
     assert est.bytes_per_refresh == 1_000 * len(est.files)
+
+
+def test_summary_text_for_a_long_horizon_has_no_prefix_warning() -> None:
+    """The options summary quotes real numbers at horizon 8 (issue #246)."""
+    from custom_components.meteoswiss_weather.config_flow import _traffic_text
+
+    text = _traffic_text(estimate_traffic(hourly=True, horizon_days=8))
+    assert "prefix" not in text
+    assert "30 MB" not in text
+    assert "per day" in text
