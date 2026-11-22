@@ -148,3 +148,21 @@ def test_zip_release_asset_is_wired_end_to_end() -> None:
     assert f"cd custom_components/{domain}" in release_workflow, (
         "release.yml must zip from inside the integration directory"
     )
+
+
+def test_icons_are_translation_keys_not_python() -> None:
+    """Icons live in icons.json (icon-translations); every key must exist."""
+    icons = json.loads((COMPONENT / "icons.json").read_text(encoding="utf-8"))
+    strings = json.loads((COMPONENT / "strings.json").read_text(encoding="utf-8"))
+    known = set(strings["entity"]["sensor"])
+    for key, spec in icons["entity"]["sensor"].items():
+        assert key in known, f"icons.json key {key!r} is not in strings.json"
+        assert spec["default"].startswith("mdi:")
+    for path in COMPONENT.glob("*.py"):
+        assert 'icon="mdi' not in path.read_text(encoding="utf-8"), path.name
+
+
+def test_platforms_declare_parallel_updates() -> None:
+    for name in ("sensor.py", "weather.py"):
+        text = (COMPONENT / name).read_text(encoding="utf-8")
+        assert re.search(r"^PARALLEL_UPDATES = 0$", text, re.M), name

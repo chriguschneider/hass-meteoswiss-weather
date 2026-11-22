@@ -156,6 +156,16 @@ async def test_happy_path_two_point_postal_code(
     assert data[CONF_POINT_HEIGHT] == 595.0
     assert data[CONF_STATION_ABBR] == "BER"
     assert data[CONF_STATION_NAME] == "Bern / Zollikofen"
+    # Same key set as reconfigure (one builder): no key can drift apart.
+    assert {
+        CONF_POINT_ID,
+        CONF_POINT_TYPE_ID,
+        CONF_POSTAL_CODE,
+        CONF_POINT_NAME,
+        CONF_POINT_HEIGHT,
+        CONF_STATION_ABBR,
+        CONF_STATION_NAME,
+    } <= set(data)
 
 
 # ---------------------------------------------------------------------------
@@ -1106,6 +1116,15 @@ async def test_reconfigure_point_only_change_skips_history(
     assert entry.data[CONF_POINT_NAME] == "Schliern b. Köniz"
     assert entry.data[CONF_POINT_HEIGHT] == 620.0
     assert entry.data[CONF_STATION_ABBR] == "BER"
+    assert {
+        CONF_POINT_ID,
+        CONF_POINT_TYPE_ID,
+        CONF_POSTAL_CODE,
+        CONF_POINT_NAME,
+        CONF_POINT_HEIGHT,
+        CONF_STATION_ABBR,
+        CONF_STATION_NAME,
+    } <= set(entry.data)
     assert entry.unique_id == "2-309801"
     reload_mock.assert_called_once_with(entry.entry_id)
     assert "has an update listener" not in caplog.text
