@@ -294,7 +294,8 @@ async def async_backfill(
     """
     if _RECORDER_DOMAIN not in hass.config.components:
         raise HomeAssistantError(
-            "The recorder is not loaded; cannot import long-term statistics"
+            translation_domain=DOMAIN,
+            translation_key="recorder_not_loaded",
         )
 
     # Imported lazily so the integration never hard-depends on the recorder.
