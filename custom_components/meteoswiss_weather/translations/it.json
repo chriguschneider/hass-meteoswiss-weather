@@ -181,6 +181,26 @@
       }
     }
   },
+  "exceptions": {
+    "entry_not_found": {
+      "message": "Nessuna voce MeteoSwiss Weather con ID {entry_id}."
+    },
+    "entry_not_loaded": {
+      "message": "La voce MeteoSwiss Weather «{title}» non è caricata."
+    },
+    "entry_without_station": {
+      "message": "La voce «{title}» non ha una stazione meteo di cui importare lo storico."
+    },
+    "end_before_start": {
+      "message": "«Fine» non deve essere precedente a «inizio»."
+    },
+    "import_failed": {
+      "message": "Importazione dello storico non riuscita: {error}"
+    },
+    "recorder_not_loaded": {
+      "message": "Il recorder non è caricato; impossibile importare le statistiche a lungo termine."
+    }
+  },
   "services": {
     "import_history": {
       "name": "Importa cronologia",

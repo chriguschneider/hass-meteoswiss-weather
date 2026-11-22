@@ -15,9 +15,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.components.recorder.models import StatisticMeanType
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
+from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.meteoswiss_weather import (
@@ -25,7 +27,8 @@ from custom_components.meteoswiss_weather import (
     ATTR_END,
     ATTR_START,
     SERVICE_IMPORT_HISTORY,
-    _async_register_services,
+    async_setup,
+    async_unload_entry,
 )
 from custom_components.meteoswiss_weather.const import (
     CONF_POINT_ID,
@@ -331,12 +334,13 @@ async def test_backfill_without_recorder_raises(hass: HomeAssistant) -> None:
             "custom_components.meteoswiss_weather.history.fetch_station_history",
             AsyncMock(return_value=list(_ROWS)),
         ) as fetch,
-        pytest.raises(Exception, match="recorder is not loaded"),
+        pytest.raises(HomeAssistantError) as exc,
     ):
         await async_backfill(
             hass, entry, "BER",
             datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 12, 31, tzinfo=UTC),
         )
+    assert exc.value.translation_key == "recorder_not_loaded"
     fetch.assert_not_called()  # bail out before any fetch
 
 
@@ -349,9 +353,10 @@ async def test_service_defaults_to_current_year(hass: HomeAssistant, freezer) ->
     freezer.move_to("2026-08-28")
     entry = _entry()
     entry.add_to_hass(hass)
+    entry.mock_state(hass, ConfigEntryState.LOADED)
     _register_station_sensors(hass, entry, "temperature")
     hass.config.components.add("recorder")
-    _async_register_services(hass)
+    await async_setup(hass, {})
 
     with patch(
         "custom_components.meteoswiss_weather.history.fetch_station_history",
@@ -377,9 +382,10 @@ async def test_service_defaults_to_current_year(hass: HomeAssistant, freezer) ->
 async def test_service_end_before_start_rejected(hass: HomeAssistant) -> None:
     entry = _entry()
     entry.add_to_hass(hass)
+    entry.mock_state(hass, ConfigEntryState.LOADED)
     _register_station_sensors(hass, entry, "temperature")
     hass.config.components.add("recorder")
-    _async_register_services(hass)
+    await async_setup(hass, {})
 
     with patch(
         "custom_components.meteoswiss_weather.history.fetch_station_history",
@@ -402,6 +408,7 @@ async def test_service_no_fetch_until_called(hass: HomeAssistant) -> None:
     """Registering the service performs no history fetch; calling it does."""
     entry = _entry()
     entry.add_to_hass(hass)
+    entry.mock_state(hass, ConfigEntryState.LOADED)
     _register_station_sensors(hass, entry, "temperature")
     hass.config.components.add("recorder")
 
@@ -411,7 +418,7 @@ async def test_service_no_fetch_until_called(hass: HomeAssistant) -> None:
     ) as fetch, patch(
         "homeassistant.components.recorder.statistics.async_import_statistics"
     ):
-        _async_register_services(hass)
+        await async_setup(hass, {})
         assert fetch.call_count == 0  # registration alone hits no network
 
         await hass.services.async_call(
@@ -427,16 +434,17 @@ async def test_service_reports_fetch_error(hass: HomeAssistant) -> None:
     """A fetch failure surfaces the file-naming error and notifies the user."""
     entry = _entry()
     entry.add_to_hass(hass)
+    entry.mock_state(hass, ConfigEntryState.LOADED)
     _register_station_sensors(hass, entry, "temperature")
     hass.config.components.add("recorder")
-    _async_register_services(hass)
+    await async_setup(hass, {})
 
     with patch(
         "custom_components.meteoswiss_weather.history.fetch_station_history",
         AsyncMock(side_effect=OgdConnectionError("boom: some_file.csv")),
     ), patch(
         "homeassistant.components.persistent_notification.async_create"
-    ) as notify, pytest.raises(Exception, match="boom: some_file.csv"):
+    ) as notify, pytest.raises(HomeAssistantError) as exc:
         await hass.services.async_call(
             DOMAIN,
             SERVICE_IMPORT_HISTORY,
@@ -444,5 +452,50 @@ async def test_service_reports_fetch_error(hass: HomeAssistant) -> None:
             blocking=True,
         )
 
+    assert exc.value.translation_key == "import_failed"
+    assert "some_file.csv" in exc.value.translation_placeholders["error"]
     notify.assert_called_once()
     assert "some_file.csv" in notify.call_args.args[1]
+
+
+async def test_service_exists_after_setup_without_entries(hass: HomeAssistant) -> None:
+    """The service belongs to the domain, not to a loaded entry."""
+    assert await async_setup_component(hass, DOMAIN, {})
+    assert hass.services.has_service(DOMAIN, SERVICE_IMPORT_HISTORY)
+
+
+@pytest.mark.parametrize("known", [False, True])
+async def test_service_rejects_unknown_or_unloaded_entry(
+    hass: HomeAssistant, known: bool
+) -> None:
+    """An unknown or not-loaded entry is a translated validation error."""
+    await async_setup(hass, {})
+    entry = _entry()
+    entry.add_to_hass(hass)  # state stays NOT_LOADED
+    with patch(
+        "custom_components.meteoswiss_weather.history.fetch_station_history",
+        AsyncMock(return_value=list(_ROWS)),
+    ) as fetch, pytest.raises(ServiceValidationError) as exc:
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_IMPORT_HISTORY,
+            {ATTR_CONFIG_ENTRY_ID: entry.entry_id if known else "nope"},
+            blocking=True,
+        )
+    assert exc.value.translation_domain == DOMAIN
+    assert exc.value.translation_key == (
+        "entry_not_loaded" if known else "entry_not_found"
+    )
+    fetch.assert_not_called()
+
+
+async def test_service_survives_last_entry_unload(hass: HomeAssistant) -> None:
+    await async_setup(hass, {})
+    entry = _entry()
+    entry.add_to_hass(hass)
+    entry.mock_state(hass, ConfigEntryState.LOADED)
+    with patch.object(
+        hass.config_entries, "async_unload_platforms", AsyncMock(return_value=True)
+    ):
+        assert await async_unload_entry(hass, entry)
+    assert hass.services.has_service(DOMAIN, SERVICE_IMPORT_HISTORY)

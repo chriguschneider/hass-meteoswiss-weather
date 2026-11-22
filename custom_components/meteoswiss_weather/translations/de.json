@@ -181,6 +181,26 @@
       }
     }
   },
+  "exceptions": {
+    "entry_not_found": {
+      "message": "Kein MeteoSwiss-Weather-Eintrag mit der ID {entry_id} gefunden."
+    },
+    "entry_not_loaded": {
+      "message": "Der MeteoSwiss-Weather-Eintrag «{title}» ist nicht geladen."
+    },
+    "entry_without_station": {
+      "message": "Der Eintrag «{title}» hat keine Wetterstation, für die Verlaufsdaten importiert werden könnten."
+    },
+    "end_before_start": {
+      "message": "«Ende» darf nicht vor «Start» liegen."
+    },
+    "import_failed": {
+      "message": "Der Import des Verlaufs ist fehlgeschlagen: {error}"
+    },
+    "recorder_not_loaded": {
+      "message": "Der Recorder ist nicht geladen; Langzeitstatistiken können nicht importiert werden."
+    }
+  },
   "services": {
     "import_history": {
       "name": "Verlauf importieren",

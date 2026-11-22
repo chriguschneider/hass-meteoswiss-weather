@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 
 import aiohttp
 import voluptuous as vol
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -24,6 +24,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.issue_registry import async_delete_issue
 from homeassistant.helpers.selector import ConfigEntrySelector
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -350,8 +351,6 @@ async def async_setup_entry(
     # coordinator and the weather entity pick up the new feature set (ADR-0002).
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
 
-    _async_register_services(hass)
-
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
@@ -391,12 +390,18 @@ async def _async_setup_snow_station_entry(
     return True
 
 
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the domain-level services once, independent of any entry."""
+    _async_register_services(hass)
+    return True
+
+
 @callback
 def _async_register_services(hass: HomeAssistant) -> None:
-    """Register the domain-level ``import_history`` service once."""
-    if hass.services.has_service(DOMAIN, SERVICE_IMPORT_HISTORY):
-        return
-
+    """Register the domain-level ``import_history`` service."""
     async def _async_import_history(call: ServiceCall) -> None:
         """Import a station's official hourly history into long-term statistics.
 
@@ -408,7 +413,21 @@ def _async_register_services(hass: HomeAssistant) -> None:
         entry = hass.config_entries.async_get_entry(entry_id)
         if entry is None or entry.domain != DOMAIN:
             raise ServiceValidationError(
-                f"No MeteoSwiss Weather config entry with id {entry_id}"
+                translation_domain=DOMAIN,
+                translation_key="entry_not_found",
+                translation_placeholders={"entry_id": str(entry_id)},
+            )
+        if entry.state is not ConfigEntryState.LOADED:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="entry_not_loaded",
+                translation_placeholders={"title": entry.title},
+            )
+        if CONF_STATION_ABBR not in entry.data:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="entry_without_station",
+                translation_placeholders={"title": entry.title},
             )
 
         now = dt_util.utcnow()
@@ -424,14 +443,21 @@ def _async_register_services(hass: HomeAssistant) -> None:
         )
         end = dt_util.as_utc(end_in) if end_in else now
         if end < start:
-            raise ServiceValidationError("'end' must not be before 'start'")
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="end_before_start",
+            )
 
         station_abbr = str(entry.data[CONF_STATION_ABBR])
         try:
             await async_import_history(hass, entry, station_abbr, start, end)
-        except (OgdError, HomeAssistantError) as err:
+        except OgdError as err:
             # The shared layer already posted the failure notification.
-            raise HomeAssistantError(str(err)) from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="import_failed",
+                translation_placeholders={"error": str(err)},
+            ) from err
 
     hass.services.async_register(
         DOMAIN,
@@ -451,7 +477,7 @@ async def _async_reload_entry(
 async def async_unload_entry(
     hass: HomeAssistant, entry: MeteoSwissConfigEntry
 ) -> bool:
-    """Unload a config entry, dropping the service once the last entry goes.
+    """Unload a config entry.
 
     The entry's parse-error repair issues go with it: nothing polls for it any
     more, so nothing would clear them. A reload re-raises them on the next poll
@@ -463,13 +489,6 @@ async def async_unload_entry(
     if unloaded:
         for key in PARSE_ISSUE_KEYS:
             async_delete_issue(hass, DOMAIN, parse_issue_id(key, entry.entry_id))
-        remaining = [
-            other
-            for other in hass.config_entries.async_entries(DOMAIN)
-            if other.entry_id != entry.entry_id
-        ]
-        if not remaining and hass.services.has_service(DOMAIN, SERVICE_IMPORT_HISTORY):
-            hass.services.async_remove(DOMAIN, SERVICE_IMPORT_HISTORY)
     return unloaded
 
 
