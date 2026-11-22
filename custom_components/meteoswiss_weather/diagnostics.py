@@ -1,4 +1,4 @@
-"""Diagnostics support for MeteoSwiss Weather (issue #15).
+"""Diagnostics support for MeteoSwiss Weather.
 
 Exposes config entry data, coordinator state and the cached HTTP validators.
 The postal code is location-identifying, so the ``TO_REDACT`` set removes it

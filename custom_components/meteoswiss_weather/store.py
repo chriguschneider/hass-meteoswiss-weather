@@ -2,7 +2,7 @@
 
 One store per config entry holds, per upstream parameter, the configured
 point's series ``{hour → value}`` together with where it came from. Every
-writer — the daily refresh and the hourly provider today — puts what it
+writer — the daily refresh and the ``HourlyRefresher`` — puts what it
 fetched here, and entities that show "the current hour" read it from here, so
 no entity depends on *which* path happened to download a file.
 
@@ -210,7 +210,7 @@ class ForecastStore:
         return self._escalation_streaks.get(param, 0)
 
     def measured_bytes(self) -> dict[str, int]:
-        """Bytes of the last fetch per parameter that recorded them (issue #145).
+        """Bytes of the last fetch per parameter that recorded them.
 
         The options-flow traffic estimate prefers these measured numbers over its
         table for any file already active, so an instance quotes its own cost as

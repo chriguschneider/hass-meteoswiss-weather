@@ -11,12 +11,10 @@ Two coordinators back a config entry (ADR-0002):
   the hourly option is on it also refreshes the demanded hourly series into the
   :class:`~.store.ForecastStore` as part of the same tick.
 
-The hourly forecast used to hang off a lazy provider that only ran while a card
-or automation subscribed (ADR-0002 revision 2, issue #54). ADR-0008 removes it:
-with the hourly option on, the demanded files are fetched whether or not
-anything subscribes, driven by :class:`HourlyRefresher` from the coordinator's
-own refresh. Every consumer — the daily forecast, the zero-degree sensor, the
-hourly forecast — reads the store and nothing else, so no entity depends on
+With the hourly option on, the demanded files are fetched whether or not
+anything subscribes (ADR-0008), driven by :class:`HourlyRefresher` from the
+coordinator's own refresh. Every consumer — the daily forecast, the zero-degree
+sensor, the hourly forecast — reads the store and nothing else, so no entity depends on
 another consumer's fetch (the class of bug behind issue #107). The cost still
 gates on the **option**: a feature that is off demands nothing (:mod:`.demand`).
 
@@ -142,7 +140,7 @@ def parse_issue_id(key: str, entry_id: str) -> str:
 
 
 class ParseIssue:
-    """Raise and clear one entry's parse-error repair issue (issue #251).
+    """Raise and clear one entry's parse-error repair issue.
 
     A structural parse error recurs on every poll until the integration is
     updated, so it is surfaced as a repair issue and cleared on the next
@@ -196,7 +194,7 @@ _POINT_MAJOR_CANARY_PARAM = HOURLY_WIND_SPEED
 
 
 class DailyTrafficAccumulator:
-    """Bytes and requests fetched today from the forecast backend (issue #146).
+    """Bytes and requests fetched today from the forecast backend.
 
     Accumulates across all fetch paths — daily files, blocks, hourly files,
     canaries — by receiving the delta popped from the backend after each
@@ -266,9 +264,9 @@ class HourlyRefresher:
     Owned by :class:`ForecastCoordinator` and driven from its refresh once per
     tick with the run the coordinator already discovered. When the hourly option
     is on the demanded files are fetched **whether or not anything subscribes**
-    (ADR-0008, "Decided by the owner", item 1) — the lazy, card-driven provider
-    of ADR-0002 revision 2 is gone. Everything it fetches is filed in the store,
-    per parameter, so every forecast consumer reads the store and nothing else.
+    (ADR-0008, "Decided by the owner", item 1). Everything it fetches is filed in
+    the store, per parameter, so every forecast consumer reads the store and
+    nothing else.
 
     What triggers a refresh is a **canary** read, not a timetable (ADR-0008
     section 3, owner decision 2, issue #125). On every new run, before refreshing
@@ -498,12 +496,12 @@ class HourlyRefresher:
         - the **near window** (``_near_horizon_days``, what fits row addressing
           under the request cap) is refreshed on every changed run — MeteoSwiss
           adjusts the near term about hourly — or on the near fallback; it is
-          ~100–150 KB of row reads;
+          ~250 KB of row reads (:mod:`.demand`);
         - the **far remainder** beyond the near window is refreshed only at the
           far cadence (:data:`HOURLY_FAR_MAX_AGE`), never on a canary change,
-          because it was the multi-MB part of the pre-#143 refresh (a horizon of
-          ~80 h or more fell to a prefix). It is fetched by row addressing in
-          consecutive cap-sized windows (:func:`~.ogd.hourly.fetch_series_windows`)
+          because it is the large part of a long-horizon refresh. It is fetched
+          by row addressing in consecutive cap-sized windows
+          (:func:`~.ogd.hourly.fetch_series_windows`)
           and merged into the store, which keeps the previous run's far hours
           until this replaces them (:meth:`~.store.ForecastStore.put`).
 
@@ -852,8 +850,7 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         self._traffic_store = traffic_store
         self.traffic = DailyTrafficAccumulator()
         # Timestamp of the run the current daily data came from; exposed for
-        # diagnostics and used to skip re-downloading an unchanged run. The
-        # weather entity also watches it to trigger the lazy hourly refresh.
+        # diagnostics and used to skip re-downloading an unchanged run.
         self.last_run: datetime | None = None
         # The run discovered by the latest tick, handed down to every fetch of
         # that tick so nothing below lists STAC again (ADR-0008 section 3).
@@ -1010,7 +1007,7 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         return ForecastData(daily=daily)
 
     async def async_load_hints(self) -> None:
-        """Restore the backend's fetch-ladder hints from disk (issue #133).
+        """Restore the backend's fetch-ladder hints from disk.
 
         Called once before the first refresh so it is already warm. A missing,
         unreadable or corrupt store is treated as "no hints": the ladder starts
@@ -1038,7 +1035,7 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         _LOGGER.debug("restored %d forecast fetch hint(s) from storage", count)
 
     def _save_hints_if_changed(self) -> None:
-        """Schedule a debounced save when the backend's hints changed (issue #133).
+        """Schedule a debounced save when the backend's hints changed.
 
         Comparing against the last written snapshot keeps a quiet tick — most
         ticks, once positions are learned — from writing at all; only a genuine
@@ -1057,7 +1054,7 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         self._hints_store.async_delay_save(lambda: hints, HINTS_SAVE_DELAY)
 
     async def async_load_traffic(self) -> None:
-        """Restore the daily traffic totals from disk (issue #146).
+        """Restore the daily traffic totals from disk.
 
         Called once before the first refresh so the sensors start from the
         saved daily total rather than zero when HA restarts mid-day. A missing,
@@ -1099,7 +1096,7 @@ class ForecastCoordinator(DataUpdateCoordinator[ForecastData]):
         self.async_update_listeners()
 
     def _save_traffic(self) -> None:
-        """Persist the daily traffic totals immediately (issue #146).
+        """Persist the daily traffic totals immediately.
 
         Called after every tick that produced new fetches.  Synchronous
         (uses async_delay_save with 0 delay so the Store coalesces writes
@@ -1211,11 +1208,9 @@ class ImisData:
 class ImisCoordinator(DataUpdateCoordinator[ImisData]):
     """Poll one SLF IMIS snow station (ADR-0009, #174).
 
-    Only created when the user picks an IMIS station in the config flow; without
-    one, no SLF request is ever made. Follows the precipitation station of
-    ADR-0006 in shape: a second upstream polled in its own coordinator, its
-    first refresh non-fatal so an unavailable opt-in station never blocks the
-    entry from loading.
+    Only created for a snow-station entry (ADR-0011), whose IMIS station is its
+    mandatory data; a point entry makes no SLF request. Its first refresh is
+    non-fatal so an unavailable station never blocks the entry from loading.
 
     Two endpoints of the pure ``slf`` client are used per the ADR cadence:
 

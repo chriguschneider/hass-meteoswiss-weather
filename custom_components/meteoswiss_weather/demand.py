@@ -135,7 +135,7 @@ class FileEstimate:
 
 @dataclass(frozen=True, slots=True)
 class TrafficEstimate:
-    """The estimated traffic for a chosen options combination (issue #145)."""
+    """The estimated traffic for a chosen options combination."""
 
     files: tuple[FileEstimate, ...]
     refreshes_per_day: int = REFRESHES_PER_DAY
@@ -253,7 +253,7 @@ def estimate_traffic(
     temp_percentiles: bool = False,
     measured_bytes: Mapping[str, int] | None = None,
 ) -> TrafficEstimate:
-    """Estimate the traffic a chosen options combination costs (issue #145).
+    """Estimate the traffic a chosen options combination costs.
 
     Maps the options to the set of demanded files (the demand registry), then to
     bytes: the last **measured** fetch of a file already active (from the store's

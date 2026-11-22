@@ -73,7 +73,8 @@ HOURLY_HORIZON_CHOICES: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6, 7, 8,
 # B9/B11 date-major hourly additions behind per-entity gating (issue #69). Both
 # are only meaningful with the hourly opt-in on, and each turns on extra
 # date-major files (row-addressed, ~250 KB each at the default horizon, see
-# demand.py) — the expensive path — so they are off by default (ADR-0002 gating rule). ``cloud_layers`` fetches the
+# demand.py) — the expensive path — so they are off by default (ADR-0002 gating
+# rule). ``cloud_layers`` fetches the
 # three cloud-cover files (high/mid/low) and exposes ``cloud_coverage`` (the max
 # of the layers) plus the three layers as hourly attributes; ``temp_percentiles``
 # fetches the p10/p90 temperature files and exposes them as hourly attributes.
@@ -126,7 +127,8 @@ IMIS_UPDATE_INTERVAL = timedelta(minutes=30)
 # series and re-stamp it to the run; different values, or a canary that cannot be
 # read, refresh the group. No landing-hour timetable decides — one August
 # measurement is not a contract — only the max-age fallbacks below, which force a
-# refresh so a canary blind spot can never let a series go stale unbounded. tests/test_const.py asserts these.
+# refresh so a canary blind spot can never let a series go stale unbounded.
+# tests/test_const.py asserts these.
 #
 # Near window: the part of the date-major horizon that fits row addressing under
 # the request cap (issue #143), counted in full local calendar days beyond today.
@@ -139,8 +141,9 @@ HOURLY_NEAR_HORIZON_DAYS = 2
 HOURLY_NEAR_MAX_AGE = timedelta(hours=3)
 # Far remainder: the rest of a horizon that reaches beyond the near window (only
 # horizons of 3+ days and the full run). It is the large part of a long-horizon
-# refresh, so it rides this cadence alone — never a canary change — and is fetched by row
-# addressing in consecutive cap-sized windows. Its staleness fallback is 6 h.
+# refresh, so it rides this cadence alone — never a canary change — and is
+# fetched by row addressing in consecutive cap-sized windows. Its staleness
+# fallback is 6 h.
 HOURLY_FAR_MAX_AGE = timedelta(hours=6)
 # Point-major group (symbol, precipitation, wind, gust, direction, probability,
 # zero-degree, radiation): one ~5 KB block per file. Its staleness fallback,

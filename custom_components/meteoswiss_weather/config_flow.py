@@ -101,7 +101,7 @@ _MODE_SNOW_STATION = "snow_station"
 # precipitation pick (ADR-0006). Must be non-empty so the HA frontend does not
 # treat it as an unfilled required field and block form submission (#192).
 # "none" is never a valid SwissMetNet abbreviation, so it safely marks the
-# opt-out. The stored entry value remains "" (no migration needed).
+# opt-out. The stored entry value is "".
 _PRECIP_NONE = "none"
 
 
@@ -829,7 +829,7 @@ def _format_bytes(num: int) -> str:
 
 
 def _confidence_label(estimate: TrafficEstimate) -> str:
-    """Whether the figures are measured, estimated, or a mix (issue #145)."""
+    """Whether the figures are measured, estimated, or a mix."""
     if estimate.all_measured:
         return "measured"
     if estimate.any_measured:
@@ -851,7 +851,7 @@ def _traffic_text(estimate: TrafficEstimate) -> str:
 class MeteoSwissWeatherOptionsFlow(OptionsFlow):
     """Options flow: hourly forecast (ADR-0002) and pollen opt-in (ADR-0005).
 
-    Presented as a menu (issue #144) rather than a hidden wizard:
+    Presented as a menu rather than a hidden wizard:
 
       init     — a menu with three entries
       hourly   — toggle, horizon, cloud layers and percentiles on one page;
@@ -865,8 +865,7 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
                  currently disabled in the entity registry
 
     Each page merges its own keys into the stored options and leaves the other
-    page's keys untouched, so saving one never resets the other. The stored keys
-    and their semantics are unchanged, so no migration is needed.
+    page's keys untouched, so saving one never resets the other.
     """
 
     def __init__(self) -> None:
@@ -891,7 +890,7 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Show the options menu (issue #144)."""
+        """Show the options menu."""
         return self.async_show_menu(
             step_id="init",
             menu_options=["hourly", "pollen", "overview"],
@@ -953,7 +952,7 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
     async def async_step_summary(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Confirmation step after the hourly page (issue #145).
+        """Confirmation step after the hourly page.
 
         A form with no fields: it states, through ``description_placeholders``,
         which forecast fields the chosen hourly options add or remove compared
@@ -972,7 +971,7 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
         )
 
     def _summary_placeholders(self) -> dict[str, str]:
-        """Build the summary step's field-diff and traffic placeholders (#145)."""
+        """Build the summary step's field-diff and traffic placeholders."""
         assert self._pending_hourly is not None
         current = self.config_entry.options
         pending = self._pending_hourly
@@ -1021,7 +1020,7 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
     async def async_step_pollen(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Pollen page: toggle and station on one page (issue #144).
+        """Pollen page: toggle and station on one page.
 
         The station picker offers the three nearest pollen stations to the
         configured forecast point (fetched once, cached on the instance), with
@@ -1105,7 +1104,7 @@ class MeteoSwissWeatherOptionsFlow(OptionsFlow):
     async def async_step_overview(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Read-only summary of the entry's current configuration (issue #144).
+        """Read-only summary of the entry's current configuration.
 
         A form with no fields: submitting it changes nothing and returns to the
         menu. The dynamic parts are supplied through ``description_placeholders``
