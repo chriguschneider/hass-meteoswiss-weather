@@ -388,16 +388,7 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
                 return await self._async_reconfigure_station(station, precip_data)
             return self.async_create_entry(
                 title=self._point.name,
-                data={
-                    CONF_POINT_ID: self._point.point_id,
-                    CONF_POINT_TYPE_ID: self._point.point_type_id,
-                    CONF_POSTAL_CODE: self._point.postal_code,
-                    CONF_POINT_NAME: self._point.name,
-                    CONF_POINT_HEIGHT: self._point.height_masl,
-                    CONF_STATION_ABBR: station.abbr,
-                    CONF_STATION_NAME: station.name,
-                    **precip_data,
-                },
+                data=self._point_entry_data(station, precip_data),
             )
 
         options = {s.abbr: f"{s.name} ({s.canton})" for s in nearby}
@@ -638,6 +629,22 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    def _point_entry_data(
+        self, station: Station, precip_data: dict[str, str]
+    ) -> dict[str, Any]:
+        """Data dict of a point entry; the one place create and reconfigure share."""
+        assert self._point is not None
+        return {
+            CONF_POINT_ID: self._point.point_id,
+            CONF_POINT_TYPE_ID: self._point.point_type_id,
+            CONF_POSTAL_CODE: self._point.postal_code,
+            CONF_POINT_NAME: self._point.name,
+            CONF_POINT_HEIGHT: self._point.height_masl,
+            CONF_STATION_ABBR: station.abbr,
+            CONF_STATION_NAME: station.name,
+            **precip_data,
+        }
+
     async def _async_reconfigure_station(
         self,
         station: Station,
@@ -660,16 +667,7 @@ class MeteoSwissWeatherConfigFlow(ConfigFlow, domain=DOMAIN):
             if other.entry_id != entry.entry_id and other.unique_id == new_unique_id:
                 return self.async_abort(reason="already_configured")
 
-        new_data = {
-            CONF_POINT_ID: self._point.point_id,
-            CONF_POINT_TYPE_ID: self._point.point_type_id,
-            CONF_POSTAL_CODE: self._point.postal_code,
-            CONF_POINT_NAME: self._point.name,
-            CONF_POINT_HEIGHT: self._point.height_masl,
-            CONF_STATION_ABBR: station.abbr,
-            CONF_STATION_NAME: station.name,
-            **precip_data,
-        }
+        new_data = self._point_entry_data(station, precip_data)
 
         if station.abbr == entry.data.get(CONF_STATION_ABBR):
             # Station unchanged: a point/postal-only change leaves history alone.

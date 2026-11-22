@@ -1,0 +1,45 @@
+{
+  "entity": {
+    "sensor": {
+      "snow_depth": {
+        "default": "mdi:snowflake"
+      },
+      "zero_degree_level": {
+        "default": "mdi:snowflake-thermometer"
+      },
+      "zero_degree_level_48h": {
+        "default": "mdi:snowflake-thermometer"
+      },
+      "pollen_grasses": {
+        "default": "mdi:flower-pollen"
+      },
+      "pollen_birch": {
+        "default": "mdi:flower-pollen"
+      },
+      "pollen_alder": {
+        "default": "mdi:flower-pollen"
+      },
+      "pollen_hazel": {
+        "default": "mdi:flower-pollen"
+      },
+      "pollen_beech": {
+        "default": "mdi:flower-pollen"
+      },
+      "pollen_ash": {
+        "default": "mdi:flower-pollen"
+      },
+      "pollen_oak": {
+        "default": "mdi:flower-pollen"
+      },
+      "snow_height": {
+        "default": "mdi:snowflake"
+      },
+      "new_snow_24h": {
+        "default": "mdi:snowflake"
+      },
+      "snow_height_modelled": {
+        "default": "mdi:snowflake"
+      }
+    }
+  }
+}

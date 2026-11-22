@@ -46,6 +46,9 @@ from .symbols import condition_for_symbol
 # Home Assistant's well-known sun entity; its state is the day/night flag.
 _SUN_ENTITY_ID = "sun.sun"
 
+# Coordinator-driven and read-only: no per-platform update serialisation.
+PARALLEL_UPDATES = 0
+
 
 async def async_setup_entry(
     hass: HomeAssistant,

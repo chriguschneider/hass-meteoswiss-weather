@@ -59,6 +59,9 @@ from .entity import point_device_info, point_device_unique_id
 from .ogd import DailyForecast, Observation, PollenObservation
 from .ogd.const import HOURLY_ZERO_DEGREE
 
+# Coordinator-driven and read-only: no per-platform update serialisation.
+PARALLEL_UPDATES = 0
+
 
 @dataclass(frozen=True, slots=True)
 class MeteoSwissSensorDescription(SensorEntityDescription):
@@ -198,7 +201,6 @@ _SENSORS: tuple[MeteoSwissSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfLength.CENTIMETERS,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        icon="mdi:snowflake",
         entity_registry_enabled_default=False,
     ),
     # B2 — wind chill and QNH pressure
@@ -360,7 +362,6 @@ _ZERO_DEGREE_DESCRIPTION = SensorEntityDescription(
     native_unit_of_measurement=UnitOfLength.METERS,
     state_class=SensorStateClass.MEASUREMENT,
     suggested_display_precision=0,
-    icon="mdi:snowflake-thermometer",
     entity_registry_enabled_default=False,
 )
 
@@ -376,7 +377,6 @@ _ZERO_DEGREE_48H_DESCRIPTION = SensorEntityDescription(
     native_unit_of_measurement=UnitOfLength.METERS,
     state_class=SensorStateClass.MEASUREMENT,
     suggested_display_precision=0,
-    icon="mdi:snowflake-thermometer",
     entity_registry_enabled_default=False,
 )
 
@@ -415,7 +415,6 @@ _POLLEN_SENSORS: tuple[PollenSensorDescription, ...] = (
         native_unit_of_measurement=_POLLEN_UNIT,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        icon="mdi:flower-pollen",
     ),
     PollenSensorDescription(
         key="pollen_birch",
@@ -424,7 +423,6 @@ _POLLEN_SENSORS: tuple[PollenSensorDescription, ...] = (
         native_unit_of_measurement=_POLLEN_UNIT,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        icon="mdi:flower-pollen",
     ),
     PollenSensorDescription(
         key="pollen_alder",
@@ -433,7 +431,6 @@ _POLLEN_SENSORS: tuple[PollenSensorDescription, ...] = (
         native_unit_of_measurement=_POLLEN_UNIT,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        icon="mdi:flower-pollen",
         entity_registry_enabled_default=False,
     ),
     PollenSensorDescription(
@@ -443,7 +440,6 @@ _POLLEN_SENSORS: tuple[PollenSensorDescription, ...] = (
         native_unit_of_measurement=_POLLEN_UNIT,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        icon="mdi:flower-pollen",
         entity_registry_enabled_default=False,
     ),
     PollenSensorDescription(
@@ -453,7 +449,6 @@ _POLLEN_SENSORS: tuple[PollenSensorDescription, ...] = (
         native_unit_of_measurement=_POLLEN_UNIT,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        icon="mdi:flower-pollen",
         entity_registry_enabled_default=False,
     ),
     PollenSensorDescription(
@@ -463,7 +458,6 @@ _POLLEN_SENSORS: tuple[PollenSensorDescription, ...] = (
         native_unit_of_measurement=_POLLEN_UNIT,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        icon="mdi:flower-pollen",
         entity_registry_enabled_default=False,
     ),
     PollenSensorDescription(
@@ -473,7 +467,6 @@ _POLLEN_SENSORS: tuple[PollenSensorDescription, ...] = (
         native_unit_of_measurement=_POLLEN_UNIT,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        icon="mdi:flower-pollen",
         entity_registry_enabled_default=False,
     ),
 )
@@ -517,7 +510,6 @@ _IMIS_SENSORS: tuple[ImisSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfLength.CENTIMETERS,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        icon="mdi:snowflake",
     ),
     # SNOWPACK-modelled new snow over the last 24 h (``HN_1D``). The name says it
     # is modelled; enabled by default.
@@ -532,7 +524,6 @@ _IMIS_SENSORS: tuple[ImisSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfLength.CENTIMETERS,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        icon="mdi:snowflake",
     ),
     # SNOWPACK-modelled snow height on the flat study plot (daily-snow ``HS``), a
     # snow value → 0 placeholder before the first value. Enabled by default.
@@ -547,7 +538,6 @@ _IMIS_SENSORS: tuple[ImisSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfLength.CENTIMETERS,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
-        icon="mdi:snowflake",
     ),
     # Every other value the 30-minute measurement row already carries: no new
     # endpoint, no extra traffic. All enabled by default; all stay ``unknown``
