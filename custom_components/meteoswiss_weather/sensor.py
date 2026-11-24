@@ -1,11 +1,12 @@
-"""Sensor platform: SwissMetNet station observations (issue #13) and
-today's forecast aggregates from the daily forecast (issue #48).
+"""Sensor platform: SwissMetNet station observations and
+today's forecast aggregates from the daily forecast.
 
 Station sensors are backed by StationCoordinator; forecast sensors are backed
 by ForecastCoordinator and also recompute at local midnight so the "today"
 values flip to the new day without waiting for the next forecast fetch.
-Every entity shares the same device as the weather entity (same identifier
-keyed on the forecast point, not the station abbreviation).
+Point-entry entities share the device of the weather entity (same identifier
+keyed on the forecast point, not the station abbreviation); the IMIS snow
+sensors of a snow-station entry sit on their own device (ADR-0011).
 """
 
 from __future__ import annotations
@@ -381,7 +382,7 @@ _ZERO_DEGREE_48H_DESCRIPTION = SensorEntityDescription(
 )
 
 
-# B9 — station observation timestamp sensor (issue #105): the reference_timestamp
+# Station observation timestamp sensor: the reference_timestamp
 # of the last delivered observation. Not a measured parameter, so it is never in
 # the inventory set; it therefore lives outside _SENSORS and uses its own class.
 _MEASUREMENT_TIME_DESCRIPTION = SensorEntityDescription(
@@ -472,8 +473,8 @@ _POLLEN_SENSORS: tuple[PollenSensorDescription, ...] = (
 )
 
 
-# SLF IMIS snow sensors (ADR-0009, #174): only created when an IMIS station is
-# configured. Both read from the ImisCoordinator and carry the SLF attribution
+# SLF IMIS snow sensors (ADR-0009): only created for a snow-station entry
+# (ADR-0011). Both read from the ImisCoordinator and carry the SLF attribution
 # (not the MeteoSwiss one) plus ``station`` and ``elevation`` attributes.
 @dataclass(frozen=True, slots=True)
 class ImisSensorDescription(SensorEntityDescription):
@@ -1026,8 +1027,8 @@ class ZeroDegreeSensor(MeteoSwissCoordinatorSensor[ForecastCoordinator]):
 
     Reads the ``zprfr0hs`` series from the coordinator's forecast store
     (ADR-0008), which the daily refresh fills from the point-major block on
-    every new run (issue #107) and the hourly provider fills whenever it
-    fetches the file — so no particular path, card or ``get_forecasts`` call is
+    every new run (issue #107) and the :class:`HourlyRefresher` fills whenever
+    it fetches the file — so no particular path, card or ``get_forecasts`` call is
     needed. When a refresh could not deliver, the store keeps the previous
     run's series, which still covers the coming hours. Shows ``unknown``
     (``None``) only while no path has ever delivered the current hour.
@@ -1049,7 +1050,7 @@ class ZeroDegreeSensor(MeteoSwissCoordinatorSensor[ForecastCoordinator]):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        """Return the forecast point's height, when known (issue #227)."""
+        """Return the forecast point's height, when known."""
         if self._elevation is None:
             return None
         return {"elevation": float(self._elevation)}
@@ -1143,7 +1144,7 @@ class ZeroDegree48hSensor(ZeroDegreeSensor):
 
 
 class MeasurementTimeSensor(MeteoSwissCoordinatorSensor[StationCoordinator]):
-    """The reference_timestamp of the latest station observation (issue #105).
+    """The reference_timestamp of the latest station observation.
 
     Returns the observation timestamp as an aware UTC datetime, giving users a
     staleness signal: when the station stops delivering new rows the coordinator
@@ -1173,7 +1174,7 @@ class MeasurementTimeSensor(MeteoSwissCoordinatorSensor[StationCoordinator]):
         return obs.timestamp
 
 
-# B10 — daily traffic diagnostic sensors (issue #146): bytes and requests
+# Daily traffic diagnostic sensors: bytes and requests
 # fetched from the forecast backend today.  Both are entity_category: DIAGNOSTIC
 # and state_class: total_increasing (reset at local midnight).
 
@@ -1208,7 +1209,7 @@ _REQUESTS_TODAY_DESCRIPTION = TrafficSensorDescription(
 
 
 class TrafficSensor(MeteoSwissCoordinatorSensor[ForecastCoordinator]):
-    """Bytes or requests fetched from the forecast backend today (issue #146).
+    """Bytes or requests fetched from the forecast backend today.
 
     Counts every real HTTP fetch since local midnight. The forecast coordinator
     owns the midnight reset and announces it to its listeners; this sensor only

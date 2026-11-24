@@ -4,15 +4,13 @@ Each forecast consumer declares the upstream parameters it needs; the union of
 the demands of the **enabled** features is a run's fetch plan. A feature that is
 off demands nothing, so the traffic cost of the hourly option, the cloud layers
 and the temperature percentiles gates on the **option** — never on whether a
-card happens to be open. The lazy provider of ADR-0002 revision 2 and its
-card-driven refresh are gone: when the option is on, the data is fetched whether
+card happens to be open. When the option is on, the data is fetched whether
 or not anything subscribes (ADR-0008, "Decided by the owner", item 1).
 
 Pure bookkeeping: no Home Assistant imports, no network. *When* a demanded file
-is refreshed stays with the coordinator's near/far/point-major schedule for now
-(the canary is a separate issue); this module answers only *what* a run must
-deliver, split by the fetch strategy each file's layout admits so the schedule
-can group them.
+is refreshed is the coordinator's near/far/point-major schedule plus the canary
+read; this module answers only *what* a run must deliver, split by the fetch
+strategy each file's layout admits so the schedule can group them.
 """
 
 from __future__ import annotations
@@ -137,7 +135,7 @@ class FileEstimate:
 
 @dataclass(frozen=True, slots=True)
 class TrafficEstimate:
-    """The estimated traffic for a chosen options combination (issue #145)."""
+    """The estimated traffic for a chosen options combination."""
 
     files: tuple[FileEstimate, ...]
     refreshes_per_day: int = REFRESHES_PER_DAY
@@ -255,7 +253,7 @@ def estimate_traffic(
     temp_percentiles: bool = False,
     measured_bytes: Mapping[str, int] | None = None,
 ) -> TrafficEstimate:
-    """Estimate the traffic a chosen options combination costs (issue #145).
+    """Estimate the traffic a chosen options combination costs.
 
     Maps the options to the set of demanded files (the demand registry), then to
     bytes: the last **measured** fetch of a file already active (from the store's

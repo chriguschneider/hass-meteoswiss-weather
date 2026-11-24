@@ -31,9 +31,9 @@ CONF_STATION_NAME = "station_name"
 CONF_PRECIP_STATION_ABBR = "precip_station_abbr"
 CONF_PRECIP_STATION_NAME = "precip_station_name"
 
-# Optional SLF IMIS snow station (ADR-0009, #174). Empty/absent means the
-# feature is off — no SLF request is made at all. When set, a second upstream
-# (``measurement-api.slf.ch``) is polled for snow height and modelled new snow.
+# SLF IMIS snow station of a snow-station entry (ADR-0009, ADR-0011): its mandatory
+# data. The upstream (``measurement-api.slf.ch``) is polled for snow height and
+# modelled new snow. A point entry ignores these keys and makes no SLF request.
 # The elevation is stored alongside so the snow sensors can expose it without a
 # further station-list fetch (the list is only read during the config flow).
 CONF_IMIS_STATION_CODE = "imis_station_code"
@@ -42,7 +42,7 @@ CONF_IMIS_STATION_ELEVATION = "imis_station_elevation"
 
 # Entry-type discriminator (ADR-0011). Absent means a point entry (postal-code
 # or mountain). A snow-station entry stores only IMIS keys and no OGD forecast
-# keys; slice 2 reads this to decide which coordinator to build.
+# keys; setup reads this to decide which coordinator to build.
 CONF_ENTRY_TYPE = "entry_type"
 ENTRY_TYPE_SNOW_STATION = "snow_station"
 
@@ -56,11 +56,11 @@ HISTORY_KEEP = "keep"
 HISTORY_DISCARD = "discard"
 HISTORY_BACKFILL = "backfill"
 
-# Options-entry keys (ADR-0002: hourly is off by default; ~1 GB/day when on).
+# Options-entry keys (ADR-0002: hourly is off by default; about 30 MB a day when on).
 CONF_HOURLY_FORECAST = "hourly_forecast"
 # How far ahead the hourly forecast is fetched, in full local calendar days
 # beyond today (issue #50). Only shown/used when the hourly option is on. The
-# HTTP-Range prefix on the date-major file scales with this, so a smaller
+# row-addressed read of the date-major file scales with this, so a smaller
 # horizon means less traffic. ``HOURLY_HORIZON_FULL_RUN`` (-1) fetches all
 # ~220 h. Default 2 = the rest of today plus two full days (49–72 h).
 CONF_HOURLY_HORIZON_DAYS = "hourly_horizon_days"
@@ -72,8 +72,9 @@ HOURLY_HORIZON_CHOICES: tuple[int, ...] = (0, 1, 2, 3, 4, 5, 6, 7, 8,
 
 # B9/B11 date-major hourly additions behind per-entity gating (issue #69). Both
 # are only meaningful with the hourly opt-in on, and each turns on extra
-# date-major files (a horizon prefix each, ~7–11 MB) — the expensive path — so
-# they are off by default (ADR-0002 gating rule). ``cloud_layers`` fetches the
+# date-major files (row-addressed, ~250 KB each at the default horizon, see
+# demand.py) — the expensive path — so they are off by default (ADR-0002 gating
+# rule). ``cloud_layers`` fetches the
 # three cloud-cover files (high/mid/low) and exposes ``cloud_coverage`` (the max
 # of the layers) plus the three layers as hourly attributes; ``temp_percentiles``
 # fetches the p10/p90 temperature files and exposes them as hourly attributes.
@@ -110,7 +111,7 @@ FORECAST_CHECK_INTERVAL = timedelta(hours=1)
 # SLF IMIS snow station (ADR-0009). The measurement endpoint carries 30-minute
 # values, so polling faster buys nothing; the request is conditional (304 on an
 # unchanged ETag). The SNOWPACK daily-snow row is fetched at most once per local
-# day. Only polled when an IMIS station is configured.
+# day. Only polled for a snow-station entry.
 IMIS_UPDATE_INTERVAL = timedelta(minutes=30)
 
 # Tiered hourly refresh (ADR-0002 revision 2, issue #68). Measuring all 24 runs
@@ -124,25 +125,25 @@ IMIS_UPDATE_INTERVAL = timedelta(minutes=30)
 # few hours of one representative file per group (a few KB, with the remembered
 # byte positions) and compares them with the store. Equal values keep the stored
 # series and re-stamp it to the run; different values, or a canary that cannot be
-# read, refresh the group. The landing-hour sets that used to decide are gone —
-# one August measurement is not a contract — leaving only the max-age fallbacks
-# below, which still force a refresh so a canary blind spot can never let a
-# series go stale unbounded. tests/test_const.py asserts these.
+# read, refresh the group. No landing-hour timetable decides — one August
+# measurement is not a contract — only the max-age fallbacks below, which force a
+# refresh so a canary blind spot can never let a series go stale unbounded.
+# tests/test_const.py asserts these.
 #
 # Near window: the part of the date-major horizon that fits row addressing under
 # the request cap (issue #143), counted in full local calendar days beyond today.
 # 2 days is up to ~72 h, which stays within SERIES_REQUEST_CAP (96) as a single
 # row-addressed window, so the default horizon is entirely "near" and refreshes
-# on every changed run at ~100–150 KB. The near window is refreshed on a changed
+# on every changed run at ~250 KB (demand.py). The near window is refreshed on a changed
 # canary — MeteoSwiss adjusts the near term about hourly — and its staleness
 # fallback is 3 h. tests/test_const.py asserts the value fits the cap.
 HOURLY_NEAR_HORIZON_DAYS = 2
 HOURLY_NEAR_MAX_AGE = timedelta(hours=3)
 # Far remainder: the rest of a horizon that reaches beyond the near window (only
-# horizons of 3+ days and the full run). It was the multi-MB part of the pre-#143
-# refresh (any window of ~80 h or more fell to a prefix on every changed run), so
-# it rides this cadence alone — never a canary change — and is fetched by row
-# addressing in consecutive cap-sized windows. Its staleness fallback is 6 h.
+# horizons of 3+ days and the full run). It is the large part of a long-horizon
+# refresh, so it rides this cadence alone — never a canary change — and is
+# fetched by row addressing in consecutive cap-sized windows. Its staleness
+# fallback is 6 h.
 HOURLY_FAR_MAX_AGE = timedelta(hours=6)
 # Point-major group (symbol, precipitation, wind, gust, direction, probability,
 # zero-degree, radiation): one ~5 KB block per file. Its staleness fallback,
@@ -170,7 +171,7 @@ HINTS_SAVE_DELAY = 30
 # Persisted daily traffic totals (issue #146). The two diagnostic sensors —
 # data fetched today and requests today — reset at local midnight. To survive a
 # restart within the day the coordinator saves and restores the daily totals with
-# ``helpers.storage.Store`` under the key below. No debounce: the sensor only
+# ``helpers.storage.Store`` under the key below. No debounce: the coordinator only
 # writes to storage when the value actually changes (a new fetch happened).
 TRAFFIC_STORAGE_VERSION = 1
 TRAFFIC_STORAGE_KEY = f"{DOMAIN}.traffic"

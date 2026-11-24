@@ -2,8 +2,7 @@
 
 Sets up the two data coordinators (ADR-0002) and stores them, together with
 the resolved forecast point, station and forecast backend, on
-``entry.runtime_data``. The weather platform consumes that handle; the sensor
-platform lands in its own issue.
+``entry.runtime_data``. The weather and sensor platforms consume that handle.
 """
 
 from __future__ import annotations
@@ -162,7 +161,7 @@ def _platforms_for(entry: ConfigEntry) -> list[Platform]:
 
 
 def _hints_store(hass: HomeAssistant, entry: ConfigEntry) -> Store:
-    """The per-entry store for the backend's persisted fetch hints (issue #133).
+    """The per-entry store for the backend's persisted fetch hints.
 
     Keyed by entry id so two entries never share offsets, and versioned so a
     future hint-shape change can migrate cleanly. Lives under ``.storage/`` and
@@ -172,7 +171,7 @@ def _hints_store(hass: HomeAssistant, entry: ConfigEntry) -> Store:
 
 
 def _traffic_store(hass: HomeAssistant, entry: ConfigEntry) -> Store:
-    """The per-entry store for the daily traffic totals (issue #146).
+    """The per-entry store for the daily traffic totals.
 
     Persists today's bytes and requests so the diagnostic sensors survive a
     restart within the day without resetting to zero.  Keyed by entry id and
@@ -205,7 +204,7 @@ def _point_from_entry(entry: ConfigEntry) -> ForecastPoint:
 async def _async_migrate_point_height(
     hass: HomeAssistant, entry: ConfigEntry, session: aiohttp.ClientSession
 ) -> None:
-    """Persist the point height for entries created before it was stored (#227).
+    """Persist the point height for entries created before it was stored.
 
     One ``fetch_points`` lookup per entry: the key is written (even as ``None``
     when the CSV has no height) only after a successful fetch, so a failed
@@ -362,7 +361,7 @@ async def _async_setup_snow_station_entry(
 
     No MeteoSwiss coordinator is created and no ``data.geo.admin.ch`` request is
     made — the only upstream is ``measurement-api.slf.ch`` (ADR-0009). The first
-    refresh is non-fatal, as for the point entry's optional IMIS station: an
+    refresh is non-fatal: an
     unavailable station must not block the entry from loading, and the snow
     sensors hold a placeholder until a real value arrives (ADR-0009 amendment).
     """

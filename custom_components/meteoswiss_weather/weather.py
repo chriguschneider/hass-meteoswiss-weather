@@ -1,10 +1,11 @@
-"""Weather platform: one entity per config entry (issue #10).
+"""Weather platform: one entity per config entry.
 
 The current conditions come from the SwissMetNet station observation
 (:class:`StationCoordinator`); the daily forecast and the current ``condition``
-come from the local-forecast daily files (:class:`ForecastCoordinator`). The
-station carries no weather symbol, so ``condition`` is read from today's daily
-symbol (``jp2000d0``) and turned into a Home Assistant condition, with the
+come from the local-forecast files (:class:`ForecastCoordinator`). The
+station carries no weather symbol, so ``condition`` is read from the current
+hour's symbol when the hourly forecast is on, else from today's daily symbol
+(``jp2000d0``), and turned into a Home Assistant condition, with the
 day/night variant chosen from ``sun.sun`` (ADR-0001/0002).
 """
 
@@ -132,7 +133,7 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
 
     @property
     def available(self) -> bool:
-        """Available when both coordinators have data (issue #108).
+        """Available when both coordinators have data.
 
         Uses data presence rather than last-update success: a transient fetch
         failure leaves the coordinator's previous data intact, so the entity
@@ -206,7 +207,7 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
         obs = self.coordinator.data
         return {"current_precipitation": obs.precipitation_10min if obs else None}
 
-    # -- condition (today's daily symbol) -----------------------------------
+    # -- condition (hourly symbol, else today's daily symbol) ---------------
 
     @property
     def condition(self) -> str | None:
@@ -378,7 +379,7 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
 
     @callback
     def _handle_forecast_update(self) -> None:
-        """Write state and push the forecast to subscribed cards (issue #162).
+        """Write state and push the forecast to subscribed cards.
 
         ``async_write_ha_state`` does not reach ``weather/subscribe_forecast``
         listeners; only ``async_update_listeners`` does. Without it an open card
@@ -389,7 +390,7 @@ class MeteoSwissWeather(CoordinatorEntity[StationCoordinator], WeatherEntity):
 
     @callback
     def _handle_hour_change(self, _now: datetime) -> None:
-        """Push the hourly forecast at the top of every hour (issue #162)."""
+        """Push the hourly forecast at the top of every hour."""
         self._push_forecast(["hourly"])
 
     @callback
