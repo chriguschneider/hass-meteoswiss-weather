@@ -2,8 +2,8 @@
 
 Reads the official ``ch.meteoschweiz.ogd-local-forecasting`` files (ADR-0001).
 Columns are addressed by header, never by position (docs/ogd.md §E4). The
-daily parameter files are small (order of 5 MB together); the hourly files are
-the whole traffic budget and live behind the backend seam (ADR-0002).
+daily files cost a few KB each through the point's rows; the hourly files are
+the traffic budget and live behind the backend seam (ADR-0002).
 """
 
 from __future__ import annotations
@@ -71,8 +71,9 @@ _DAILY_FIELDS: dict[str, str] = {
 }
 
 # Hourly parameter code -> HourlyForecast field (ADR-0002 minimum set plus the
-# gust and wind-direction files the entity exposes, the B7/B8/B10 additions of
-# issue #55, and the B9/B11 gated additions of issue #69). ``symbol`` is the
+# gust and wind-direction files the entity exposes, probability, zero-degree
+# level and radiation, and the gated cloud-layer and percentile files).
+# ``symbol`` is the
 # integer icon code; the rest are floats. A parameter absent from the fetched
 # text (because its option is off) is simply not merged — the field stays None.
 _HOURLY_FIELDS: dict[str, str] = {
@@ -88,8 +89,8 @@ _HOURLY_FIELDS: dict[str, str] = {
     # Sunshine minutes per hour, filed in the store from the daily block
     # (issue #178, ADR-0010). Integer, like ``symbol`` (see _HOURLY_INT_FIELDS).
     HOURLY_SUNSHINE: "sunshine_duration",
-    # B9 cloud cover (three date-major layers) and B11 temperature percentiles
-    # (two date-major files), fetched only behind their opt-in (issue #69).
+    # Cloud cover (three layers) and temperature percentiles (two files),
+    # fetched only behind their opt-in.
     HOURLY_CLOUD_HIGH: "cloud_high",
     HOURLY_CLOUD_MID: "cloud_mid",
     HOURLY_CLOUD_LOW: "cloud_low",
@@ -283,9 +284,9 @@ def parse_hourly(
     rows. Order-independent: rows are keyed by timestamp, then sorted.
 
     ``horizon_end`` (an aware UTC datetime) trims the forecast to hours **before**
-    it, giving one consistent horizon across all files (issue #50): the
-    date-major files are already Range-limited to it, and the point-major files
-    — always fetched as the point's whole run — are trimmed here. ``None`` keeps
+    it, giving one consistent horizon across all files: the date-major files
+    are already fetched only up to it, and the point-major files — always
+    fetched as the point's whole run — are trimmed here. ``None`` keeps
     every hour (the "full run" option).
 
     ``horizon_start`` (an aware UTC datetime, floored to the current hour) drops

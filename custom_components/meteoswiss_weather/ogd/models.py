@@ -12,11 +12,12 @@ from enum import Enum
 
 
 class FileLayout(Enum):
-    """How the rows of an hourly bulk file are sorted (issue #50).
+    """How the rows of an hourly bulk file are sorted.
 
     Detected at runtime from byte-offset probes; picks the Range strategy:
-    a date-major file is fetched as a horizon prefix, a point-major file has
-    the point's contiguous block located by binary search, and anything
+    a date-major file is row-addressed hour block by hour block, a
+    point-major file has the point's contiguous block located by binary
+    search, and anything
     unexpected falls back to the full download.
     """
 
@@ -75,18 +76,18 @@ class Observation:
     precipitation_10min: float | None = None
     sunshine_10min: float | None = None
     global_radiation: float | None = None
-    # B1
+    # Snow depth
     snow_depth: float | None = None
-    # B2
+    # Wind chill and QNH pressure
     wind_chill: float | None = None
     pressure_qnh: float | None = None
-    # B3
+    # Soil temperature at three depths
     soil_temp_5cm: float | None = None
     soil_temp_10cm: float | None = None
     soil_temp_20cm: float | None = None
-    # B4
+    # Air temperature 5 cm above ground
     air_temp_5cm: float | None = None
-    # B5
+    # Diffuse and longwave radiation
     diffuse_radiation: float | None = None
     longwave_radiation: float | None = None
 
@@ -150,10 +151,10 @@ class DailyBundle:
 
     ``daily`` is the 9-day forecast. ``zero_degree_level`` maps each forecast
     hour (aware UTC datetime, top of the hour) to the zero-degree level in m
-    above sea level, read from the run's point-major ``zprfr0hs`` block. The
-    parameter exists only at hourly resolution upstream, so the daily bundle
-    carries it by hour; it is empty when the block could not be fetched
-    without a full download (the point-major guardrail) or is not published.
+    above sea level, read from the run's ``zprfr0hs`` rows. The parameter
+    exists only at hourly resolution upstream, so the daily bundle carries it
+    by hour; it is empty when the file is not published for the run or
+    carries no row for the point.
 
     ``fetch_meta`` carries the escalation ladder metadata for every parameter
     that was freshly fetched (not served from cache) in this bundle
@@ -186,9 +187,9 @@ class HourlyForecast:
     field is optional: a parameter file that omitted the hour, or left the
     cell empty, yields ``None`` rather than an invented value. The fields
     mirror the opt-in hourly parameter set (ADR-0002): temperature,
-    precipitation, symbol, wind speed, gust and bearing, plus the B7/B8/B10
-    additions (issue #55): precipitation probability, zero-degree level and
-    global radiation.
+    precipitation, symbol, wind speed, gust and bearing, plus
+    precipitation probability, zero-degree level and global
+    radiation.
     """
 
     time: datetime
@@ -198,24 +199,23 @@ class HourlyForecast:
     wind_speed_kmh: float | None = None
     gust_kmh: float | None = None
     wind_bearing: float | None = None
-    # B7: 3-hour precipitation probability (rolling window ending at ``time``).
+    # 3-hour precipitation probability (rolling window ending at ``time``).
     precipitation_probability: float | None = None
-    # B8: zero-degree level (m), snow-line material.
+    # Zero-degree level (m), snow-line material.
     zero_degree_level: float | None = None
-    # B10: global radiation (W/m²).
+    # Global radiation (W/m²).
     radiation: float | None = None
     # Sunshine duration in this hour (minutes, 0-60). Filed in the forecast
     # store from the daily point block (issue #178, ADR-0010); it never gates
     # whether an hour renders.
     sunshine_duration: int | None = None
-    # B9: cloud cover by layer (%), high/mid/low. Off unless the cloud-layer
-    # option is on — the three files are date-major and expensive (issue #69).
+    # Cloud cover by layer (%), high/mid/low. Off unless the cloud-layer
+    # option is on — three extra files per fetch.
     cloud_high: float | None = None
     cloud_mid: float | None = None
     cloud_low: float | None = None
-    # B11: temperature 10th/90th percentile (°C), the forecast's uncertainty
-    # band. Off unless the percentile option is on — both files are date-major
-    # (issue #69).
+    # Temperature 10th/90th percentile (°C), the forecast's uncertainty
+    # band. Off unless the percentile option is on — two extra date-major files.
     temperature_p10: float | None = None
     temperature_p90: float | None = None
 

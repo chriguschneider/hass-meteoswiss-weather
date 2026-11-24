@@ -129,8 +129,9 @@ class BulkCsvBackend:
 
     Discovers the newest complete run (STAC), downloads its small daily files
     and parses them off the event loop (ADR-0002). The point-major blocks of
-    :data:`DAILY_BLOCK_PARAMS` are also fetched with each daily refresh (~5 KB
-    each via the #50 block strategy): the three wind files for the daily wind
+    :data:`DAILY_BLOCK_PARAMS` are also fetched with each daily refresh (a few
+    KB each through the point's rows; ``zprfr0hs`` is date-major, ~130 KB): the
+    three wind files for the daily wind
     fields (issue #60, ADR-0002 revision 3), ``rp0003i0`` for the derived daily
     precipitation probability (issue #112, revision 5) and ``zprfr0hs`` for the
     hourly zero-degree levels (issue #107, revision 6). Every file a run fetches
@@ -170,7 +171,8 @@ class BulkCsvBackend:
         # daily canary (ADR-0008 section 3, issue #125) fetches the representative
         # temperature-maxima file and, when its per-day values still match this
         # bundle, keeps it instead of re-fetching the other daily files and the
-        # point-major blocks. Reset never lives longer than DAILY_MAX_AGE.
+        # point-major blocks. The kept bundle is dropped once it is older than
+        # DAILY_MAX_AGE, so a canary match cannot keep it forever.
         self._last_daily: DailyBundle | None = None
         self._last_daily_at: datetime | None = None
         # Escalation metadata (level, requests, bytes, layout) for each parameter
@@ -598,7 +600,8 @@ class BulkCsvBackend:
             self._fetch_daily_texts(point, run),
             self._get_block_texts(point, run, hourly_horizon_days=hourly_horizon_days),
         )
-        # Parsing scans several MB per file; keep it off the event loop.
+        # Each text is the header plus the point's rows, but parsing is still
+        # CPU work; keep it off the event loop.
         loop = asyncio.get_running_loop()
         daily = await loop.run_in_executor(None, parse_daily, text_by_param, point)
 
@@ -771,8 +774,9 @@ class BulkCsvBackend:
         # hour, horizon_end)``: a date-major file (``tre200h0``) is row-addressed
         # to the horizon for ~100–300 KB instead of the ~10 MB date-major prefix,
         # and a point-major file returns its ~5 KB block. A ``None`` horizon
-        # (the full-run option) demands the whole run, which the ladder serves by
-        # the full file when row addressing would overrun the request cap.
+        # (the full-run option) demands the whole run, which the ladder serves as
+        # consecutive cap-sized row-addressed windows when one read would overrun
+        # the request cap.
         #
         # ``window_start_override`` (an aware UTC hour) fetches the **far
         # remainder** ``[near_end, horizon_end]`` instead of starting at the
