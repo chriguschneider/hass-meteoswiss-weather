@@ -60,18 +60,18 @@ _OBSERVATION_CODES: dict[str, str] = {
     "precipitation_10min": "rre150z0",
     "sunshine_10min": "sre000z0",
     "global_radiation": "gre000z0",
-    # B1
+    # Snow depth
     "snow_depth": "htoauts0",
-    # B2
+    # Wind chill and QNH pressure
     "wind_chill": "xchills0",
     "pressure_qnh": "pp0qnhs0",
-    # B3
+    # Soil temperature at three depths
     "soil_temp_5cm": "tso005s0",
     "soil_temp_10cm": "tso010s0",
     "soil_temp_20cm": "tso020s0",
-    # B4
+    # Air temperature 5 cm above ground
     "air_temp_5cm": "tre005s0",
-    # B5
+    # Diffuse and longwave radiation
     "diffuse_radiation": "ods000z0",
     "longwave_radiation": "oli000z0",
 }
@@ -193,7 +193,7 @@ async def _fetch_current_impl(
 
 
 # ---------------------------------------------------------------------------
-# Public API — ogd-smn (full SwissMetNet, unchanged from issue #4).
+# Public API — ogd-smn (full SwissMetNet).
 # ---------------------------------------------------------------------------
 
 
@@ -248,7 +248,7 @@ async def fetch_current(
 
 
 # ---------------------------------------------------------------------------
-# Public API — ogd-smn-precip (precipitation-only network, ADR-0006, #56).
+# Public API — ogd-smn-precip (precipitation-only network, ADR-0006).
 # ---------------------------------------------------------------------------
 
 

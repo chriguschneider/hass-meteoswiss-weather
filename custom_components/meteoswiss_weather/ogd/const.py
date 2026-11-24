@@ -71,8 +71,9 @@ POINT_TYPE_POSTAL_CODE = 2
 POINT_TYPE_MOUNTAIN = 3
 
 # Daily parameter codes fetched for the default forecast (ADR-0002): max/min
-# temperature, precipitation sum, weather symbol. These four files are the
-# whole cost of a daily refresh (order of 5 MB).
+# temperature, precipitation sum, weather symbol. Each file costs a few KB
+# through the point's rows; the point-major blocks of DAILY_BLOCK_PARAMS ride
+# every daily refresh as well.
 #
 # The ``p``-variants (``…px``/``…pn``/``…p0``) are used deliberately, not the
 # ``d``/``0``-variants (``tre200dx``/``tre200dn``/``rka150d0``): the daily
@@ -95,7 +96,7 @@ DAILY_REQUIRED_PARAMS: tuple[str, ...] = (
 )
 
 # Hourly parameter codes fetched for the opt-in hourly forecast (ADR-0002).
-# Each of these files is ~30 MB and holds every point, so the set is the whole
+# Each of these files is ~30 MB and holds every point, so the set is the
 # traffic budget: it is the documented minimum (temperature, precipitation,
 # symbol, wind speed) plus gust and wind direction, which are included only
 # because the hourly forecast entity exposes gust and bearing per hour.
@@ -105,10 +106,11 @@ HOURLY_SYMBOL = "jww003i0"
 HOURLY_WIND_SPEED = "fu3010h0"
 HOURLY_GUST = "fu3010h1"
 HOURLY_WIND_DIRECTION = "dkl010h0"
-# B7: 3-hour precipitation probability (rolling window ending at Date),
-# B8: zero-degree level (snow-line material), B10: global radiation.
-# All three are point-major (~5 KB block); they join the hourly minimum set
-# whenever the hourly opt-in is on (issue #55, ADR-0002 revision 4).
+# 3-hour precipitation probability (rolling window ending at Date), zero-degree
+# level (snow-line material) and global radiation. They join the hourly minimum
+# set whenever the hourly opt-in is on (ADR-0002 revision 4). The first and last
+# are point-major (~5 KB block); ``zprfr0hs`` is date-major since 2026-09-16
+# (docs/ogd.md §E4, "Row order").
 HOURLY_PRECIP_PROBABILITY = "rp0003i0"
 HOURLY_ZERO_DEGREE = "zprfr0hs"
 HOURLY_RADIATION = "gre000h0"
@@ -129,14 +131,15 @@ HOURLY_REQUIRED_PARAMS: tuple[str, ...] = (
     HOURLY_RADIATION,
 )
 
-# The tiered refresh (issue #68, ADR-0002 revision 2) fetches the required set in
-# two groups scheduled independently:
-#   - the **date-major** file(s) are split into the near/far horizon tiers — only
-#     ``tre200h0`` is date-major, so a horizon prefix carries the near term
-#     cheaply and the far range extends it (docs/ogd.md §E4, "Row order");
-#   - the **point-major** files (precipitation, symbol, wind, gust, direction)
-#     are fetched whole per run — one point's ~220 rows are a ~5 KB block, so
-#     they are refreshed with every new run at negligible cost.
+# The tiered refresh (ADR-0002 revision 2) fetches the required set in two
+# groups scheduled independently:
+#   - the **date-major** file(s) are split into the near/far horizon tiers, so
+#     a short window carries the near term cheaply and the far range extends
+#     it (docs/ogd.md §E4, "Row order");
+#   - the **point-major** files are fetched per run as one point block of
+#     ~220 rows (~5 KB), refreshed with every new run at negligible cost.
+# The groups are a static default; the layout actually used for a file is the
+# detected one, and a changed layout is caught by the canary.
 # tests/test_const.py asserts the two groups partition HOURLY_REQUIRED_PARAMS.
 HOURLY_DATE_MAJOR_PARAMS: tuple[str, ...] = (HOURLY_TEMPERATURE,)
 HOURLY_POINT_MAJOR_PARAMS: tuple[str, ...] = (
@@ -150,17 +153,16 @@ HOURLY_POINT_MAJOR_PARAMS: tuple[str, ...] = (
     HOURLY_RADIATION,
 )
 
-# B9/B11 date-major additions behind per-entity gating (issue #69). Measured
-# 2026-08-28 (docs/ogd.md §E4, "Row order"): the three cloud-cover files and the
-# two temperature-percentile files are all **date-major**, so each one costs a
-# horizon prefix (~7–11 MB at the default horizon) exactly like ``tre200h0`` —
-# not the ~5 KB point block of the point-major group. Three prefixes for one
-# ``cloud_coverage`` number, or two for the percentile band, is the expensive
-# path, so these files are fetched **only when the option that needs them is
-# enabled** (the gusts/direction gating pattern of ADR-0002). They ride the same
-# near/far tier schedule as the temperature file, being date-major.
+# Additions behind per-entity gating (ADR-0002). Measured 2026-08-28 and
+# 2026-09-01 (docs/ogd.md §E4, "Row order"): the two temperature-percentile
+# files are **date-major**; the three cloud-cover files are **point-major**
+# since 2026-08-31 (they were date-major before). Each extra file is still an
+# extra fetch for one ``cloud_coverage`` number or the percentile band, so
+# these files are fetched **only when the option that needs them is enabled**
+# (the gusts/direction gating pattern of ADR-0002). They ride the same
+# near/far tier schedule as the temperature file.
 #
-# B9: high / mid / low cloud cover (%). ``cloud_coverage`` (HA's single number)
+# High / mid / low cloud cover (%). ``cloud_coverage`` (HA's single number)
 # is the maximum of the three layers; each layer is also exposed as an attribute.
 HOURLY_CLOUD_HIGH = "nprohihs"
 HOURLY_CLOUD_MID = "npromths"
@@ -170,7 +172,7 @@ HOURLY_CLOUD_PARAMS: tuple[str, ...] = (
     HOURLY_CLOUD_MID,
     HOURLY_CLOUD_LOW,
 )
-# B11: temperature 10th / 90th percentile (°C), the forecast's uncertainty band.
+# Temperature 10th / 90th percentile (°C), the forecast's uncertainty band.
 HOURLY_TEMP_P10 = "treq10h0"
 HOURLY_TEMP_P90 = "treq90h0"
 HOURLY_TEMP_PERCENTILE_PARAMS: tuple[str, ...] = (HOURLY_TEMP_P10, HOURLY_TEMP_P90)
@@ -179,13 +181,13 @@ HOURLY_TEMP_PERCENTILE_PARAMS: tuple[str, ...] = (HOURLY_TEMP_P10, HOURLY_TEMP_P
 def hourly_date_major_params(
     *, cloud_layers: bool = False, temp_percentiles: bool = False
 ) -> tuple[str, ...]:
-    """The date-major hourly files to fetch for the enabled options (issue #69).
+    """The date-major hourly files to fetch for the enabled options.
 
     A pure **fetch-set registry**: it maps the set of enabled entities/attributes
     to the upstream files they need. The base set is always the temperature file
-    (``tre200h0``). The B9 cloud-cover files and the B11 temperature-percentile
-    files are date-major too — each an extra horizon prefix — so they join only
-    when their option is on (ADR-0002 per-entity gating). With nothing extra
+    (``tre200h0``). The cloud-cover files and the temperature-percentile files
+    are scheduled with it, so they join only when their option is on (ADR-0002
+    per-entity gating). With nothing extra
     enabled the result is exactly :data:`HOURLY_DATE_MAJOR_PARAMS`, so nothing
     extra is ever fetched. tests/test_const.py asserts this.
     """
@@ -200,24 +202,24 @@ def hourly_date_major_params(
 # populate ``native_wind_speed``, ``native_wind_gust_speed``, and
 # ``wind_bearing`` on each ``DailyForecast`` entry (issue #60, ADR-0002
 # revision 3). Each file's block is ~5 KB; all three together cost ~15 KB plus
-# three verification probes — well inside the daily budget. If a file is
-# detected as non-point-major the daily wind fields are set to None (guardrail:
-# the full 30 MB download is never triggered for a default feature).
+# three verification probes — well inside the daily budget. The escalation
+# ladder (ADR-0008 section 4) fetches each file; it can climb to the whole file
+# only when nothing cheaper proves complete.
 DAILY_WIND_PARAMS: tuple[str, ...] = (
     HOURLY_WIND_SPEED,
     HOURLY_GUST,
     HOURLY_WIND_DIRECTION,
 )
 
-# Every point-major hourly block fetched with the daily refresh: the three wind
-# files above, the 3-hour precipitation probability behind the derived daily
-# probability (issue #112, ADR-0002 revision 5) and the zero-degree level
-# (issue #107, revision 6). Neither has a daily variant upstream, so the daily
-# figures can only come from the hourly files; each ~5 KB point block rides
-# along with the wind blocks so the values work without the hourly opt-in. The
-# guardrail is per file: a block that is missing from the run or not
-# point-major degrades its own fields to None and never triggers a full
-# download, and never takes the other blocks down with it.
+# Every hourly block fetched with the daily refresh: the three wind files
+# above, the 3-hour precipitation probability behind the derived daily
+# probability (ADR-0002 revision 5) and the zero-degree level (revision 6).
+# Neither has a daily variant upstream, so the daily figures can only come
+# from the hourly files; the blocks ride along with the wind blocks so the
+# values work without the hourly opt-in. The guardrail is per file: a block
+# that is missing from the run degrades its own fields to None and never takes
+# the other blocks down with it. ``zprfr0hs`` is date-major (~130 KB through
+# its rows, see demand.py), the others are point-major blocks of ~5 KB.
 #
 # ``sre000h0`` joins the blocks for the daily sunshine total and the hourly
 # sunshine series (issue #178, ADR-0010): MeteoSwiss publishes no daily
@@ -232,10 +234,11 @@ DAILY_BLOCK_PARAMS: tuple[str, ...] = (
     HOURLY_SUNSHINE,
 )
 
-# Per-file HTTP-Range strategy for the hourly bulk files (issue #50, ADR-0002
-# revision). The 30 MB files have two layouts, detected at runtime:
-#   - "date-major": rows sorted by Date, so the earliest hours of every point
-#     sit at the file start and a prefix Range covers the wanted horizon;
+# Per-file HTTP-Range strategy for the hourly bulk files (ADR-0002 revision,
+# ADR-0008). The 30 MB files have two layouts, detected at runtime:
+#   - "date-major": rows sorted by Date, one block of every point per hour; the
+#     point's rows are addressed per hour block (a horizon prefix is only the
+#     last resort of the ladder);
 #   - "point-major": one point's ~220 rows are contiguous (~5 KB) and a single
 #     Range request fetches them after a binary search over byte offsets.
 # On anything the classifier does not recognise, fall back to the full file.
@@ -245,7 +248,7 @@ DAILY_BLOCK_PARAMS: tuple[str, ...] = (
 FORECAST_TIMEZONE = "Europe/Zurich"
 
 # "Full run" sentinel for the horizon option: fetch and keep every hour
-# (~220 h, today's behaviour) instead of trimming to a day horizon.
+# (~220 h) instead of trimming to a day horizon.
 HOURLY_HORIZON_FULL_RUN = -1
 
 # Date-major prefix budget. A date-major hour block is ~150 KB (all ~5,600

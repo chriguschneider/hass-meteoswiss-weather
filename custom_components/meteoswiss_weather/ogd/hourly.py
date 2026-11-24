@@ -1,15 +1,16 @@
-"""Per-file HTTP-Range strategies for the hourly bulk forecast (issue #50).
+"""Per-file HTTP-Range strategies for the hourly bulk forecast.
 
 The hourly local-forecast files are ~30 MB and hold every one of the ~5,600
 points (docs/ogd.md §E4). Downloading the full set every refresh is the whole
 traffic budget (ADR-0002). Measured on 2026-08-28, the files have **two**
 layouts, and each admits a cheaper Range fetch:
 
-- **date-major** files (`tre200h0`, the `treq*` group) are sorted by
-  `Date`, so the earliest hours of all points lead the file — a prefix
-  ``Range: bytes=0-<budget>`` covers the wanted horizon;
+- **date-major** files (`tre200h0`, the `treq*` group, `zprfr0hs`) are sorted
+  by `Date`, one block of all points per hour, so a point's row in each hour
+  block is addressed directly (row addressing); a prefix
+  ``Range: bytes=0-<budget>`` covering the horizon is the fallback;
 - **point-major** files (symbol, precipitation, wind, gust, direction, and —
-  since a silent upstream re-sort on 2026-08-31 (issue #100) — the `npro*`
+  since a silent upstream re-sort on 2026-08-31 — the `npro*`
   cloud group) are sorted so one point's ~220 rows form a contiguous ~5 KB
   block — a binary search over byte offsets with tiny Range probes locates
   it, then one Range GET fetches it.
@@ -55,8 +56,8 @@ _LOGGER = logging.getLogger(__name__)
 FORECAST_TZ = ZoneInfo(FORECAST_TIMEZONE)
 
 # Number of evenly spaced byte offsets sampled to classify a file's layout.
-# More than the three the issue floats: the tiny probes are cheap and extra
-# samples make the monotonicity verdict robust on a shuffled/unexpected file.
+# The tiny probes are cheap, and extra samples make the monotonicity verdict
+# robust on a shuffled/unexpected file.
 _LAYOUT_PROBES = 9
 
 # Extra hours added to the date-major prefix budget so the horizon is reached
@@ -553,7 +554,7 @@ class _RequestCapExceeded(_NotProven):
     explicit window of a windowed demand, or a whole-run demand's own extent
     (the file's first stamp to one step past its last). It lets a date-major
     file that overran the cap be re-fetched as consecutive cap-sized
-    row-addressed windows instead of a prefix or the whole file (issue #153).
+    row-addressed windows instead of a prefix or the whole file.
     """
 
     def __init__(
@@ -570,11 +571,10 @@ class _ChunkNeeded(Exception):
     file cannot be row-addressed in one read under the request cap — a long
     windowed horizon, or a whole run with too many blocks. The caller
     (:func:`_fetch_series_auto`) then tiles the resolved window into consecutive
-    cap-sized windows and row-addresses each (the mechanism #148 added for the
-    far tail), instead of falling to a prefix or the whole file. It is the
-    ladder call, not the static group a file was listed in, that decides about
-    chunking, so ``zprfr0hs`` re-sorted to date-major upstream is chunked
-    wherever it is demanded (issue #153).
+    cap-sized windows and row-addresses each, instead of falling to a prefix or
+    the whole file. It is the ladder call, not the static group a file was
+    listed in, that decides about chunking, so ``zprfr0hs`` re-sorted to
+    date-major upstream is chunked wherever it is demanded.
     """
 
     def __init__(self, window_start: datetime, window_end: datetime) -> None:
@@ -945,7 +945,7 @@ async def _fetch_rows_date_major(
 
     # A whole-run demand (window None) is served by addressing every block from
     # the file's first to its last, so a few-block date-major file (the daily
-    # p-variants) never falls to the full download (issue #122).
+    # p-variants) is not downloaded whole.
     ws = window_start if window_start is not None else first_dt
     we = window_end if window_end is not None else last_dt + step
     hours = _window_hours(ws, we, first_dt, last_dt, step)
@@ -956,7 +956,7 @@ async def _fetch_rows_date_major(
         request_cap
     ):
         # Hand back the resolved run window so the caller can re-fetch it as
-        # cap-sized row-addressed windows rather than the whole file (issue #153).
+        # cap-sized row-addressed windows rather than the whole file.
         raise _RequestCapExceeded(
             "run has too many blocks for row addressing", window=(ws, we)
         )
@@ -1334,8 +1334,8 @@ async def fetch_series(
     file's blocks — one hour for the hourly files, one day for the daily
     ``p``-variants (``Date`` stamped ``YYYYMMDD0000``, docs/ogd.md §E4). A
     whole-run demand on a date-major file is served by row addressing when the
-    file has few blocks (the nine day blocks of the daily files) and climbs to
-    the full file otherwise (issue #122). ``hint`` is the :class:`FileHint` a
+    file has few blocks (the nine day blocks of the daily files) and is tiled
+    into cap-sized row-addressed windows otherwise. ``hint`` is the :class:`FileHint` a
     previous :class:`SeriesResult` returned for the same file; ``utc_day`` is the
     run's UTC day, used to decide whether the hint's offsets are still stable. A
     hint only ever saves requests — a stale or wrong one is detected by the rows
@@ -1351,7 +1351,7 @@ async def fetch_series(
     consecutive cap-sized windows rather than a prefix or the whole file — the
     ladder call decides this from the file's detected layout, so a file that
     upstream re-sorted to date-major is handled correctly whatever static group
-    it was listed in (issue #153).
+    it was listed in.
     """
 
     def make_reader() -> _CountingReader:
@@ -1378,7 +1378,7 @@ async def fetch_series(
 # A single ``fetch_series`` skips row addressing once the demanded window needs
 # more than ``SERIES_REQUEST_CAP`` requests and falls to the multi-MB prefix
 # (level 3): with the canary reporting a change on practically every run, a
-# horizon of ~80 h or more then reads a prefix every hour (issue #143). The far
+# horizon of ~80 h or more then reads a prefix every hour. The far
 # remainder of such a horizon is instead fetched here as **consecutive windows
 # that each fit the cap**, so every window stays on row addressing (level ≤ 2)
 # and the prefix/full file remain only the per-window fallback. Each window is

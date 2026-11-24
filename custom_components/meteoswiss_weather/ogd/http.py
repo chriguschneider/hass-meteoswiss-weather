@@ -1,8 +1,8 @@
 """Conditional HTTP text fetch, shared by the station and forecast clients.
 
 One helper, ``get_text``, that carries an ``ETag`` / ``Last-Modified`` pair
-across calls so an unchanged file costs a single 304 (ADR-0002). Reused by
-the current-observations client (#4) and the forecast client (#10).
+across calls so an unchanged file costs a single 304 (ADR-0002). Shared by
+the current-observations and the forecast clients.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ def _gate(limiter: asyncio.Semaphore | None):
     A caller that fans out many files of one refresh under ``asyncio.gather``
     passes a shared :class:`asyncio.Semaphore` so at most
     :data:`~.const.OGD_MAX_CONCURRENT_REQUESTS` requests are in flight at once
-    (issue #132): the burst against ``data.geo.admin.ch`` becomes a steady
+    (ADR-0008): the burst against ``data.geo.admin.ch`` becomes a steady
     trickle. A ``None`` limiter is an unbounded no-op (a single-request caller).
     """
     return limiter if limiter is not None else contextlib.nullcontext()
@@ -66,7 +66,7 @@ async def get_text(
     validators are sent as ``If-None-Match`` / ``If-Modified-Since``; on a
     304 the same object is returned unchanged, on a 200 it is updated in
     place and returned. ``limiter`` bounds how many requests of one refresh
-    are in flight at once (issue #132). Any transport error or non-2xx/304
+    are in flight at once. Any transport error or non-2xx/304
     status raises :class:`OgdConnectionError`.
     """
     headers: dict[str, str] = {}
@@ -149,10 +149,10 @@ async def get_bytes(
     range; the origin answers 206 with ``Content-Range`` (the hourly bulk
     files honour this, docs/ogd.md §E4). ``etag`` is sent as ``If-None-Match``,
     so an unchanged object answers 304 — this keeps working together with a
-    ``Range`` (measured, issue #50). A server that ignores ``Range`` and
+    ``Range`` (measured). A server that ignores ``Range`` and
     answers 200 with the full body is handled by the caller (the range reader
     caches the body and slices locally). ``limiter`` bounds how many requests of
-    one refresh are in flight at once (issue #132), so the many byte-range
+    one refresh are in flight at once, so the many byte-range
     probes of a refresh do not burst the host. Any transport error or unexpected
     status raises :class:`OgdConnectionError`.
     """
