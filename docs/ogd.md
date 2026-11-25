@@ -486,38 +486,98 @@ Dataset behind the pollen platform (ADR-0005, #53).
 
 ## Adding the OGC Features backend
 
-MeteoSwiss has announced a per-point OGC Features API (beta, end of 2026).
-When it ships, swapping it in is a contained change — the coordinator and
-the entities never need to know. The seam is `ForecastBackend` in
-`ogd/backend.py` and the factory hook `_backend_factory` in `__init__.py`.
+MeteoSwiss has announced a per-point OGC Features API (beta, "until the end of
+2026" per its roadmap; no URL published yet, see #57). When it ships, swapping
+it in stays contained: the entities never know which backend is behind the
+coordinator. The seam is the `ForecastBackend` protocol in `ogd/backend.py`
+and the factory hook `_backend_factory` in `__init__.py` (default
+`BulkCsvBackend`, called with the shared `aiohttp.ClientSession`).
 
-Steps to add a new backend:
+### The protocol
 
-1. **New module** `ogd/ogc_features.py` — implement a class with the same two
-   async methods as `BulkCsvBackend`:
-   ```python
-   async def fetch_daily(self, point: ForecastPoint) -> list[DailyForecast]: ...
-   async def fetch_hourly(self, point: ForecastPoint) -> list[HourlyForecast]: ...
-   ```
-   The class must satisfy the `ForecastBackend` protocol (`ogd/backend.py`).
-   Keep it in the `ogd/` package (pure Python, ADR-0001). The coordinator
-   passes a `ForecastPoint` — `(point_id, point_type_id)` identify the
-   forecast row in the upstream API.
+A backend implements three async methods (`ogd/backend.py`, `ForecastBackend`):
 
-2. **Wire it up** in `__init__.py` by changing `_backend_factory`. A feature
-   flag in the config entry options is the natural gate while both backends
-   coexist.
+```python
+async def fetch_daily(
+    self,
+    point: ForecastPoint,
+    *,
+    run: Run | None = None,
+    hourly_horizon_days: int | None = None,
+) -> DailyBundle: ...
 
-3. **Test it** with the same `FakeBackend` pattern from
-   `tests/test_backend_seam.py`: the coordinator and entities need no changes
-   and their existing tests continue to pass.
+async def fetch_hourly(
+    self,
+    point: ForecastPoint,
+    *,
+    horizon_days: int = HOURLY_HORIZON_FULL_RUN,
+    params: tuple[str, ...] = HOURLY_REQUIRED_PARAMS,
+    run: Run | None = None,
+    window_start_override: datetime | None = None,
+) -> list[HourlyForecast]: ...
 
-The `ForecastCoordinator._async_update_data` will still call `latest_run`
-to check the STAC run stamp (cheap, a single small JSON request) before
-deciding whether to call `fetch_daily`. A per-point API backend can skip
-the run-staleness check by always fetching; alternatively, the coordinator
-can be taught to skip the STAC call when the configured backend does not
-need it — that is an ADR-worthy change.
+async def fetch_hourly_canary(
+    self,
+    point: ForecastPoint,
+    param: str,
+    *,
+    hours: int,
+    run: Run | None = None,
+) -> dict[datetime, float | int] | None: ...
+```
+
+- `fetch_daily` returns a `DailyBundle` (`ogd/models.py`): `daily`
+  (the `list[DailyForecast]`), plus `zero_degree_level` and
+  `sunshine_duration` as hour-keyed series the coordinator files in the
+  forecast store, and `fetch_meta` (per-parameter provenance; empty when
+  nothing was re-fetched, which makes the coordinator `confirm` the stored
+  series instead of `put`ting it). The coordinator passes
+  `hourly_horizon_days` only when the hourly option is on, so a backend can
+  cover both needs with one download.
+- `fetch_hourly` returns hourly rows for the demanded `params` over
+  `horizon_days`; `window_start_override` moves the start of the window.
+- `fetch_hourly_canary` cheaply reads the next `hours` hours of one `param`
+  as `{hour: value}`; the coordinator compares it with the store to decide
+  whether a group needs a refresh (ADR-0008). `None` or an empty result
+  means "could not verify" and counts as changed.
+- `run` is the `Run` the coordinator already discovered this tick. A backend
+  that needs a run uses it; one that does not may ignore it.
+- Raise `OgdConnectionError` / `OgdParseError` (`ogd/models.py`); the
+  coordinator turns them into `UpdateFailed` and the repair issue.
+- Optionally expose `layout_hint(param) -> FileLayout | None`; the
+  coordinator reads it with `getattr`, so a backend without bulk files simply
+  omits it.
+
+### Steps
+
+1. **New module** `ogd/ogc_features.py` with a class satisfying the protocol.
+   Keep it in `ogd/` (pure Python, ADR-0001). `ForecastPoint` carries
+   `(point_id, point_type_id)`, which identify the forecast row.
+2. **Wire it up** by changing `_backend_factory`; a config-entry option is the
+   natural gate while both backends coexist.
+3. **Test it** with the `FakeBackend` pattern of `tests/test_backend_seam.py`.
+
+### What the coordinator still does around the backend
+
+`ForecastCoordinator._async_update_data` first calls
+`latest_run_from_day_item` (`ogd/stac.py`, from `coordinator.py`) with the
+cached today/yesterday STAC day items to find the current `Run` (conditional
+requests, ADR-0002). An unchanged `run.timestamp` skips `fetch_daily`
+entirely, and the resulting `Run` is what gets passed to all three backend
+methods and used to stamp the store. A per-point API has no STAC run, so
+either the backend ignores `run` and the coordinator's run discovery is
+bypassed or replaced for it, or the run stamp is derived from the API's own
+model-run field. Changing the coordinator to skip STAC discovery is
+ADR-worthy (ADR-0002).
+
+### Watching for the beta
+
+The weekly smoke test (`tests/tools/smoke_test.py`, `check_ogc_announcement`)
+reads the official changelog feed
+`https://opendatadocs.meteoswiss.ch/changelog/rss.xml` and prints a notice
+(and a `$GITHUB_STEP_SUMMARY` entry) for any item mentioning OGC / Feature API
+that is not in its pinned set of known items (`/changelog/1.1.2`, the
+announcement). It never fails the run.
 
 ## How to read the fetch diagnostics
 

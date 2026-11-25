@@ -17,7 +17,10 @@ import csv
 import importlib.util
 import io
 import json
+import os
+import re
 import sys
+import xml.etree.ElementTree as ET
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -673,6 +676,59 @@ def check_slf_daily_snow() -> None:
 
 
 # ---------------------------------------------------------------------------
+# OGC Features announcement probe (fail-soft, issue #258 / #57)
+# ---------------------------------------------------------------------------
+
+CHANGELOG_FEED_URL = "https://opendatadocs.meteoswiss.ch/changelog/rss.xml"
+_CONTENT_NS = "http://purl.org/rss/1.0/modules/content/"
+# Case-insensitive: the 1.1.2 item says "A feature API ..." in lower case.
+OGC_ITEM_PATTERN = re.compile(r"\bOGC\b|Features? API", re.IGNORECASE)
+# Items already seen and understood (measured 2026-11-18): the 1.1.2
+# announcement. A match outside this set is news.
+OGC_KNOWN_LINKS = frozenset({"https://opendatadocs.meteoswiss.ch/changelog/1.1.2"})
+
+
+def check_ogc_announcement() -> None:
+    """Notice a new OGC Features item in the changelog feed. Never fails.
+
+    No OGC endpoint is published yet, so the official changelog feed is
+    watched instead. Unreachable feed, parse error or a new match only print;
+    the exit code is untouched.
+    """
+    try:
+        root = ET.fromstring(_get(CHANGELOG_FEED_URL))
+        new_items: list[tuple[str, str]] = []
+        for item in root.iter("item"):
+            title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            body = item.findtext(f"{{{_CONTENT_NS}}}encoded") or ""
+            text = f"{title} {item.findtext('description') or ''} {body}"
+            if OGC_ITEM_PATTERN.search(text) and link not in OGC_KNOWN_LINKS:
+                new_items.append((title, link))
+    except Exception as exc:
+        print(f"-  OGC announcement probe skipped: {exc}")
+        return
+    if not new_items:
+        print("-  OGC announcement probe: no new OGC/Features item in the changelog feed")
+        return
+    lines = [
+        f"NOTICE: new MeteoSwiss changelog item mentions OGC/Features: {t} ({lnk})"
+        for t, lnk in new_items
+    ]
+    print("!" * 50)
+    for line in lines:
+        print(line)
+    print("!" * 50)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        try:
+            with open(summary, "a", encoding="utf-8") as fh:
+                fh.write("\n".join(lines) + "\n")
+        except OSError as exc:
+            print(f"-  could not write step summary: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -699,6 +755,9 @@ def main() -> None:
     check_slf_stations()
     check_slf_measurements()
     check_slf_daily_snow()
+
+    print()
+    check_ogc_announcement()
 
     print("=" * 50)
     if _failures:
