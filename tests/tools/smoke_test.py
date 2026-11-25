@@ -20,8 +20,8 @@ import json
 import os
 import re
 import sys
-import xml.etree.ElementTree as ET
 import urllib.request
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
@@ -709,7 +709,10 @@ def check_ogc_announcement() -> None:
         print(f"-  OGC announcement probe skipped: {exc}")
         return
     if not new_items:
-        print("-  OGC announcement probe: no new OGC/Features item in the changelog feed")
+        print(
+            "-  OGC announcement probe: "
+            "no new OGC/Features item in the changelog feed"
+        )
         return
     lines = [
         f"NOTICE: new MeteoSwiss changelog item mentions OGC/Features: {t} ({lnk})"
