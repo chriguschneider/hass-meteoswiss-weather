@@ -28,6 +28,9 @@ using the matching section below as release notes.
 - With several locations set up, a repair notice about one location is no
   longer cleared by another location's successful update; the notice now names
   the location.
+- The zero-degree forecast no longer downloads about 30 MB on every refresh in
+  winter, when the freezing level drops below 1000 m; the repair issue
+  'forecast file needed a full download' no longer appears for it.
 
 ## [v0.10.1] — 2026-10-26
 

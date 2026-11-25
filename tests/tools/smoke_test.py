@@ -96,6 +96,11 @@ HOURLY_EXPECTED_LAYOUT = {
     "nprohihs": {"date", "point"},
     "npromths": {"date", "point"},
     "nprolohs": {"date", "point"},
+    # Zero-degree level (issue #281): date-major since 2026-09-16 (issue #116),
+    # read by the daily path's zero-degree sensor. Point-major is still read
+    # cheaply by the ladder, so either layout passes; the printed layout makes
+    # a flip visible in the CI log.
+    "zprfr0hs": {"date", "point"},
 }
 
 # Cloud parameters to sanity-check for value range (issue #97).

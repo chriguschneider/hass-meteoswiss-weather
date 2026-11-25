@@ -243,3 +243,26 @@ series in place, empty, so diagnostics still show where it came from.
    contract.
 3. **96 requests per file** is the ceiling before the ladder jumps a level
    (section 4).
+
+## Amendment 2026-11-25 (#281)
+
+Winter showed that section 4's L0 can cost more than it saves. From late
+November `zprfr0hs` mixes 3- and 4-digit values, so its hour blocks differ by
+up to ~4 KB, and it carries 5821 points per block instead of 5632
+(docs/ogd.md §E4). A remembered position was extrapolated across a whole
+cap-sized window of ~80 blocks with one running block estimate. It missed,
+the fresh look that followed had one spare request left under the cap, and
+every refresh fell to the ~30 MB prefix while keeping the stale position.
+The ladder now:
+
+- predicts a remembered window from the rows found next to it on the last
+  fetch (the first and the last row, and the file's first block) with the mean
+  block size between them;
+- trusts a remembered position only if its first row lies inside the row
+  windows. Otherwise it takes one fresh look, and an escalated fetch replaces
+  the position instead of keeping it;
+- reserves room for that fresh look under the cap: the addressing overhead is
+  23 requests (it was 16), so a chunk spans at most 72 blocks. A 72 h window
+  still fits in one read.
+
+The 96-request ceiling (decision 3) is unchanged.
