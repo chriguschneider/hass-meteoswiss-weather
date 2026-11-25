@@ -26,9 +26,16 @@ _ROW_WINDOWS = (2048, 16384)
 _BLOCK_WINDOW_BLOCKS = 2.5
 # Chunk size while learning a date-major file's geometry from its first block.
 _LEARN_CHUNK_BYTES = 65_536
-# Classification, header, first/last row and geometry learning, on top of one
-# read per demanded hour, when deciding whether row addressing fits the cap.
-_ADDRESSING_OVERHEAD_REQUESTS = 16
+# Requests on top of one read per demanded hour, when deciding whether row
+# addressing fits the cap (and how long a chunk may be): a fresh look costs
+# about 15 (nine classification probes, header, first/last row, ~3 reads to
+# learn the geometry); a same-day hint that fails to verify costs at most 2
+# more before that fresh look (only the row windows are tried for its first
+# row); and 6 are slack for rows that need a wider window. With 16, a full
+# 79-hour chunk had one spare request, so a stale hint plus the fresh look
+# overran the cap and every refresh fell to the 30 MB prefix (issue #281).
+# 23 still lets a 72 h near window (73 blocks) stay one read under the cap.
+_ADDRESSING_OVERHEAD_REQUESTS = 23
 
 
 def _needle(point: ForecastPoint, stamp: str) -> bytes:
@@ -252,7 +259,8 @@ class _Walk:
     anchor_off: int  # byte offset of the last row found
     level: int
     from_window: int = 0  # the smallest _ROW_WINDOWS entry worth trying next
-    first_found: tuple[str, int] | None = None
+    first_found: tuple[datetime, int] | None = None
+    last_found: tuple[datetime, int] | None = None
 
     def predict(self, when: datetime) -> tuple[int, float]:
         """The block index of ``when`` and the predicted offset of its row."""
@@ -277,35 +285,78 @@ class _Walk:
             ) / 2
         self.anchor_idx, self.anchor_off = idx, offset
         if self.first_found is None:
-            self.first_found = (_stamp(when), offset)
+            self.first_found = (when, offset)
+        self.last_found = (when, offset)
+
+    def learned(self, geometry: RowGeometry) -> RowGeometry:
+        """The geometry to remember: mean block size, first and last row found."""
+        block = self.block
+        first, last = self.first_found, self.last_found
+        if first is not None and last is not None and last[0] > first[0]:
+            # The mean over the whole span walked, not the running estimate of
+            # the last few blocks: it is what extrapolates best next time.
+            block = (last[1] - first[1]) / ((last[0] - first[0]) / self.step)
+        return RowGeometry(
+            block_bytes=block,
+            row_offset=geometry.row_offset,
+            anchor_stamp=_stamp(first[0]) if first else None,
+            anchor_offset=first[1] if first else None,
+            end_stamp=_stamp(last[0]) if last else None,
+            end_offset=last[1] if last else None,
+        )
+
+
+def _known_rows(
+    geometry: RowGeometry, extent: _Extent, step: timedelta
+) -> dict[int, int]:
+    """Block index -> byte offset of every row of the point the geometry knows.
+
+    Always the first block's row; plus the first and last row found on the last
+    same-day fetch, when they fall inside this file on a whole step.
+    """
+    known = {0: extent.first_start + geometry.row_offset}
+    for stamp, offset in (
+        (geometry.anchor_stamp, geometry.anchor_offset),
+        (geometry.end_stamp, geometry.end_offset),
+    ):
+        when = parse_stamp(stamp) if stamp else None
+        if when is None or offset is None or when < extent.first_dt:
+            continue
+        steps = (when - extent.first_dt) / step
+        if steps == int(steps):
+            known[int(steps)] = offset
+    return known
 
 
 def _start_walk(
-    geometry: RowGeometry, extent: _Extent, step: timedelta, level: int
+    geometry: RowGeometry,
+    extent: _Extent,
+    step: timedelta,
+    level: int,
+    first_target: datetime,
 ) -> _Walk:
-    """Seed the prediction from the cached geometry's anchor, else the first block.
+    """Seed the prediction for ``first_target`` from the rows the geometry knows.
 
-    The anchor is a row found on the last same-day run; predictions start from
-    it (offsets are stable across a day) and fall back to the first block when
-    it is out of range. The rows found verify it either way.
+    Offsets are stable across a UTC day's runs, so the first row is predicted
+    from the known rows around it: interpolated between the nearest known row
+    before and after it, else extrapolated from the nearest one with the mean
+    block size. Extrapolating a running block estimate across dozens of blocks
+    instead misses by tens of KB once block sizes vary with the value widths
+    (``zprfr0hs`` in winter, issue #281). The rows found verify it either way.
     """
-    anchor_idx, anchor_off = 0, extent.first_start + geometry.row_offset
-    anchor_dt = (
-        parse_stamp(geometry.anchor_stamp) if geometry.anchor_stamp else None
-    )
-    if (
-        anchor_dt is not None
-        and geometry.anchor_offset is not None
-        and anchor_dt >= extent.first_dt
-    ):
-        anchor_idx = int((anchor_dt - extent.first_dt) / step)
-        anchor_off = geometry.anchor_offset
+    known = _known_rows(geometry, extent, step)
+    target = int((first_target - extent.first_dt) / step)
+    below = max((idx for idx in known if idx <= target), default=0)
+    above = min((idx for idx in known if idx > target), default=None)
+    block = geometry.block_bytes
+    if above is not None:
+        block = (known[above] - known[below]) / (above - below)
     return _Walk(
         first_dt=extent.first_dt,
         step=step,
-        block=geometry.block_bytes,
-        anchor_idx=anchor_idx,
-        anchor_off=anchor_off,
+        block=block,
+        anchor_idx=below,
+        anchor_off=known[below],
         level=level,
     )
 
@@ -316,11 +367,22 @@ async def _locate_row(
     when: datetime,
     predicted: float,
     needle: bytes,
+    *,
+    verifying_hint: bool = False,
 ) -> tuple[int, bytes, int]:
-    """Find the row near ``predicted``, widening to whole blocks (L2) on a miss."""
+    """Find the row near ``predicted``, widening to whole blocks (L2) on a miss.
+
+    ``verifying_hint`` marks the first row predicted from a remembered geometry:
+    it must sit inside the row windows, or the hint is not trusted and the
+    ladder takes one fresh look. Searching whole blocks for it instead would
+    spend the requests that fresh look needs, and a hint that far off would
+    keep its wrong row offset for the next fetch (issue #281).
+    """
     found = await _find_row(
         reader, predicted, needle, _ROW_WINDOWS, from_window=walk.from_window
     )
+    if found is None and verifying_hint:
+        raise _NotProven(f"hint did not verify at {_stamp(when)}")
     if found is None:
         walk.level = 2
         found = await _find_row(
@@ -385,32 +447,32 @@ async def _fetch_rows_date_major(
             geometry or RowGeometry(block_bytes=0.0, row_offset=0),
         )
 
-    level = 0 if geometry is not None else 1
+    hinted = geometry is not None
+    level = 0 if hinted else 1
     if geometry is None:
         first_row = _Row(
             extent.first_start, point.point_id, point.point_type_id, extent.first_stamp
         )
         geometry = await _learn_geometry(reader, point, first_row)
-    walk = _start_walk(geometry, extent, step, level)
+    walk = _start_walk(geometry, extent, step, level, hours[0])
 
     lines: list[bytes] = []
     for when in hours:
         idx, predicted = walk.predict(when)
         needle = _needle(point, _stamp(when))
         offset, line, hit_window = await _locate_row(
-            reader, walk, when, predicted, needle
+            reader,
+            walk,
+            when,
+            predicted,
+            needle,
+            verifying_hint=hinted and walk.first_found is None,
         )
         walk.accept(when, idx, predicted, offset, hit_window)
         lines.append(line)
 
-    learned = RowGeometry(
-        block_bytes=walk.block,
-        row_offset=geometry.row_offset,
-        anchor_stamp=walk.first_found[0] if walk.first_found else None,
-        anchor_offset=walk.first_found[1] if walk.first_found else None,
-    )
     text = extent.header + b"\n".join(lines) + b"\n"
-    return _rows_result(extent, text, walk.level, learned)
+    return _rows_result(extent, text, walk.level, walk.learned(geometry))
 
 
 def _window_complete(

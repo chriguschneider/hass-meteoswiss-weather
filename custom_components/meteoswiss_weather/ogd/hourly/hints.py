@@ -18,16 +18,20 @@ class RowGeometry:
     Every hour block of a date-major file lists the same points in the same
     order (measured 2026-09-18), so the point is ``row_offset`` bytes into
     every block, give or take the width of a few values. ``block_bytes`` is the
-    running estimate of one hour block's size. ``anchor_stamp``/``anchor_offset``
-    name one row found last time: byte offsets are stable across the runs of a
-    UTC day, so the next fetch starts its predictions right next to its window
-    instead of extrapolating from the file start.
+    mean size of one block over the span walked last time.
+    ``anchor_stamp``/``anchor_offset`` name the first row found last time and
+    ``end_stamp``/``end_offset`` the last one: byte offsets are stable across
+    the runs of a UTC day, so the next fetch predicts its first row from the
+    known rows around it instead of extrapolating across dozens of blocks,
+    which misses by tens of KB once block sizes vary (issue #281).
     """
 
     block_bytes: float
     row_offset: int
     anchor_stamp: str | None = None
     anchor_offset: int | None = None
+    end_stamp: str | None = None
+    end_offset: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """A JSON-serialisable form for persistence (issue #133)."""
@@ -36,16 +40,24 @@ class RowGeometry:
             "row_offset": self.row_offset,
             "anchor_stamp": self.anchor_stamp,
             "anchor_offset": self.anchor_offset,
+            "end_stamp": self.end_stamp,
+            "end_offset": self.end_offset,
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> RowGeometry:
-        """Rebuild from :meth:`to_dict`; raises on a value it cannot trust."""
+        """Rebuild from :meth:`to_dict`; raises on a value it cannot trust.
+
+        ``end_*`` are absent from hints stored before issue #281 and default to
+        ``None``.
+        """
         return cls(
             block_bytes=float(data["block_bytes"]),
             row_offset=int(data["row_offset"]),
             anchor_stamp=_opt_str(data.get("anchor_stamp")),
             anchor_offset=_opt_int(data.get("anchor_offset")),
+            end_stamp=_opt_str(data.get("end_stamp")),
+            end_offset=_opt_int(data.get("end_offset")),
         )
 
 
