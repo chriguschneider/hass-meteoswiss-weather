@@ -451,7 +451,7 @@ See [ADR-0002](adr/0002-traffic-budget-bulk-local-forecast.md) for the full cont
 
 ### Why is the domain `meteoswiss_weather` and not `meteoswiss`?
 
-The domain follows Home Assistant's [naming convention for weather integrations](https://developers.home-assistant.io/docs/creating_integration_manifest#manifest-reference): `<source>_weather`. This leaves room for future integrations that might expose other MeteoSwiss datasets (e.g., radar, pollen).
+The domain follows Home Assistant's [naming convention for weather integrations](https://developers.home-assistant.io/docs/creating_integration_manifest#manifest-reference): `<source>_weather`. This leaves room for future integrations that might expose other MeteoSwiss datasets (radar is the sibling integration, [MeteoSwiss Radar](https://github.com/chriguschneider/hass-meteoswiss-radar); pollen is built in).
 
 ### How does the integration choose the nearest weather station?
 
@@ -459,7 +459,7 @@ The integration uses the haversine formula to calculate distances from your fore
 
 The forecast point is determined by your postal code. If your postal code has multiple forecast points, you choose one during setup; otherwise the setup flow skips to station selection.
 
-**Note:** Not every station measures every parameter. If your chosen station does not measure a parameter (e.g., some precipitation-only sites lack pressure), that sensor will show as unknown. To pick a station with more complete measurements, use **Reconfigure** on the integration entry and choose a different station (see [Can I change the station after setup?](#can-i-change-the-station-after-setup) below).
+**Note:** Not every station measures every parameter. If your chosen station does not measure a parameter (e.g., some precipitation-only sites lack pressure), that sensor is not created (data inventory). To pick a station with more complete measurements, use **Reconfigure** on the integration entry and choose a different station (see [Can I change the station after setup?](#can-i-change-the-station-after-setup) below).
 
 ### What does the weather condition mean?
 

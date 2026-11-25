@@ -7,6 +7,11 @@ was re-read the same day: the OGC Feature API for the local forecast is
 confirmed as a **beta for the end of 2026**; weather warnings are still
 not on the roadmap.
 
+> **Note (2026-11-25):** the traffic figures in this file (e.g. "~1 GB/day",
+> "~+30 MB per hourly fetch") are those of 2026-08-28, before the ADR-0008
+> fetch ladder. The current ones are in the README (section on traffic,
+> "some 30 MB a day") and in [ogd.md](ogd.md).
+
 **How to use this file:** tick the boxes you want. Each ticked option
 becomes a self-contained GitHub issue in the style of the existing
 backlog (#3), with the ADR work included where the table says so.
@@ -25,7 +30,7 @@ infrastructure.
 
 - [ ] **A1 — Config-flow hint to `meteoalarm`** when it is not set up,
   the exact pattern of the radar hint from #42. Effort S, no ADR.
-- [ ] **A2 — "Complete setup" recipe in the README**: this integration +
+- [x] **A2 — "Complete setup" recipe in the README** (done 2026-11-25): this integration +
   core `meteoalarm` + MeteoSwiss Radar, presented as the bundle that
   matches the app-API integrations feature for feature (minus pollen).
   Effort S, no ADR.
@@ -109,10 +114,11 @@ infrastructure.
 
 ### Reach and maturity
 
-- [ ] **A12 — HACS default store submission** — tracked as #19, listed
-  here for completeness. Human task.
-- [ ] **A13 — `home-assistant/brands` PR** so the icon shows without the
-  local brand folder. Effort S. Human task (PR review latency).
+- [x] **A12 — HACS default store submission** — in the HACS default store
+  since 2026-11-04 (#19).
+- [ ] ~~**A13 — `home-assistant/brands` PR** so the icon shows without the
+  local brand folder.~~ Closed route: the integration ships its own
+  `brand/` folder, see [brands-icon.md](brands-icon.md).
 - [ ] **A14 — Declare `quality_scale` in the manifest** and work the
   bronze checklist (Rudd-O ships `silver`). Effort M.
 - [ ] **A15 — Side-by-side validation against Rudd-O** on the production
@@ -252,5 +258,5 @@ service second.
    after A5; nearly free once A4 ships. B14 — tiered refresh, on top
    of A5, same ADR-0002 revision. B15 — mountain points in the config
    flow, after the P1 basics.
-2. **Still open:** A1, A2, A14.
+2. **Still open:** A1, A14.
 3. **Alongside (human):** A12, A13, A15.

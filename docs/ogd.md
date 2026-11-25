@@ -301,13 +301,11 @@ each file's layout at runtime from offset probes, then
 - **point-major →** binary-searches the point's contiguous block by byte
   offset and fetches it with one `Range` GET (~5 KB); the block offset is
   cached per file and re-verified with a single probe on the next run;
-- **date-major →** fetches a `Range: bytes=0-<budget>` prefix sized from the
-  chosen horizon (`hourly_horizon_days`), extending it if a probe shows the
-  horizon was not reached;
+- **date-major →** row-addresses the demanded hours (the ADR-0008 fetch
+  ladder, levels 0–4 in the diagnostics), not a fixed byte prefix;
 - **anything unrecognised →** downloads the whole file and logs a warning.
 
-For the minimum set at the default horizon this is **~7–11 MB per refresh**
-instead of ~125 MB. See ADR-0002 (revised) for the budget and the option.
+See ADR-0008 for the ladder and ADR-0002 for the budget.
 
 **The detected layout, not the static group, drives both fetch and schedule
 (issue #153).** Because a file can flip layout without notice (`zprfr0hs` is
