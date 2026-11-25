@@ -169,7 +169,9 @@ in [ADR-0008](docs/adr/0008-run-scoped-forecast-store.md).
 
 ## What you get
 
-Every entity carries the attribution *Source: MeteoSwiss*. Many sensors are
+Every MeteoSwiss-fed entity carries the attribution *Source: MeteoSwiss*;
+snow-station sensors carry the SLF attribution
+([ADR-0009](docs/adr/0009-slf-imis-second-upstream.md)). Many sensors are
 created **disabled** so your entity list stays tidy: open the device page and
 enable the ones you want. The complete map from each setting to the entities
 and fields it produces is in
@@ -456,7 +458,9 @@ thanks. (Claude doesn't drink coffee. More for me.)
 
 Data: © [MeteoSwiss](https://www.meteoswiss.admin.ch), published under
 [CC BY 4.0](https://opendatadocs.meteoswiss.ch/general/terms-of-use). Every
-entity carries the attribution *Source: MeteoSwiss*. An independent community
+MeteoSwiss-fed entity carries the attribution *Source: MeteoSwiss*.
+Snow-station sensors use data of the WSL Institute for Snow and Avalanche
+Research SLF (IMIS network) and carry its attribution instead. An independent community
 project, not affiliated with or endorsed by MeteoSwiss.
 
 Code: MIT, see [LICENSE](LICENSE).

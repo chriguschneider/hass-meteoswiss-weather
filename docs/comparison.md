@@ -19,7 +19,7 @@ documented", the feature may still exist.
 
 | | This integration | Rudd-O, izacus |
 |---|---|---|
-| Upstream | `data.geo.admin.ch` (STAC catalogue) | `app-prod-ws.meteoswiss-app.ch`, `meteosuisse.admin.ch` |
+| Upstream | `data.geo.admin.ch` (STAC catalogue), plus the SLF IMIS API for snow stations ([ADR-0009](adr/0009-slf-imis-second-upstream.md)) | `app-prod-ws.meteoswiss-app.ch`, `meteosuisse.admin.ch` |
 | Status | Open Government Data since May 2025 | Undocumented backend of the MeteoSwiss mobile app |
 | Licence | CC BY 4.0, attribution required | None stated |
 | Change policy | Announced in a public changelog | None; the API can change with any app release |
@@ -38,7 +38,7 @@ a thousand posts. That is the risk being traded away here — see
 | Data source | official OGD only | app API + OGD files | app API |
 | Breakage mode | announced change | silent API change | silent API change |
 | Daily forecast | 9 days, official symbols | yes | 8 days |
-| Hourly forecast | opt-in, incl. radiation, zero-degree level, cloud layers and temperature percentiles; ~30–45 MB/day with every option | yes, no traffic cost | yes, no traffic cost |
+| Hourly forecast | opt-in, incl. radiation, zero-degree level, cloud layers and temperature percentiles; some 30 MB/day with every option | yes, no traffic cost | yes, no traffic cost |
 | Current conditions | SwissMetNet, 10 min, up to 21 sensors, optional separate precipitation station, station changeable later | yes, interval configurable, separate precipitation station | yes, station code entered by hand |
 | Warnings | no — use core `meteoalarm` | not documented | yes, several warning entities |
 | Pollen | yes, opt-in, nearest station pre-selected | no | yes |
@@ -47,7 +47,7 @@ a thousand posts. That is the risk being traded away here — see
 | Third-party services | none | Nominatim (OpenStreetMap) for the postal code | none known |
 | Setup | 3 steps, pre-filled from the HA location | UI, coordinates + postal code | UI, station codes by hand |
 | Default traffic | ~0.35 MB per new forecast run; 304s in between | negligible | negligible |
-| Maturity | young, `0.4.0`, small install base | established, `quality_scale: silver` | established |
+| Maturity | young, in the HACS default store since 2026-11-04 | established, `quality_scale: silver` | established |
 
 ## What this integration gains
 
@@ -78,13 +78,13 @@ a thousand posts. That is the risk being traded away here — see
   as whole-of-Switzerland CSVs, 29–33 MB per parameter per run. The
   integration reads only the configured point's rows out of them
   ([ADR-0008](adr/0008-run-scoped-forecast-store.md)), so with every option
-  on it fetches some 30–45 MB a day, not the gigabytes a naive download
+  on it fetches some 30 MB a day, not the gigabytes a naive download
   would cost, but still far more than an app-API point query.
 - **No nowcast.** Not planned; radar is the sibling integration's job.
 - **Not every station measures everything.** Sensors a station does not
-  carry stay `unknown`.
-- **Young.** Version 0.4.0, custom HACS repository, few installs, so
-  correspondingly little field hardening.
+  carry are not created (data inventory, #46).
+- **Young.** In the HACS default store since 2026-11-04, so correspondingly
+  little field hardening.
 
 ## What the alternatives do better
 
@@ -116,7 +116,7 @@ And what they carry with that:
 |---|---|
 | An entity that still works in a year | this integration — that is the entire point |
 | The most data about your place: forecast, hourly details, up to 21 station sensors, pollen, history | this integration |
-| An hourly graph on a dashboard | this integration with the hourly option (~30–45 MB/day), or Rudd-O / izacus at no traffic cost |
+| An hourly graph on a dashboard | this integration with the hourly option (some 30 MB/day), or Rudd-O / izacus at no traffic cost |
 | Severe-weather automations | core `meteoalarm`, alongside any of the three |
 | Pollen | this integration or izacus |
 | Precipitation radar | [MeteoSwiss Radar](https://github.com/chriguschneider/hass-meteoswiss-radar), the sibling |
@@ -133,8 +133,10 @@ Radar for radar. Nothing the app-API integrations offer is then missing.
 MeteoSwiss has announced an OGC Features API with per-point local-forecast
 queries as a beta for the end of 2026. That removes the largest drawback
 above: the hourly forecast would cost kilobytes instead of megabytes, the
-3-hour throttle becomes unnecessary, and the reason to reach for an
-app-API integration shrinks to warnings and pollen.
+canary-driven refresh that replaced the 3-hour throttle
+([ADR-0008](adr/0008-run-scoped-forecast-store.md)) is no longer a
+concern, and the reason to reach for an app-API integration shrinks to
+warnings; pollen is built into this integration.
 
 The swap is prepared — the forecast already goes through a backend
 interface that a point-API backend can implement without touching the
