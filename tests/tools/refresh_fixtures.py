@@ -8,6 +8,7 @@ directly to ``tests/fixtures/``; review the diff before committing.
 Usage::
 
     python tests/tools/refresh_fixtures.py
+    python tests/tools/refresh_fixtures.py --zprfr0hs [RUN [LOCAL_FILE]]
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import sys
 import urllib.request
 from pathlib import Path
 
@@ -140,6 +142,67 @@ def _trim_csv_daily(raw: bytes, param: str) -> bytes:
     return buf.getvalue().encode("iso-8859-1")
 
 
+def _trim_date_major_rows(
+    raw: bytes, *, keep_every: int, last_stamp: str, point: tuple[int, int]
+) -> bytes:
+    """Thin a date-major file: every ``keep_every``-th row of each block.
+
+    Keeps the header, the upstream byte order, the real values (so the real
+    value widths) and ``point``'s row in every block, for the blocks up to and
+    including ``last_stamp``. Each block shrinks by about ``keep_every`` while
+    its size still varies with the values, so a test scales its read windows
+    by the same factor (issue #281).
+    """
+    lines = raw.split(b"\n")
+    kept = [lines[0]]
+    want = f"{point[0]};{point[1]};".encode("ascii")
+    block, index = b"", 0
+    for line in lines[1:]:
+        parts = line.split(b";", 3)
+        if len(parts) < 4:
+            continue
+        if parts[2] != block:
+            block, index = parts[2], 0
+        if parts[2].decode("ascii") > last_stamp:
+            break
+        if index % keep_every == 0 or line.startswith(want):
+            kept.append(line)
+        index += 1
+    return b"\n".join(kept) + b"\n"
+
+
+# The winter zprfr0hs fixture (issue #281): mixed 3-/4-digit values, so the
+# hour blocks differ in size. Cut from run 202611251200 on request only, since
+# the latest run may have no 3-digit values at all (it is seasonal).
+ZPRFR0HS_RUN = "202611251200"
+ZPRFR0HS_KEEP_EVERY = 16
+ZPRFR0HS_LAST_STAMP = "202611262300"
+ZPRFR0HS_POINT = (309800, 2)
+
+
+def refresh_zprfr0hs(run_ts: str = ZPRFR0HS_RUN, source: Path | None = None) -> None:
+    """Cut the thinned winter ``zprfr0hs`` fixture from ``run_ts``.
+
+    ``source`` is a local copy of the full upstream file; without it the file
+    is downloaded (~33 MB) while the run is still published.
+    """
+    name = f"vnut12.lssw.{run_ts}.zprfr0hs.csv"
+    if source is not None:
+        raw = source.read_bytes()
+    else:
+        raw = _get(
+            f"{OGD_BASE}/{COLLECTION_FORECAST}/{run_ts[:8]}-ch/{name}"
+        )
+    (FIXTURES / f"vnut12.lssw.{run_ts}.zprfr0hs.thinned.csv").write_bytes(
+        _trim_date_major_rows(
+            raw,
+            keep_every=ZPRFR0HS_KEEP_EVERY,
+            last_stamp=ZPRFR0HS_LAST_STAMP,
+            point=ZPRFR0HS_POINT,
+        )
+    )
+
+
 def _trim_stac_items(raw: bytes) -> bytes:
     """Keep MAX_RUNS_IN_ITEMS features; preserve JSON structure."""
     doc = json.loads(raw)
@@ -219,4 +282,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1 and sys.argv[1] == "--zprfr0hs":
+        # python tests/tools/refresh_fixtures.py --zprfr0hs [RUN [LOCAL_FILE]]
+        args = sys.argv[2:]
+        refresh_zprfr0hs(
+            args[0] if args else ZPRFR0HS_RUN,
+            Path(args[1]) if len(args) > 1 else None,
+        )
+    else:
+        main()
