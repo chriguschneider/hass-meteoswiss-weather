@@ -25,6 +25,8 @@ from custom_components.meteoswiss_weather.ogd import (
 )
 from custom_components.meteoswiss_weather.ogd import hourly as H
 from custom_components.meteoswiss_weather.ogd.const import HOURLY_HORIZON_FULL_RUN
+from custom_components.meteoswiss_weather.ogd.hourly import prefix as H_prefix
+from custom_components.meteoswiss_weather.ogd.hourly import windows as H_windows
 
 # A small but varied point set; ids are distinct across types so an id-sorted
 # file still isolates one point's block. Sorting by id mixes the types
@@ -218,9 +220,9 @@ async def test_date_major_horizon_prefix_trims_to_cutoff() -> None:
 async def test_date_major_extends_prefix_when_budget_too_small(monkeypatch) -> None:
     """A too-small initial budget is doubled until the horizon is covered."""
     # Force the first prefix to be far shorter than the wanted horizon.
-    monkeypatch.setattr(H, "HOURLY_BYTES_PER_HOUR", 8)
-    monkeypatch.setattr(H, "HOURLY_RANGE_SAFETY", 1.0)
-    monkeypatch.setattr(H, "_HORIZON_MARGIN_HOURS", 0)
+    monkeypatch.setattr(H_prefix, "HOURLY_BYTES_PER_HOUR", 8)
+    monkeypatch.setattr(H_prefix, "HOURLY_RANGE_SAFETY", 1.0)
+    monkeypatch.setattr(H_prefix, "_HORIZON_MARGIN_HOURS", 0)
 
     reader = _MemReader(_date_major())
     horizon = _H0 + timedelta(hours=100)
@@ -270,13 +272,13 @@ def test_horizon_does_not_build_zoneinfo_per_call(
 ) -> None:
     """The zone is a module constant: no tzdata read on each call (issue #233)."""
     calls: list[str] = []
-    real = H.ZoneInfo
+    real = H_windows.ZoneInfo
 
     def spy(key: str) -> object:
         calls.append(key)
         return real(key)
 
-    monkeypatch.setattr(H, "ZoneInfo", spy)
+    monkeypatch.setattr(H_windows, "ZoneInfo", spy)
     now = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
     assert horizon_end_utc(2, now) == datetime(2026, 7, 3, 22, 0, tzinfo=UTC)
     assert calls == []
