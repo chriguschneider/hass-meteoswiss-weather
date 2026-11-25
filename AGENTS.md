@@ -282,6 +282,9 @@ comments and leaves the issue open for a human to close.
   for it to the smoke test in the same PR. Checks validate shape (headers,
   field names, plausible ranges), not content; no data at all is a pass.
 - The script stays stdlib-only and secret-free.
+- The official changelog feed (`opendatadocs.meteoswiss.ch/changelog/rss.xml`)
+  is read by the smoke test only, as a fail-soft OGC-announcement probe
+  that never changes the exit code; the integration never reads it.
 - A failing smoke test is not a reason to change the parser blindly:
   first compare what upstream returns now with `docs/ogd.md` /
   `docs/slf.md`, then refresh the fixtures from the new real files
