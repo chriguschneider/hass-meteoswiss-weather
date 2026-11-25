@@ -254,7 +254,7 @@ the observed layout instead of pinning one.
 2026-08-28 and is date-major in every run sampled from 2026-09-16 on. Like the
 cloud files, the change was not announced and MeteoSwiss documents no row
 order at all, so no layout is ever assumed: the fetch ladder
-(`ogd/hourly.py`, `fetch_series`, ADR-0008) detects it per fetch and climbs to
+(`ogd/hourly/`, `fetch_series`, ADR-0008) detects it per fetch and climbs to
 a bigger read when a cheap one cannot prove it delivered every row.
 
 **A date-major file is addressable per row (measured 2026-09-18, runs
@@ -295,7 +295,7 @@ no `ETag`. The single day item (`/items/<yyyymmdd>-ch`) is ~80 KB, carries an
   day** (they carry past hours), so byte offsets are stable across a day's
   runs.
 
-**How the integration uses this (issue #50, `ogd/hourly.py`):** it classifies
+**How the integration uses this (issue #50, `ogd/hourly/`):** it classifies
 each file's layout at runtime from offset probes, then
 
 - **point-major →** binary-searches the point's contiguous block by byte

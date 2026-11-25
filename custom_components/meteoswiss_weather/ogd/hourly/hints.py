@@ -145,6 +145,7 @@ class SeriesResult:
         """Whether the file carried any row for the point."""
         return self.text.count("\n") > 1
 
+
 def _hint_is_current(hint: FileHint, utc_day: date | None) -> bool:
     """Whether ``hint``'s remembered offsets can still be trusted.
 
@@ -157,6 +158,7 @@ def _hint_is_current(hint: FileHint, utc_day: date | None) -> bool:
     if hint.utc_day is None or utc_day is None:
         return True
     return hint.utc_day == utc_day
+
 
 def _hint_header_bytes(hint: FileHint | None) -> bytes | None:
     """The header line of a same-day hint, or ``None`` to read it afresh."""

@@ -205,9 +205,11 @@ async def _read_header(reader: RangeReader) -> bytes:
             break
     return data
 
+
 # ---------------------------------------------------------------------------
 # Ladder control flow and the request-counting reader
 # ---------------------------------------------------------------------------
+
 
 class _NotProven(Exception):
     """A level could not prove it delivered every demanded row; climb."""
@@ -228,6 +230,7 @@ class _RequestCapExceeded(_NotProven):
     ) -> None:
         super().__init__(message)
         self.window = window
+
 
 class _CountingReader:
     """A :class:`RangeReader` that counts requests/bytes and enforces a cap."""

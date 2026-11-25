@@ -76,7 +76,7 @@ DAILY_PARAMS = set(_OGD_CONST.DAILY_REQUIRED_PARAMS)
 HOURLY_PARAMS = set(_OGD_CONST.HOURLY_REQUIRED_PARAMS)
 
 # Accepted byte-order layouts of each hourly file the integration reads (issue
-# #50). The Range strategy in ogd/hourly.py detects the layout at runtime, so
+# #50). The Range strategy in ogd/hourly/layout.py detects the layout at runtime, so
 # either known layout stays cheap; only "other" degrades the integration to a
 # full download. "date" = sorted by Date (horizon prefix works); "point" = one
 # point's rows contiguous (block Range works).
@@ -486,7 +486,7 @@ def _fetch_cloud_values(href: str) -> tuple[list[float], str]:
     - date-major: the earliest hours of all points lead the file, so a 200 KB
       prefix carries several rows for our point;
     - point-major: binary-search the point's contiguous ~5 KB block via tiny
-      Range probes (same idea as ogd/hourly.py), then read one block.
+      Range probes (same idea as ogd/hourly/point_major.py), then read one block.
     """
     param = href.rsplit(".", 2)[-2]  # e.g. "nprohihs" from "...nprohihs.csv"
     rows, total = _probe_rows(href)

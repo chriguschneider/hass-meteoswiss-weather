@@ -22,6 +22,7 @@ from .rows import _ADDRESSING_OVERHEAD_REQUESTS
 # ogd/forecast.py.
 FORECAST_TZ = ZoneInfo(FORECAST_TIMEZONE)
 
+
 async def _fetch_series_auto(
     make_reader: Callable[[], _CountingReader],
     point: ForecastPoint,

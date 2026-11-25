@@ -10,6 +10,7 @@ from .reader import RangeReader, _read_row_after, _Row
 # robust on a shuffled/unexpected file.
 _LAYOUT_PROBES = 9
 
+
 # ---------------------------------------------------------------------------
 # Layout classification
 # ---------------------------------------------------------------------------

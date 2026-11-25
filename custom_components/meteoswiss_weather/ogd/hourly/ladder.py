@@ -23,6 +23,7 @@ from .rows import (
 
 _LOGGER = logging.getLogger(__name__)
 
+
 # ---------------------------------------------------------------------------
 # The escalation ladder (ADR-0008 section 4)
 # ---------------------------------------------------------------------------
@@ -44,6 +45,7 @@ _LOGGER = logging.getLogger(__name__)
 # detected by the rows it fails to yield and retried once with a fresh
 # classification before the ladder climbs.
 
+
 class _ChunkNeeded(Exception):
     """A date-major demand overran the cap; retry it as cap-sized windows.
 
@@ -61,6 +63,7 @@ class _ChunkNeeded(Exception):
         super().__init__("date-major demand exceeds the request cap; chunk it")
         self.window_start = window_start
         self.window_end = window_end
+
 
 async def _address(
     reader: _CountingReader,
@@ -159,6 +162,7 @@ async def _address(
             ),
         )
     raise _NotProven("no addressing strategy for this layout and demand")
+
 
 async def _fetch_series(
     reader: _CountingReader,

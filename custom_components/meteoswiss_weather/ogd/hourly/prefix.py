@@ -13,9 +13,11 @@ from .reader import RangeReader, _parse_row, _read_row_after
 # even when the per-hour block runs large; the prefix is extended if not.
 _HORIZON_MARGIN_HOURS = 6
 
+
 # ---------------------------------------------------------------------------
 # Date-major: horizon prefix
 # ---------------------------------------------------------------------------
+
 
 def _last_complete_date(data: bytes, at_eof: bool) -> datetime | None:
     """Date of the last *complete* row in ``data`` (its max, date-major)."""
