@@ -188,6 +188,10 @@ async def _fetch_series(
     layout = FileLayout.FALLBACK
     windowed = window_start is not None and window_end is not None
     fresh = hint if (hint is not None and _hint_is_current(hint, utc_day)) else None
+    # Set once a same-day hint failed to verify: an escalated result then hands
+    # back a positions-free hint, so the caller replaces the stale one instead of
+    # keeping it and paying the same failed attempt on every refresh (#281).
+    dropped = False
     try:
         if fresh is not None:
             # A same-day hint skips classification and the probes; the rows it
@@ -202,6 +206,7 @@ async def _fetch_series(
             except _RequestCapExceeded:
                 raise
             except _NotProven as reason:
+                dropped = True
                 _LOGGER.debug("hint did not verify; fresh classification: %s", reason)
         layout = await classify_layout(reader)
         return await _address(
@@ -220,6 +225,11 @@ async def _fetch_series(
 
     # From here on bytes are spent rather than requests.
     reader.cap = None
+    replacement = (
+        FileHint(layout=layout, utc_day=utc_day)
+        if dropped and layout is not FileLayout.FALLBACK
+        else None
+    )
     if layout is FileLayout.DATE_MAJOR and windowed:
         assert window_start is not None and window_end is not None
         prefix = await _fetch_date_major(reader, window_end)
@@ -232,6 +242,7 @@ async def _fetch_series(
                 requests=reader.requests,
                 bytes=reader.bytes,
                 whole_run=False,
+                hint=replacement,
             )
 
     full = (await reader.read_all()).decode(FORECAST_ENCODING)
@@ -243,4 +254,5 @@ async def _fetch_series(
         requests=reader.requests,
         bytes=reader.bytes,
         whole_run=True,
+        hint=replacement,
     )

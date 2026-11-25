@@ -269,6 +269,25 @@ each found row must re-anchor the next prediction. Live cost for a 48 h window
 of `zprfr0hs`: 63 requests / 307 KB cold, 61 requests / 113 KB with the
 remembered position, instead of a 1.5–4 MB prefix or the 33 MB file.
 
+**In winter `zprfr0hs` blocks vary in size too (measured 2026-11-25, runs
+`202611251100`/`1200`, issue #281):** the file is still date-major, but it now
+carries **5821 points** per block, and once the zero-degree level drops below
+1000 m the values mix 4, 3 and occasionally 2 digits. Block sizes then vary
+per hour and per run: 153 341 bytes when every value has 4 digits, down to
+~149 000 bytes on hours with ~4000 three-digit values (run `202611251100`:
+153 071 B at `202611242100`, 150 930 B at `202611260600`, 148 978 B at
+`202611271700`). The point's offset inside its block moves with it (Köniz:
+77 750 B at `202611251500`, 75 589 B at `202611271700`). Between two runs of the same day the offsets of the
+early blocks stay within tens of bytes (`202611251200` starts 35 B later in
+run `1200` than in `1100`). The file is 33.5 MB.
+A row position extrapolated across ~80 such blocks with one block size misses
+by tens of KB, so the fetch predicts a remembered window from the rows found
+next to it on the last refresh, not from one running block estimate. Offline
+cost against the full file of run `202611251200`, window from 12:00 UTC:
+48 h 64 requests / 352 KB cold, 50 requests / 188 KB with the remembered
+position; 90 h (two windows) 117 / 566 KB cold, 94 / 393 KB remembered. All
+at level 1.
+
 **The daily files are date-major too:** `tre200px` has nine day blocks of 5632
 rows (~148 KB each, ±100 bytes) with the point at a fixed row index. The four
 daily files are therefore row-addressed at a **one-day step** (`Date` stamped

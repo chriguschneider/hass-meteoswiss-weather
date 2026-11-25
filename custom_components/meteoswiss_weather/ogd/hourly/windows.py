@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -12,7 +13,7 @@ import aiohttp
 from ..const import FORECAST_TIMEZONE, HOURLY_HORIZON_FULL_RUN, SERIES_REQUEST_CAP
 from ..models import FileLayout, ForecastPoint
 from ..parse import parse_stamp
-from .hints import FileHint, SeriesResult, _hint_is_current
+from .hints import FileHint, RowGeometry, SeriesResult, _hint_is_current
 from .ladder import _ChunkNeeded, _fetch_series
 from .reader import AiohttpRangeReader, _CountingReader, _read_row_before
 from .rows import _ADDRESSING_OVERHEAD_REQUESTS
@@ -245,6 +246,7 @@ async def _fetch_series_windows(
 
     header = ""
     rows: dict[str, str] = {}
+    first_geometry: RowGeometry | None = None
     level = 0
     requests = spent[0]
     bytes_read = spent[1]
@@ -276,6 +278,9 @@ async def _fetch_series_windows(
             if len(parts) >= 3:
                 rows[parts[2]] = line
 
+        if first_geometry is None and result.hint is not None:
+            first_geometry = result.hint.geometry
+
     ordered = [rows[stamp] for stamp in sorted(rows)]
     text = header + "\n" + ("\n".join(ordered) + "\n" if ordered else "")
     return SeriesResult(
@@ -285,7 +290,52 @@ async def _fetch_series_windows(
         requests=requests,
         bytes=bytes_read,
         whole_run=whole_run,
-        hint=cur_hint,
+        hint=_span_hint(cur_hint, first_geometry, step),
+    )
+
+
+def _span_hint(
+    last: FileHint | None, first: RowGeometry | None, step: timedelta
+) -> FileHint | None:
+    """The last window's hint, re-anchored on the first window's first row.
+
+    Each window hands the next one its own hint, whose last row sits right before
+    the next window. What is remembered for the next refresh, though, must know
+    a row near the *start* of the demand (offsets are stable across a UTC day's
+    runs), or the first window of the next refresh extrapolates across the whole
+    span and misses (issue #281). So the merged hint keeps the first window's
+    first row as its anchor, the last window's last row as its end, and the mean
+    block size between the two.
+    """
+    geometry = last.geometry if last is not None else None
+    if (
+        last is None
+        or geometry is None
+        or first is None
+        or first.anchor_stamp is None
+        or first.anchor_offset is None
+    ):
+        return last
+    block = geometry.block_bytes
+    start_dt = parse_stamp(first.anchor_stamp)
+    end_dt = parse_stamp(geometry.end_stamp) if geometry.end_stamp else None
+    if (
+        start_dt is not None
+        and end_dt is not None
+        and geometry.end_offset is not None
+        and end_dt > start_dt
+    ):
+        block = (geometry.end_offset - first.anchor_offset) / (
+            (end_dt - start_dt) / step
+        )
+    return replace(
+        last,
+        geometry=replace(
+            geometry,
+            block_bytes=block,
+            anchor_stamp=first.anchor_stamp,
+            anchor_offset=first.anchor_offset,
+        ),
     )
 
 
