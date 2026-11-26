@@ -241,9 +241,9 @@ async def async_setup_entry(
     made. A point entry (postal code / mountain) is set up as before, and
     ignores any ``imis_station_*`` keys left in its data by v0.5.0–v0.6.2.
     """
-    # Parse-error issues used domain-wide ids (the bare key) up to v0.10.1;
-    # they are per entry now (issue #251). Drop any left over so no orphan
-    # survives the update. Idempotent, so running it per entry is harmless.
+    # Parse-error issues are per entry (``f"{key}_{entry_id}"``, issue #251); ids
+    # from versions up to v0.10.1 were the bare key, delete them so no orphan
+    # survives an update. Idempotent, so running it per entry is harmless.
     for key in PARSE_ISSUE_KEYS:
         async_delete_issue(hass, DOMAIN, key)
 

@@ -41,11 +41,8 @@ from custom_components.meteoswiss_weather.ogd.hourly import (
 def test_no_landing_hour_sets_trigger_a_refresh() -> None:
     """ADR-0008 owner decision 2: a canary decides, not the landing-hour sets.
 
-    The refresh trigger used to be a timetable measured once on 2026-08-27
-    (``HOURLY_NEAR_RUN_HOURS``/``HOURLY_FAR_RUN_HOURS``). Issue #125 replaced it
-    with a cheap canary read of the point's coming hours (docs/ogd.md §E4, "Row
-    order"), so the landing-hour sets no longer exist — one August measurement is
-    not a contract. Only the ``max_age`` fallbacks remain.
+    A canary decides refreshes; a landing-hour timetable (one measurement, not
+    a contract) must not return. Only the ``max_age`` fallbacks exist.
     """
     from custom_components.meteoswiss_weather import const
 

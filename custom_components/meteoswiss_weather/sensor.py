@@ -1026,9 +1026,10 @@ class ZeroDegreeSensor(MeteoSwissCoordinatorSensor[ForecastCoordinator]):
     """Current hour's zero-degree level (B8, issue #55).
 
     Reads the ``zprfr0hs`` series from the coordinator's forecast store
-    (ADR-0008), which the daily refresh fills from the point-major block on
-    every new run (issue #107) and the :class:`HourlyRefresher` fills whenever
-    it fetches the file — so no particular path, card or ``get_forecasts`` call is
+    (ADR-0008), which the daily refresh fills from the daily row-addressed
+    48 h window (``DAILY_ZERO_DEGREE_WINDOW_HOURS``) on every new run
+    (issue #107) and the :class:`HourlyRefresher` fills whenever it fetches the
+    file — so no particular path, card or ``get_forecasts`` call is
     needed. When a refresh could not deliver, the store keeps the previous
     run's series, which still covers the coming hours. Shows ``unknown``
     (``None``) only while no path has ever delivered the current hour.

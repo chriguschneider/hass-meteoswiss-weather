@@ -107,8 +107,8 @@ def test_hacs_json_is_valid() -> None:
 def test_readme_reflects_hacs_default_store() -> None:
     """The integration is in the HACS default store, so the README says so.
 
-    A README that still tells users to add a custom repository sends them
-    down a route that is no longer the normal one.
+    Users should not be told to add a custom repository; the integration is
+    in the HACS default store.
     """
     readme = (ROOT / "README.md").read_text(encoding="utf-8").lower()
     assert "hacs-default" in readme, "README badge must read HACS-Default"

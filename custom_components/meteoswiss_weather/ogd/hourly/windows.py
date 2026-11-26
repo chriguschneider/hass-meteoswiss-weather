@@ -136,15 +136,10 @@ async def fetch_series(
 # Windowed fetch: a long horizon split into cap-sized row-addressed windows
 # ---------------------------------------------------------------------------
 #
-# A single ``fetch_series`` skips row addressing once the demanded window needs
-# more than ``SERIES_REQUEST_CAP`` requests and falls to the multi-MB prefix
-# (level 3): with the canary reporting a change on practically every run, a
-# horizon of ~80 h or more then reads a prefix every hour. The far
-# remainder of such a horizon is instead fetched here as **consecutive windows
-# that each fit the cap**, so every window stays on row addressing (level ≤ 2)
-# and the prefix/full file remain only the per-window fallback. Each window is
-# its own ``fetch_series`` call with its own request budget; the hint learned
-# from one window feeds the next so successive windows re-anchor cheaply.
+# A long horizon is fetched as consecutive windows that each fit
+# ``SERIES_REQUEST_CAP``, so each stays row-addressed (level ≤ 2); the prefix
+# is only the per-window fallback. Each window is its own ``fetch_series`` call
+# with its own request budget; the hint learned from one window feeds the next.
 
 
 def _split_window(

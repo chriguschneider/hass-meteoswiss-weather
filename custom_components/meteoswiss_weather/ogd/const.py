@@ -140,6 +140,8 @@ HOURLY_REQUIRED_PARAMS: tuple[str, ...] = (
 #     ~220 rows (~5 KB), refreshed with every new run at negligible cost.
 # The groups are a static default; the layout actually used for a file is the
 # detected one, and a changed layout is caught by the canary.
+# ``zprfr0hs`` (zero-degree) is listed in the point-major group only as a
+# default; the ladder row-addresses it as a date-major file.
 # tests/test_const.py asserts the two groups partition HOURLY_REQUIRED_PARAMS.
 HOURLY_DATE_MAJOR_PARAMS: tuple[str, ...] = (HOURLY_TEMPERATURE,)
 HOURLY_POINT_MAJOR_PARAMS: tuple[str, ...] = (
@@ -156,7 +158,8 @@ HOURLY_POINT_MAJOR_PARAMS: tuple[str, ...] = (
 # Additions behind per-entity gating (ADR-0002). Measured 2026-08-28 and
 # 2026-09-01 (docs/ogd.md §E4, "Row order"): the two temperature-percentile
 # files are **date-major**; the three cloud-cover files are **point-major**
-# since 2026-08-31 (they were date-major before). Each extra file is still an
+# since 2026-08-31 (upstream re-sorted them; layouts can flip, hence runtime
+# detection). Each extra file is still an
 # extra fetch for one ``cloud_coverage`` number or the percentile band, so
 # these files are fetched **only when the option that needs them is enabled**
 # (the gusts/direction gating pattern of ADR-0002). They ride the same

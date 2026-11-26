@@ -266,3 +266,5 @@ The ladder now:
   still fits in one read.
 
 The 96-request ceiling (decision 3) is unchanged.
+
+2026-11: `ogd/hourly.py` is now the package `ogd/hourly/`, #259.

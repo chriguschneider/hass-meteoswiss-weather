@@ -180,9 +180,9 @@ async def _fetch_series(
     With ``allow_chunk`` a date-major demand that cannot be row-addressed under
     the request cap raises :class:`_ChunkNeeded` (carrying the resolved window)
     instead of falling to a prefix or the whole file, so :func:`_fetch_series_auto`
-    can tile it into cap-sized windows (issue #153). Left ``False`` — the default,
-    and what the per-window fetches use — the cap escalates to prefix/full as
-    before, which keeps the single-shot ladder's own behaviour unchanged.
+    can tile it into cap-sized windows (issue #153). With ``allow_chunk=False`` (the
+    default, and what the per-window fetches use) an over-cap demand escalates
+    to prefix, then full.
     """
     loop = asyncio.get_running_loop()
     layout = FileLayout.FALLBACK
@@ -216,7 +216,7 @@ async def _fetch_series(
         # A date-major file whose demand overran the cap is not escalated to a
         # prefix/whole file here: it is chunked into cap-sized row-addressed
         # windows by the caller (issue #153). Any other over-cap case (or when
-        # chunking is disabled, for the per-window fetches) escalates as before.
+        # chunking is disabled, for the per-window fetches) escalates to prefix.
         if allow_chunk and layout is FileLayout.DATE_MAJOR and err.window is not None:
             raise _ChunkNeeded(err.window[0], err.window[1]) from err
         _LOGGER.debug("series fetch escalates past addressing: %s", err)
