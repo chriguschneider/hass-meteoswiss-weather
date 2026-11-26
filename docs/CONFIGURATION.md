@@ -178,7 +178,7 @@ resets the pollen settings or vice versa.
 
 **Default:** Off
 
-**Gives you:** an hourly forecast on the weather entity — condition, temperature, precipitation and its probability, wind, gusts, direction, global radiation (`radiation`) and the zero-degree level (`zero_degree_level`) — and the entity's current condition follows the hourly symbol. **Not needed for** the daily forecast, the zero-degree level sensor and the "today" sensors; those work without it.
+**Gives you:** an hourly forecast on the weather entity — condition, temperature, precipitation and its probability, wind, gusts, direction, global radiation (`radiation`), sunshine duration (`sunshine_duration`) and the zero-degree level (`zero_degree_level`) — and the entity's current condition follows the hourly symbol. **Not needed for** the daily forecast, the zero-degree level sensor and the "today" sensors; those work without it.
 
 **How it works:** with the option on, the hourly data is fetched on the integration's own forecast refresh, whether or not a card is open, so it is always ready (an idle instance pays for it too — ADR-0008). Every hour the integration checks for a new run and reads a few rows as a canary; only when those differ from what it holds does it refresh. MeteoSwiss adjusts the coming hours about hourly, so in practice the hourly data refreshes about once an hour while the daily files are re-read far less often.
 
@@ -303,7 +303,7 @@ for the full grouped list and the one-step path to enable them.
 
 Imports the configured station's **official hourly history** into Home Assistant's **long-term statistics**, so the statistics graphs and the Energy/Statistics cards show data from before the integration was installed.
 
-**What it writes:** long-term statistics only — **not** the raw short-term states. Under the integration's own sensor statistic ids it writes hourly mean/min/max for temperature, hourly mean for humidity, dew point, pressure, wind speed, gust and global radiation, and an hourly **sum** for precipitation. Only sensors that already exist for the entry are written.
+**What it writes:** long-term statistics only — **not** the raw short-term states. Under the integration's own sensor statistic ids it writes hourly mean/min/max for temperature, hourly mean for humidity, dew point, pressure, wind speed, gust and global radiation, and for precipitation the hourly mean of the 10-minute amount, like the live sensor. Only enabled station sensors of the entry are written.
 
 **Overlaps:** re-running over a period you already imported **replaces** those hours rather than duplicating them, so the service is safe to run again.
 
