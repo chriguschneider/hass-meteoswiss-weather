@@ -31,6 +31,9 @@ using the matching section below as release notes.
 - The zero-degree forecast no longer downloads about 30 MB on every refresh in
   winter, when the freezing level drops below 1000 m; the repair issue
   'forecast file needed a full download' no longer appears for it.
+- The `import_history` service now explains in your language why it cannot run
+  (entry not loaded, or a snow station without a MeteoSwiss station) and stays
+  available while entries reload.
 
 ## [v0.10.1] — 2026-10-26
 

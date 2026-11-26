@@ -363,8 +363,8 @@ Both reset at local midnight and survive a restart. No extra traffic — they co
 
 `meteoswiss_weather.import_history` imports the station's official hourly
 history into Home Assistant's long-term statistics (temperature mean/min/max,
-means for humidity, dew point, pressure, wind, gust and radiation, hourly sums
-for precipitation), so statistics graphs reach back before the install. One-off
+means for humidity, dew point, pressure, wind, gust and radiation, and for precipitation the hourly mean of the 10-minute amount, like the live
+sensor), so statistics graphs reach back before the install. One-off
 download, details in [CONFIGURATION.md](docs/CONFIGURATION.md#services).
 
 </details>
