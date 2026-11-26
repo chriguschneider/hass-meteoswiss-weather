@@ -9,19 +9,31 @@ using the matching section below as release notes.
 
 ## [Unreleased]
 
-### Added
+## [v1.0.0] — 2026-11-26
+
+![The Home Assistant weather card showing the current MeteoSwiss conditions and the next five days for Köniz.](https://raw.githubusercontent.com/chriguschneider/hass-meteoswiss-weather/master/docs/images/weather-card.png)
+
+**Version 1.0: a cleanup release for everyone who installs from the HACS default store.** Your forecast and station sensors keep working as before. In winter the zero-degree forecast now downloads far less, a slow MeteoSwiss server no longer stops the integration from loading, and changing the station can now rewrite your statistics from the new station's history.
+
+**What you need to do:** nothing. If you used the Import history service before, run it again for the same period so precipitation is stored like the live sensor.
+
+### Details
+
+#### Added
 
 - Changing the station can now rewrite the long-term statistics from the new
   station's official history (Backfill), next to Keep and Discard.
 
-### Fixed
+#### Fixed
 
 - The options summary no longer warns that long hourly horizons download large
   parts of 30 MB files; it now shows the real, much smaller cost.
 - Importing station history (service `import_history`) now puts each hourly
   value at the right hour (it landed one hour late), keeps precipitation in the
   same form as the live sensor so its graph stays readable, and no longer
-  creates statistics for disabled sensors.
+  creates statistics for disabled sensors. When it cannot run (entry not
+  loaded, or a snow station without a MeteoSwiss station) it says why in your
+  language, and it stays available while entries reload.
 - A slow MeteoSwiss or SLF server (request timeout) is now handled like any
   other connection problem: the entry retries instead of failing to load, and
   the setup dialog says it cannot connect.
@@ -31,9 +43,14 @@ using the matching section below as release notes.
 - The zero-degree forecast no longer downloads about 30 MB on every refresh in
   winter, when the freezing level drops below 1000 m; the repair issue
   'forecast file needed a full download' no longer appears for it.
-- The `import_history` service now explains in your language why it cannot run
-  (entry not loaded, or a snow station without a MeteoSwiss station) and stays
-  available while entries reload.
+
+#### Under the hood
+
+- The code that reads the MeteoSwiss files is reorganised: one place for CSV
+  cells and timestamps, one base class for the entities, and the hourly reader
+  split into small modules. Same requests, same results.
+- Comments and documentation brought in line with 1.0; the smoke test now
+  watches MeteoSwiss's announcements for the coming OGC Features API.
 
 ## [v0.10.1] — 2026-10-26
 
@@ -757,7 +774,8 @@ integration produces a weather entity (see the tracking issue in the README).
   tag-triggered release gate with a zip asset, and the opt-in Claude agent
   workflows (label, mention, autopilot, reviewer)
 
-[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v1.0.0...HEAD
+[v1.0.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.10.1...v1.0.0
 [v0.10.1]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.10.0...v0.10.1
 [v0.10.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.9.0...v0.10.0
 [v0.9.0]: https://github.com/chriguschneider/hass-meteoswiss-weather/compare/v0.8.0...v0.9.0

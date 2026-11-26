@@ -28,7 +28,6 @@
   <a href="CHANGELOG.md">Changelog</a>
 </p>
 
-<!-- Screenshot goes here once docs/images/weather-card.png exists:
 <p align="center">
   <img
     src="https://raw.githubusercontent.com/chriguschneider/hass-meteoswiss-weather/master/docs/images/weather-card.png"
@@ -36,7 +35,6 @@
     width="440"
   />
 </p>
--->
 
 If you live in Switzerland, the MeteoSwiss app is probably where you look before
 you plan the weekend. This puts that forecast into Home Assistant, and a lot
