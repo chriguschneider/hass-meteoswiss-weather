@@ -146,8 +146,10 @@ HOURLY_NEAR_MAX_AGE = timedelta(hours=3)
 # fallback is 6 h.
 HOURLY_FAR_MAX_AGE = timedelta(hours=6)
 # Point-major group (symbol, precipitation, wind, gust, direction, probability,
-# zero-degree, radiation): one ~5 KB block per file. Its staleness fallback,
-# after which a run refreshes even when the canary reports no change.
+# zero-degree, radiation) is the static default: one ~5 KB block per file. The
+# exception is zero-degree (``zprfr0hs``), which is date-major in practice and
+# row-addressed (see ogd/const.py). Its staleness fallback, after which a run
+# refreshes even when the canary reports no change.
 HOURLY_POINT_MAJOR_MAX_AGE = timedelta(hours=3)
 # How many of the point's coming hours the canary reads from the representative
 # file to decide whether a new run changed a group (ADR-0008 section 3). Small

@@ -31,10 +31,10 @@ _LEARN_CHUNK_BYTES = 65_536
 # about 15 (nine classification probes, header, first/last row, ~3 reads to
 # learn the geometry); a same-day hint that fails to verify costs at most 2
 # more before that fresh look (only the row windows are tried for its first
-# row); and 6 are slack for rows that need a wider window. With 16, a full
-# 79-hour chunk had one spare request, so a stale hint plus the fresh look
-# overran the cap and every refresh fell to the 30 MB prefix (issue #281).
-# 23 still lets a 72 h near window (73 blocks) stay one read under the cap.
+# row); and 6 are slack for rows that need a wider window. So the overhead is
+# 23 = 15 + 2 + 6, and a 73 h chunk plus that overhead stays under
+# ``SERIES_REQUEST_CAP`` (96). With less slack a stale hint plus the fresh look
+# overruns the cap and the refresh falls to the 30 MB prefix (issue #281).
 _ADDRESSING_OVERHEAD_REQUESTS = 23
 
 
